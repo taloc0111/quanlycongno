@@ -129,11 +129,11 @@ export default function CustomerApp() {
         {error && <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-red-700">{error}</div>}
 
         {!loading && !error && (
-          <div className="bg-white rounded-2xl shadow overflow-x-auto">
+          <div className="bg-white rounded-2xl shadow overflow-auto max-h-[70vh]">
             <table className="min-w-full text-sm">
-              <thead className="bg-gray-50">
+              <thead className="bg-gray-50 sticky top-0 z-10 [&_th]:bg-gray-50">
                 <tr>
-                  <th className="px-4 py-3 text-left font-semibold text-gray-600">Tên</th>
+                  <th className="px-4 py-3 text-left font-semibold text-gray-600 sticky left-0 z-20">Tên</th>
                   <th className="px-4 py-3 text-left font-semibold text-gray-600">SĐT</th>
                   <th className="px-4 py-3 text-left font-semibold text-gray-600 hidden md:table-cell">Đại lý</th>
                   <th className="px-4 py-3 text-left font-semibold text-gray-600">Loại</th>
@@ -145,8 +145,8 @@ export default function CustomerApp() {
                 {filtered.length === 0 ? (
                   <tr><td colSpan={6} className="px-4 py-8 text-center text-gray-400">Chưa có khách hàng.</td></tr>
                 ) : filtered.map((c) => (
-                  <tr key={c.id} className="border-t hover:bg-gray-50">
-                    <td className="px-4 py-3 font-medium text-gray-800">{c.name}</td>
+                  <tr key={c.id} className="border-t hover:bg-gray-50 group">
+                    <td className="px-4 py-3 font-medium text-gray-800 sticky left-0 z-10 bg-white group-hover:bg-gray-50">{c.name}</td>
                     <td className="px-4 py-3 text-gray-600">{c.phone || '—'}</td>
                     <td className="px-4 py-3 text-gray-500 text-xs hidden md:table-cell">{c.owner_name || c.owner_username || ''}</td>
                     <td className="px-4 py-3 text-gray-600">{c.type === 'company' ? 'Công ty' : 'Cá nhân'}</td>

@@ -484,11 +484,11 @@ export default function PassportApp() {
 
         {/* Table */}
         <div className="bg-white rounded-2xl shadow-lg overflow-hidden">
-          <div className="overflow-x-auto">
+          <div className="overflow-auto max-h-[70vh]">
             <table className="w-full">
-              <thead>
+              <thead className="sticky top-0 z-10 [&_th]:bg-blue-600">
                 <tr className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white">
-                  <th className="px-6 py-4 text-left font-semibold">Số Hồ Sơ</th>
+                  <th className="px-6 py-4 text-left font-semibold sticky left-0 z-20">Số Hồ Sơ</th>
                   <th className="px-6 py-4 text-left font-semibold">Khách Hàng</th>
                   <th className="px-6 py-4 text-left font-semibold hidden md:table-cell">Đại Lý</th>
                   <th className="px-6 py-4 text-left font-semibold hidden sm:table-cell">SĐT</th>
@@ -509,7 +509,7 @@ export default function PassportApp() {
                     const status = getDebtStatus(debt);
                     return (
                       <tr key={p.id} className={`hover:bg-blue-50 transition ${idx % 2 === 0 ? 'bg-gray-50/50' : ''}`}>
-                        <td className="px-6 py-4 font-mono font-semibold text-blue-600">
+                        <td className={`px-6 py-4 font-mono font-semibold text-blue-600 sticky left-0 z-10 ${idx % 2 === 0 ? 'bg-gray-50' : 'bg-white'}`}>
                           <span className="px-3 py-1 bg-blue-100 rounded-lg">
                             {p.passport_number || 'N/A'}
                           </span>

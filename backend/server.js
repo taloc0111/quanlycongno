@@ -14,6 +14,7 @@ const companyRoutes = require('./routes/companies');
 const customerRoutes = require('./routes/customers');
 const paymentRoutes = require('./routes/payments');
 const invoiceRoutes = require('./routes/invoices');
+const depositRoutes = require('./routes/deposits');
 const statsRoutes = require('./routes/stats');
 const userRoutes = require('./routes/users');
 const routeRoutes = require('./routes/routes');
@@ -50,6 +51,7 @@ app.use('/api/customers', authenticateToken, attachScope, customerRoutes);
 app.use('/api/payments', authenticateToken, attachScope, paymentRoutes);
 app.use('/api/users', authenticateToken, attachScope, userRoutes);
 app.use('/api/invoices', authenticateToken, attachScope, invoiceRoutes);
+app.use('/api/deposits', authenticateToken, attachScope, depositRoutes);
 app.use('/api/stats', authenticateToken, attachScope, statsRoutes);
 app.use('/api/routes', authenticateToken, routeRoutes);
 

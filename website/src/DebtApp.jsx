@@ -758,11 +758,11 @@ const App = () => {
 
           {/* Data Table */}
           <div className="bg-white rounded-xl sm:rounded-2xl shadow-lg overflow-hidden mb-6 sm:mb-8">
-            <div className="overflow-x-auto">
+            <div className="overflow-auto max-h-[70vh]">
               <table className="w-full min-w-max lg:min-w-0">
-                <thead className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white sticky top-0">
+                <thead className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white sticky top-0 z-10 [&_th]:bg-blue-600">
                   <tr className="text-xs sm:text-sm font-semibold">
-                    <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap">Khách hàng</th>
+                    <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap sticky left-0 z-20">Khách hàng</th>
                     <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap hidden md:table-cell">Đại lý</th>
                     <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap hidden sm:table-cell">Công ty</th>
                     <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap hidden md:table-cell">SĐT</th>
@@ -790,7 +790,7 @@ const App = () => {
                       const isPaid = remaining <= 0;
                       return (
                         <tr key={debt.id} className={`hover:bg-gray-50 transition ${idx % 2 === 0 ? 'bg-gray-50' : ''}`}>
-                          <td className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 font-semibold text-gray-900 text-xs sm:text-sm whitespace-nowrap">{debt.customer_name}</td>
+                          <td className={`px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 font-semibold text-gray-900 text-xs sm:text-sm whitespace-nowrap sticky left-0 z-10 ${idx % 2 === 0 ? 'bg-gray-50' : 'bg-white'}`}>{debt.customer_name}</td>
                           <td className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 hidden md:table-cell text-xs text-gray-600 whitespace-nowrap">
                             {debt.owner_name || debt.owner_username || ''}
                           </td>

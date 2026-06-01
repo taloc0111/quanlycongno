@@ -112,11 +112,11 @@ export default function InvoiceApp() {
         {error && <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-red-700">{error}</div>}
 
         {!loading && !error && (
-          <div className="bg-white rounded-2xl shadow overflow-x-auto">
+          <div className="bg-white rounded-2xl shadow overflow-auto max-h-[70vh]">
             <table className="min-w-full text-sm">
-              <thead className="bg-gray-50">
+              <thead className="bg-gray-50 sticky top-0 z-10 [&_th]:bg-gray-50">
                 <tr>
-                  <th className="px-4 py-3 text-left font-semibold text-gray-600">Số HĐ</th>
+                  <th className="px-4 py-3 text-left font-semibold text-gray-600 sticky left-0 z-20">Số HĐ</th>
                   <th className="px-4 py-3 text-left font-semibold text-gray-600">Khách hàng</th>
                   <th className="px-4 py-3 text-left font-semibold text-gray-600 hidden md:table-cell">Đại lý</th>
                   <th className="px-4 py-3 text-left font-semibold text-gray-600">Ngày</th>
@@ -131,8 +131,8 @@ export default function InvoiceApp() {
                 ) : invoices.map((inv) => {
                   const owned = !currentUserId || inv.user_id === currentUserId;
                   return (
-                  <tr key={inv.id} className="border-t hover:bg-gray-50">
-                    <td className="px-4 py-3 font-medium text-gray-800">{inv.invoice_number}</td>
+                  <tr key={inv.id} className="border-t hover:bg-gray-50 group">
+                    <td className="px-4 py-3 font-medium text-gray-800 sticky left-0 z-10 bg-white group-hover:bg-gray-50">{inv.invoice_number}</td>
                     <td className="px-4 py-3 text-gray-600">{inv.customer_name || inv.company_name || '—'}</td>
                     <td className="px-4 py-3 text-gray-500 text-xs hidden md:table-cell">{inv.owner_name || ''}</td>
                     <td className="px-4 py-3 text-gray-600">{formatDate(inv.issue_date)}</td>

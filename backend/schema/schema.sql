@@ -138,6 +138,19 @@ CREATE TABLE IF NOT EXISTS payments (
 );
 
 -- ---------------------------------------------------------------------------
+-- FUND_DEPOSITS — nộp quỹ (đại lý cấp 2 nộp tiền lên cấp 1). Sổ theo dõi.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS fund_deposits (
+  id           SERIAL PRIMARY KEY,
+  user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,  -- người nộp
+  amount       DECIMAL(15,2) NOT NULL,
+  deposit_date DATE NOT NULL DEFAULT CURRENT_DATE,
+  method       VARCHAR(30),                              -- cash | bank_transfer | momo
+  notes        TEXT,
+  created_at   TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ---------------------------------------------------------------------------
 -- INVOICES — hóa đơn
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS invoices (
@@ -208,6 +221,7 @@ CREATE INDEX IF NOT EXISTS idx_payments_user_id       ON payments(user_id);
 CREATE INDEX IF NOT EXISTS idx_payments_debt_id       ON payments(debt_id);
 CREATE INDEX IF NOT EXISTS idx_payments_passport_id   ON payments(passport_id);
 
+CREATE INDEX IF NOT EXISTS idx_fund_deposits_user_id  ON fund_deposits(user_id);
 CREATE INDEX IF NOT EXISTS idx_invoices_user_id       ON invoices(user_id);
 CREATE INDEX IF NOT EXISTS idx_invoices_customer_id   ON invoices(customer_id);
 CREATE INDEX IF NOT EXISTS idx_invoice_items_invoice  ON invoice_items(invoice_id);
