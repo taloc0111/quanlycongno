@@ -115,6 +115,8 @@ const App = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
   const [filterMonth, setFilterMonth] = useState('all');
+  const [sortBy, setSortBy] = useState('');      // cột đang sort
+  const [sortDir, setSortDir] = useState('asc'); // asc | desc
   const [newCompany, setNewCompany] = useState({
     name: '',
     taxCode: '',
@@ -400,6 +402,33 @@ const App = () => {
 
     return matchesSearch && matchesStatus && matchesMonth;
   });
+
+  // Sắp xếp theo cột đang chọn (bấm tiêu đề để đổi tăng/giảm)
+  const sortValue = (d) => {
+    switch (sortBy) {
+      case 'customer_name': return (d.customer_name || '').toLowerCase();
+      case 'flight_date': return d.flight_date || '';
+      case 'issue_date': return d.issue_date || '';
+      case 'ticket_amount': return parseFloat(d.ticket_amount) || 0;
+      case 'paid': return parseFloat(d.paid) || 0;
+      case 'remaining': return calculateRemaining(d.ticket_amount, d.paid);
+      default: return '';
+    }
+  };
+  const sortedDebts = sortBy
+    ? [...filteredDebts].sort((a, b) => {
+        const va = sortValue(a);
+        const vb = sortValue(b);
+        const cmp = va < vb ? -1 : va > vb ? 1 : 0;
+        return sortDir === 'desc' ? -cmp : cmp;
+      })
+    : filteredDebts;
+
+  const toggleSort = (key) => {
+    if (sortBy === key) setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
+    else { setSortBy(key); setSortDir('asc'); }
+  };
+  const sortArrow = (key) => (sortBy === key ? (sortDir === 'asc' ? ' ▲' : ' ▼') : '');
 
   const totalAmount = filteredDebts.reduce((sum, d) => sum + (parseFloat(d.ticket_amount) || 0), 0);
   const totalPaid = filteredDebts.reduce((sum, d) => sum + (parseFloat(d.paid) || 0), 0);
@@ -776,30 +805,30 @@ const App = () => {
               <table className="w-full min-w-max lg:min-w-0">
                 <thead className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white sticky top-0 z-10 [&_th]:bg-blue-600">
                   <tr className="text-xs sm:text-sm font-semibold">
-                    <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap sticky left-0 z-20">Khách hàng</th>
+                    <th onClick={() => toggleSort('customer_name')} className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap sticky left-0 z-20 cursor-pointer select-none hover:bg-blue-700">Khách hàng{sortArrow('customer_name')}</th>
                     <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap hidden md:table-cell">Đại lý</th>
                     <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap hidden sm:table-cell">Công ty</th>
                     <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap hidden md:table-cell">SĐT</th>
                     <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap">Mã vé</th>
                     <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap hidden lg:table-cell">Hãng</th>
                     <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap hidden lg:table-cell">Hành trình</th>
-                    <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap hidden xl:table-cell">Ngày bay</th>
-                    <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap hidden lg:table-cell">Ngày xuất vé</th>
-                    <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-right whitespace-nowrap">Tiền vé</th>
-                    <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-right whitespace-nowrap hidden sm:table-cell">Đã trả</th>
-                    <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-right whitespace-nowrap">Còn nợ</th>
+                    <th onClick={() => toggleSort('flight_date')} className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap hidden xl:table-cell cursor-pointer select-none hover:bg-blue-700">Ngày bay{sortArrow('flight_date')}</th>
+                    <th onClick={() => toggleSort('issue_date')} className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap hidden lg:table-cell cursor-pointer select-none hover:bg-blue-700">Ngày xuất vé{sortArrow('issue_date')}</th>
+                    <th onClick={() => toggleSort('ticket_amount')} className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-right whitespace-nowrap cursor-pointer select-none hover:bg-blue-700">Tiền vé{sortArrow('ticket_amount')}</th>
+                    <th onClick={() => toggleSort('paid')} className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-right whitespace-nowrap hidden sm:table-cell cursor-pointer select-none hover:bg-blue-700">Đã trả{sortArrow('paid')}</th>
+                    <th onClick={() => toggleSort('remaining')} className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-right whitespace-nowrap cursor-pointer select-none hover:bg-blue-700">Còn nợ{sortArrow('remaining')}</th>
                     <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-center whitespace-nowrap">Thao tác</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-200">
-                  {filteredDebts.length === 0 ? (
+                  {sortedDebts.length === 0 ? (
                     <tr>
                       <td colSpan="13" className="px-4 py-8 sm:py-12 text-center text-gray-500 font-medium text-xs sm:text-base">
                         📊 Chưa có dữ liệu
                       </td>
                     </tr>
                   ) : (
-                    filteredDebts.map((debt, idx) => {
+                    sortedDebts.map((debt, idx) => {
                       const remaining = calculateRemaining(debt.ticket_amount, debt.paid);
                       const isPaid = remaining <= 0;
                       // Trạng thái thanh toán: đã đủ (xanh) / trả một phần (cam) / chưa trả (đỏ)
@@ -808,12 +837,17 @@ const App = () => {
                       const isOverdue = !isPaid && debt.due_date && debt.due_date.slice(0, 10) < new Date().toISOString().slice(0, 10);
                       const dotColor = isOverdue ? 'bg-red-600' : payStatus === 'paid' ? 'bg-green-500' : payStatus === 'partial' ? 'bg-amber-500' : 'bg-red-500';
                       const dotTitle = isOverdue ? 'Quá hạn thanh toán' : payStatus === 'paid' ? 'Đã trả đủ' : payStatus === 'partial' ? 'Trả một phần' : 'Chưa trả';
+                      const owned = !currentUserId || debt.user_id === currentUserId;
                       return (
                         <tr key={debt.id} className={`hover:bg-gray-50 transition ${idx % 2 === 0 ? 'bg-gray-50' : ''}`}>
                           <td className={`px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 font-semibold text-xs sm:text-sm whitespace-nowrap sticky left-0 z-10 ${idx % 2 === 0 ? 'bg-gray-50' : 'bg-white'}`}>
                             <span className="inline-flex items-center gap-2">
                               <span className={`inline-block w-2.5 h-2.5 rounded-full shrink-0 ${dotColor}`} title={dotTitle}></span>
-                              <span className={isOverdue || payStatus === 'unpaid' ? 'text-red-600' : 'text-gray-900'}>{debt.customer_name}</span>
+                              <span
+                                onClick={owned ? () => handleEditDebt(debt) : undefined}
+                                title={owned ? 'Bấm để sửa' : undefined}
+                                className={`${isOverdue || payStatus === 'unpaid' ? 'text-red-600' : 'text-gray-900'} ${owned ? 'cursor-pointer hover:underline' : ''}`}
+                              >{debt.customer_name}</span>
                               {isOverdue && <span className="ml-1 px-1.5 py-0.5 rounded bg-red-100 text-red-700 text-[10px] font-bold">⚠ Quá hạn</span>}
                             </span>
                           </td>

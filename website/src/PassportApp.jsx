@@ -3,6 +3,7 @@ import { Plus, LogOut, Edit2, Trash2, Check, X, Search, Filter, TrendingUp, User
 import ImportModal from './components/ImportModal';
 import AgencyFilter from './components/AgencyFilter';
 import { useAuth } from './auth/AuthContext';
+import { useSort } from './hooks/useSort';
 
 // Cấu hình cột import hộ chiếu (khớp key với backend /passports/import).
 const PASSPORT_IMPORT_FIELDS = [
@@ -58,6 +59,7 @@ export default function PassportApp() {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
   const [filterMonth, setFilterMonth] = useState('');
+  const sorter = useSort();
 
   const [formData, setFormData] = useState({
     passportNumber: '',
@@ -232,6 +234,12 @@ export default function PassportApp() {
 
     return matchesSearch && matchesStatus && matchesMonth;
   });
+
+  const sortedData = sorter.sort(filteredData, (p, k) =>
+    k === 'customer_name' ? (p.customer_name || '').toLowerCase()
+      : k === 'service_date' ? (p.service_date || '')
+      : k === 'total_amount' ? Number(p.total_amount) || 0
+      : k === 'remaining' ? (Number(p.total_amount) || 0) - (Number(p.paid_amount) || 0) : '');
 
   const stats = {
     customers: new Set(filteredData.map(p => p.customer_name)).size,
@@ -503,22 +511,22 @@ export default function PassportApp() {
               <thead className="sticky top-0 z-10 [&_th]:bg-blue-600">
                 <tr className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white">
                   <th className="px-6 py-4 text-left font-semibold sticky left-0 z-20">Số Hồ Sơ</th>
-                  <th className="px-6 py-4 text-left font-semibold">Khách Hàng</th>
+                  <th onClick={() => sorter.toggle('customer_name')} className="px-6 py-4 text-left font-semibold cursor-pointer select-none hover:bg-blue-700">Khách Hàng{sorter.arrow('customer_name')}</th>
                   <th className="px-6 py-4 text-left font-semibold hidden md:table-cell">Đại Lý</th>
                   <th className="px-6 py-4 text-left font-semibold hidden sm:table-cell">SĐT</th>
                   <th className="px-6 py-4 text-left font-semibold hidden lg:table-cell">Địa Chỉ</th>
-                  <th className="px-6 py-4 text-left font-semibold">Ngày Làm</th>
-                  <th className="px-6 py-4 text-right font-semibold">Số Tiền</th>
-                  <th className="px-6 py-4 text-right font-semibold hidden md:table-cell">Còn Nợ</th>
+                  <th onClick={() => sorter.toggle('service_date')} className="px-6 py-4 text-left font-semibold cursor-pointer select-none hover:bg-blue-700">Ngày Làm{sorter.arrow('service_date')}</th>
+                  <th onClick={() => sorter.toggle('total_amount')} className="px-6 py-4 text-right font-semibold cursor-pointer select-none hover:bg-blue-700">Số Tiền{sorter.arrow('total_amount')}</th>
+                  <th onClick={() => sorter.toggle('remaining')} className="px-6 py-4 text-right font-semibold hidden md:table-cell cursor-pointer select-none hover:bg-blue-700">Còn Nợ{sorter.arrow('remaining')}</th>
                   <th className="px-6 py-4 text-center font-semibold">Trạng Thái</th>
                   <th className="px-6 py-4 text-center font-semibold">Thao Tác</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200">
-                {filteredData.length === 0 ? (
+                {sortedData.length === 0 ? (
                   <tr><td colSpan="9" className="px-6 py-12 text-center text-gray-500 font-medium">📊 Chưa có bản ghi</td></tr>
                 ) : (
-                  filteredData.map((p, idx) => {
+                  sortedData.map((p, idx) => {
                     const debt = p.total_amount - p.paid_amount;
                     const status = getDebtStatus(debt);
                     // Chấm trạng thái: đã đủ (xanh) / trả một phần (cam) / chưa trả (đỏ)
@@ -526,6 +534,7 @@ export default function PassportApp() {
                     const isOverdue = debt > 0 && p.due_date && p.due_date.slice(0, 10) < new Date().toISOString().slice(0, 10);
                     const dotColor = isOverdue ? 'bg-red-600' : payStatus === 'paid' ? 'bg-green-500' : payStatus === 'partial' ? 'bg-amber-500' : 'bg-red-500';
                     const dotTitle = isOverdue ? 'Quá hạn thanh toán' : payStatus === 'paid' ? 'Đã trả đủ' : payStatus === 'partial' ? 'Trả một phần' : 'Chưa trả';
+                    const owned = !currentUserId || p.user_id === currentUserId;
                     return (
                       <tr key={p.id} className={`hover:bg-blue-50 transition ${idx % 2 === 0 ? 'bg-gray-50/50' : ''}`}>
                         <td className={`px-6 py-4 font-mono font-semibold text-blue-600 sticky left-0 z-10 ${idx % 2 === 0 ? 'bg-gray-50' : 'bg-white'}`}>
@@ -536,7 +545,11 @@ export default function PassportApp() {
                         <td className="px-6 py-4 font-semibold">
                           <span className="inline-flex items-center gap-2">
                             <span className={`inline-block w-2.5 h-2.5 rounded-full shrink-0 ${dotColor}`} title={dotTitle}></span>
-                            <span className={isOverdue || payStatus === 'unpaid' ? 'text-red-600' : 'text-gray-900'}>{p.customer_name}</span>
+                            <span
+                              onClick={owned ? () => handleEdit(p) : undefined}
+                              title={owned ? 'Bấm để sửa' : undefined}
+                              className={`${isOverdue || payStatus === 'unpaid' ? 'text-red-600' : 'text-gray-900'} ${owned ? 'cursor-pointer hover:underline' : ''}`}
+                            >{p.customer_name}</span>
                             {isOverdue && <span className="ml-1 px-1.5 py-0.5 rounded bg-red-100 text-red-700 text-[10px] font-bold">⚠ Quá hạn</span>}
                           </span>
                         </td>

@@ -5,6 +5,7 @@ import AgencyFilter from './components/AgencyFilter';
 import { apiGet, apiSend } from './services/client';
 import { formatCurrency } from './utils/format';
 import { useAuth } from './auth/AuthContext';
+import { useSort } from './hooks/useSort';
 
 const CUSTOMER_IMPORT_FIELDS = [
   { key: 'name', label: 'Tên khách hàng', required: true, aliases: ['khách hàng', 'ho ten', 'họ tên'] },
@@ -33,6 +34,7 @@ export default function CustomerApp() {
   const [showImport, setShowImport] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(EMPTY);
+  const sorter = useSort();
 
   const load = async () => {
     setLoading(true);
@@ -55,6 +57,9 @@ export default function CustomerApp() {
       (c) => c.name?.toLowerCase().includes(q) || c.phone?.includes(q)
     );
   }, [customers, search]);
+
+  const sorted = sorter.sort(filtered, (c, k) =>
+    k === 'name' ? (c.name || '').toLowerCase() : k === 'outstanding' ? Number(c.outstanding) || 0 : '');
 
   const openAdd = () => { setForm(EMPTY); setEditingId(null); setShowForm(true); };
   const openEdit = (c) => {
@@ -133,20 +138,24 @@ export default function CustomerApp() {
             <table className="min-w-full text-sm">
               <thead className="bg-gray-50 sticky top-0 z-10 [&_th]:bg-gray-50">
                 <tr>
-                  <th className="px-4 py-3 text-left font-semibold text-gray-600 sticky left-0 z-20">Tên</th>
+                  <th onClick={() => sorter.toggle('name')} className="px-4 py-3 text-left font-semibold text-gray-600 sticky left-0 z-20 cursor-pointer select-none hover:bg-gray-100">Tên{sorter.arrow('name')}</th>
                   <th className="px-4 py-3 text-left font-semibold text-gray-600">SĐT</th>
                   <th className="px-4 py-3 text-left font-semibold text-gray-600 hidden md:table-cell">Đại lý</th>
                   <th className="px-4 py-3 text-left font-semibold text-gray-600">Loại</th>
-                  <th className="px-4 py-3 text-right font-semibold text-gray-600">Còn nợ</th>
+                  <th onClick={() => sorter.toggle('outstanding')} className="px-4 py-3 text-right font-semibold text-gray-600 cursor-pointer select-none hover:bg-gray-100">Còn nợ{sorter.arrow('outstanding')}</th>
                   <th className="px-4 py-3 text-right font-semibold text-gray-600"></th>
                 </tr>
               </thead>
               <tbody>
-                {filtered.length === 0 ? (
+                {sorted.length === 0 ? (
                   <tr><td colSpan={6} className="px-4 py-8 text-center text-gray-400">Chưa có khách hàng.</td></tr>
-                ) : filtered.map((c) => (
+                ) : sorted.map((c) => (
                   <tr key={c.id} className="border-t hover:bg-gray-50 group">
-                    <td className="px-4 py-3 font-medium text-gray-800 sticky left-0 z-10 bg-white group-hover:bg-gray-50">{c.name}</td>
+                    <td className="px-4 py-3 font-medium text-gray-800 sticky left-0 z-10 bg-white group-hover:bg-gray-50">
+                      {(!currentUserId || c.user_id === currentUserId) ? (
+                        <span onClick={() => openEdit(c)} title="Bấm để sửa" className="cursor-pointer hover:underline">{c.name}</span>
+                      ) : c.name}
+                    </td>
                     <td className="px-4 py-3 text-gray-600">{c.phone || '—'}</td>
                     <td className="px-4 py-3 text-gray-500 text-xs hidden md:table-cell">{c.owner_name || c.owner_username || ''}</td>
                     <td className="px-4 py-3 text-gray-600">{c.type === 'company' ? 'Công ty' : 'Cá nhân'}</td>

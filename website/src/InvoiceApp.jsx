@@ -4,6 +4,7 @@ import AgencyFilter from './components/AgencyFilter';
 import { apiGet, apiSend } from './services/client';
 import { formatCurrency, formatDate } from './utils/format';
 import { useAuth } from './auth/AuthContext';
+import { useSort } from './hooks/useSort';
 
 const STATUS = {
   unpaid: { label: 'Chưa thu', cls: 'bg-red-100 text-red-700' },
@@ -28,6 +29,11 @@ export default function InvoiceApp() {
     invoiceNumber: '', customerId: '', issueDate: '', dueDate: '', taxAmount: '', notes: '',
     items: [emptyItem()],
   });
+  const sorter = useSort();
+  const sortedInvoices = sorter.sort(invoices, (i, k) =>
+    k === 'invoice_number' ? (i.invoice_number || '').toLowerCase()
+      : k === 'issue_date' ? (i.issue_date || '')
+      : k === 'total_amount' ? Number(i.total_amount) || 0 : '');
 
   const load = async () => {
     setLoading(true);
@@ -116,23 +122,25 @@ export default function InvoiceApp() {
             <table className="min-w-full text-sm">
               <thead className="bg-gray-50 sticky top-0 z-10 [&_th]:bg-gray-50">
                 <tr>
-                  <th className="px-4 py-3 text-left font-semibold text-gray-600 sticky left-0 z-20">Số HĐ</th>
+                  <th onClick={() => sorter.toggle('invoice_number')} className="px-4 py-3 text-left font-semibold text-gray-600 sticky left-0 z-20 cursor-pointer select-none hover:bg-gray-100">Số HĐ{sorter.arrow('invoice_number')}</th>
                   <th className="px-4 py-3 text-left font-semibold text-gray-600">Khách hàng</th>
                   <th className="px-4 py-3 text-left font-semibold text-gray-600 hidden md:table-cell">Đại lý</th>
-                  <th className="px-4 py-3 text-left font-semibold text-gray-600">Ngày</th>
-                  <th className="px-4 py-3 text-right font-semibold text-gray-600">Tổng tiền</th>
+                  <th onClick={() => sorter.toggle('issue_date')} className="px-4 py-3 text-left font-semibold text-gray-600 cursor-pointer select-none hover:bg-gray-100">Ngày{sorter.arrow('issue_date')}</th>
+                  <th onClick={() => sorter.toggle('total_amount')} className="px-4 py-3 text-right font-semibold text-gray-600 cursor-pointer select-none hover:bg-gray-100">Tổng tiền{sorter.arrow('total_amount')}</th>
                   <th className="px-4 py-3 text-left font-semibold text-gray-600">Trạng thái</th>
                   <th className="px-4 py-3"></th>
                 </tr>
               </thead>
               <tbody>
-                {invoices.length === 0 ? (
+                {sortedInvoices.length === 0 ? (
                   <tr><td colSpan={7} className="px-4 py-8 text-center text-gray-400">Chưa có hóa đơn.</td></tr>
-                ) : invoices.map((inv) => {
+                ) : sortedInvoices.map((inv) => {
                   const owned = !currentUserId || inv.user_id === currentUserId;
                   return (
                   <tr key={inv.id} className="border-t hover:bg-gray-50 group">
-                    <td className="px-4 py-3 font-medium text-gray-800 sticky left-0 z-10 bg-white group-hover:bg-gray-50">{inv.invoice_number}</td>
+                    <td className="px-4 py-3 font-medium text-gray-800 sticky left-0 z-10 bg-white group-hover:bg-gray-50">
+                      <span onClick={() => view(inv.id)} title="Bấm để xem" className="cursor-pointer hover:underline text-blue-700">{inv.invoice_number}</span>
+                    </td>
                     <td className="px-4 py-3 text-gray-600">{inv.customer_name || inv.company_name || '—'}</td>
                     <td className="px-4 py-3 text-gray-500 text-xs hidden md:table-cell">{inv.owner_name || ''}</td>
                     <td className="px-4 py-3 text-gray-600">{formatDate(inv.issue_date)}</td>
