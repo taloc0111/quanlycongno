@@ -65,6 +65,7 @@ export default function PassportApp() {
     phoneNumber: '',
     address: '',
     serviceDate: '',
+    dueDate: '',
     totalAmount: '',
     paidAmount: '',
     notes: ''
@@ -141,6 +142,7 @@ export default function PassportApp() {
           phoneNumber: formData.phoneNumber,
           address: formData.address,
           serviceDate: formData.serviceDate,
+          dueDate: formData.dueDate || null,
           totalAmount: parseFloat(formData.totalAmount),
           paidAmount: parseFloat(formData.paidAmount) || 0,
           notes: formData.notes
@@ -169,6 +171,7 @@ export default function PassportApp() {
       phoneNumber: passport.phone_number,
       address: passport.address || '',
       serviceDate: passport.service_date,
+      dueDate: (passport.due_date || '').slice(0, 10),
       totalAmount: passport.total_amount,
       paidAmount: passport.paid_amount,
       notes: passport.notes
@@ -196,6 +199,7 @@ export default function PassportApp() {
       phoneNumber: '',
       address: '',
       serviceDate: '',
+      dueDate: '',
       totalAmount: '',
       paidAmount: '',
       notes: ''
@@ -320,6 +324,7 @@ export default function PassportApp() {
                   phoneNumber: '',
                   address: '',
                   serviceDate: '',
+                  dueDate: '',
                   totalAmount: '',
                   paidAmount: '',
                   notes: ''
@@ -424,11 +429,20 @@ export default function PassportApp() {
                   </div>
                   <div>
                     <label className="block text-sm font-semibold text-gray-700 mb-2">Ngày Làm *</label>
-                    <input 
-                      type="date" 
-                      value={formData.serviceDate} 
-                      onChange={(e) => setFormData({...formData, serviceDate: e.target.value})} 
-                      className="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none transition" 
+                    <input
+                      type="date"
+                      value={formData.serviceDate}
+                      onChange={(e) => setFormData({...formData, serviceDate: e.target.value})}
+                      className="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none transition"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">Hạn thanh toán</label>
+                    <input
+                      type="date"
+                      value={formData.dueDate}
+                      onChange={(e) => setFormData({...formData, dueDate: e.target.value})}
+                      className="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none transition"
                     />
                   </div>
                   <div>
@@ -507,6 +521,11 @@ export default function PassportApp() {
                   filteredData.map((p, idx) => {
                     const debt = p.total_amount - p.paid_amount;
                     const status = getDebtStatus(debt);
+                    // Chấm trạng thái: đã đủ (xanh) / trả một phần (cam) / chưa trả (đỏ)
+                    const payStatus = debt <= 0 ? 'paid' : ((parseFloat(p.paid_amount) || 0) > 0 ? 'partial' : 'unpaid');
+                    const isOverdue = debt > 0 && p.due_date && p.due_date.slice(0, 10) < new Date().toISOString().slice(0, 10);
+                    const dotColor = isOverdue ? 'bg-red-600' : payStatus === 'paid' ? 'bg-green-500' : payStatus === 'partial' ? 'bg-amber-500' : 'bg-red-500';
+                    const dotTitle = isOverdue ? 'Quá hạn thanh toán' : payStatus === 'paid' ? 'Đã trả đủ' : payStatus === 'partial' ? 'Trả một phần' : 'Chưa trả';
                     return (
                       <tr key={p.id} className={`hover:bg-blue-50 transition ${idx % 2 === 0 ? 'bg-gray-50/50' : ''}`}>
                         <td className={`px-6 py-4 font-mono font-semibold text-blue-600 sticky left-0 z-10 ${idx % 2 === 0 ? 'bg-gray-50' : 'bg-white'}`}>
@@ -514,7 +533,13 @@ export default function PassportApp() {
                             {p.passport_number || 'N/A'}
                           </span>
                         </td>
-                        <td className="px-6 py-4 font-semibold text-gray-900">{p.customer_name}</td>
+                        <td className="px-6 py-4 font-semibold">
+                          <span className="inline-flex items-center gap-2">
+                            <span className={`inline-block w-2.5 h-2.5 rounded-full shrink-0 ${dotColor}`} title={dotTitle}></span>
+                            <span className={isOverdue || payStatus === 'unpaid' ? 'text-red-600' : 'text-gray-900'}>{p.customer_name}</span>
+                            {isOverdue && <span className="ml-1 px-1.5 py-0.5 rounded bg-red-100 text-red-700 text-[10px] font-bold">⚠ Quá hạn</span>}
+                          </span>
+                        </td>
                         <td className="px-6 py-4 text-gray-500 text-sm hidden md:table-cell">{p.owner_name || p.owner_username || ''}</td>
                         <td className="px-6 py-4 text-gray-600 hidden sm:table-cell">{p.phone_number}</td>
                         <td className="px-6 py-4 text-gray-600 hidden lg:table-cell text-sm">{p.address || 'N/A'}</td>

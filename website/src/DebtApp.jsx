@@ -104,6 +104,7 @@ const App = () => {
     route: '',
     flightDate: '',
     issueDate: '',
+    dueDate: '',
     ticketAmount: '',
     paid: '',
     notes: '',
@@ -243,6 +244,7 @@ const App = () => {
         route: newDebt.route,
         flightDate: newDebt.flightDate,
         issueDate: newDebt.issueDate || new Date().toISOString().split('T')[0],
+        dueDate: newDebt.dueDate || null,
         ticketAmount: parseFloat(newDebt.ticketAmount),
         paid: parseFloat(newDebt.paid) || 0,
         notes: newDebt.notes,
@@ -266,6 +268,7 @@ const App = () => {
           route: '',
           flightDate: '',
           issueDate: '',
+          dueDate: '',
           ticketAmount: '',
           paid: '',
           notes: '',
@@ -286,6 +289,7 @@ const App = () => {
       route: debt.route,
       flightDate: debt.flight_date,
       issueDate: debt.issue_date,
+      dueDate: (debt.due_date || '').slice(0, 10),
       ticketAmount: debt.ticket_amount,
       paid: debt.paid,
       notes: debt.notes,
@@ -534,6 +538,7 @@ const App = () => {
                     route: '',
                     flightDate: '',
                     issueDate: '',
+                    dueDate: '',
                     ticketAmount: '',
                     paid: '',
                     notes: '',
@@ -709,6 +714,15 @@ const App = () => {
                   />
                 </div>
                 <div>
+                  <label className="block text-xs sm:text-sm font-semibold text-gray-700 mb-1">Hạn thanh toán</label>
+                  <input
+                    type="date"
+                    value={newDebt.dueDate}
+                    onChange={(e) => setNewDebt({ ...newDebt, dueDate: e.target.value })}
+                    className="w-full px-3 sm:px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none transition text-xs sm:text-sm"
+                  />
+                </div>
+                <div>
                   <label className="block text-xs sm:text-sm font-semibold text-gray-700 mb-1">Tiền vé (VNĐ) *</label>
                   <input
                     type="number"
@@ -788,9 +802,21 @@ const App = () => {
                     filteredDebts.map((debt, idx) => {
                       const remaining = calculateRemaining(debt.ticket_amount, debt.paid);
                       const isPaid = remaining <= 0;
+                      // Trạng thái thanh toán: đã đủ (xanh) / trả một phần (cam) / chưa trả (đỏ)
+                      const payStatus = isPaid ? 'paid' : ((parseFloat(debt.paid) || 0) > 0 ? 'partial' : 'unpaid');
+                      // Quá hạn = còn nợ + đã qua hạn thanh toán
+                      const isOverdue = !isPaid && debt.due_date && debt.due_date.slice(0, 10) < new Date().toISOString().slice(0, 10);
+                      const dotColor = isOverdue ? 'bg-red-600' : payStatus === 'paid' ? 'bg-green-500' : payStatus === 'partial' ? 'bg-amber-500' : 'bg-red-500';
+                      const dotTitle = isOverdue ? 'Quá hạn thanh toán' : payStatus === 'paid' ? 'Đã trả đủ' : payStatus === 'partial' ? 'Trả một phần' : 'Chưa trả';
                       return (
                         <tr key={debt.id} className={`hover:bg-gray-50 transition ${idx % 2 === 0 ? 'bg-gray-50' : ''}`}>
-                          <td className={`px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 font-semibold text-gray-900 text-xs sm:text-sm whitespace-nowrap sticky left-0 z-10 ${idx % 2 === 0 ? 'bg-gray-50' : 'bg-white'}`}>{debt.customer_name}</td>
+                          <td className={`px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 font-semibold text-xs sm:text-sm whitespace-nowrap sticky left-0 z-10 ${idx % 2 === 0 ? 'bg-gray-50' : 'bg-white'}`}>
+                            <span className="inline-flex items-center gap-2">
+                              <span className={`inline-block w-2.5 h-2.5 rounded-full shrink-0 ${dotColor}`} title={dotTitle}></span>
+                              <span className={isOverdue || payStatus === 'unpaid' ? 'text-red-600' : 'text-gray-900'}>{debt.customer_name}</span>
+                              {isOverdue && <span className="ml-1 px-1.5 py-0.5 rounded bg-red-100 text-red-700 text-[10px] font-bold">⚠ Quá hạn</span>}
+                            </span>
+                          </td>
                           <td className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 hidden md:table-cell text-xs text-gray-600 whitespace-nowrap">
                             {debt.owner_name || debt.owner_username || ''}
                           </td>
