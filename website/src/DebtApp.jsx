@@ -859,17 +859,17 @@ const App = () => {
                 <thead className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white sticky top-0 z-10 [&_th]:bg-blue-600">
                   <tr className="text-xs sm:text-sm font-semibold">
                     <th onClick={() => toggleSort('customer_name')} className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap sticky left-0 z-20 cursor-pointer select-none hover:bg-blue-700">Khách hàng{sortArrow('customer_name')}</th>
-                    <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap hidden md:table-cell">Đại lý</th>
-                    <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap hidden sm:table-cell">Công ty</th>
-                    <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap hidden md:table-cell">SĐT</th>
                     <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap">Mã vé</th>
-                    <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap hidden lg:table-cell">Hãng</th>
                     <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap hidden lg:table-cell">Hành trình</th>
                     <th onClick={() => toggleSort('flight_date')} className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap hidden xl:table-cell cursor-pointer select-none hover:bg-blue-700">Ngày bay{sortArrow('flight_date')}</th>
+                    <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap hidden lg:table-cell">Hãng</th>
                     <th onClick={() => toggleSort('issue_date')} className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap hidden lg:table-cell cursor-pointer select-none hover:bg-blue-700">Ngày xuất vé{sortArrow('issue_date')}</th>
                     <th onClick={() => toggleSort('ticket_amount')} className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-right whitespace-nowrap cursor-pointer select-none hover:bg-blue-700">Tiền vé{sortArrow('ticket_amount')}</th>
                     <th onClick={() => toggleSort('paid')} className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-right whitespace-nowrap hidden sm:table-cell cursor-pointer select-none hover:bg-blue-700">Đã trả{sortArrow('paid')}</th>
                     <th onClick={() => toggleSort('remaining')} className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-right whitespace-nowrap cursor-pointer select-none hover:bg-blue-700">Còn nợ{sortArrow('remaining')}</th>
+                    <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap hidden md:table-cell">SĐT</th>
+                    <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap hidden sm:table-cell">Công ty</th>
+                    <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap hidden md:table-cell">Đại lý</th>
                     <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-center whitespace-nowrap">Thao tác</th>
                   </tr>
                 </thead>
@@ -904,27 +904,18 @@ const App = () => {
                               {isOverdue && <span className="ml-1 px-1.5 py-0.5 rounded bg-red-100 text-red-700 text-[10px] font-bold">⚠ Quá hạn</span>}
                             </span>
                           </td>
-                          <td className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 hidden md:table-cell text-xs text-gray-600 whitespace-nowrap">
-                            {debt.owner_name || debt.owner_username || ''}
-                          </td>
-                          <td className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 hidden sm:table-cell">
-                            <span className="px-2 sm:px-3 py-0.5 sm:py-1 bg-indigo-100 text-indigo-800 rounded-full text-xs font-medium whitespace-nowrap">
-                              {getCompanyById(debt.company_id)?.name || 'Khách lẻ'}
-                            </span>
-                          </td>
-                          <td className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 hidden md:table-cell text-xs sm:text-sm text-gray-600 whitespace-nowrap">{debt.phone_number}</td>
                           <td className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4">
                             <span className="px-2 sm:px-3 py-0.5 sm:py-1 bg-blue-100 text-blue-800 rounded-lg text-xs font-mono whitespace-nowrap">
                               {debt.ticket_code}
                             </span>
                           </td>
-                          <td className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-xs sm:text-sm text-gray-600 whitespace-nowrap hidden lg:table-cell">{debt.airline}</td>
                           <td className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 hidden lg:table-cell">
                             <span className="px-2 sm:px-3 py-0.5 sm:py-1 bg-teal-100 text-teal-800 rounded-full text-xs font-medium whitespace-nowrap">
                               {debt.route}
                             </span>
                           </td>
                           <td className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-xs sm:text-sm font-medium text-gray-900 hidden xl:table-cell whitespace-nowrap">{formatDateDisplay(debt.flight_date)}</td>
+                          <td className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-xs sm:text-sm text-gray-600 whitespace-nowrap hidden lg:table-cell">{debt.airline}</td>
                           <td className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-xs sm:text-sm font-medium text-gray-600 hidden lg:table-cell">
                             <span className="px-2 sm:px-3 py-0.5 sm:py-1 bg-green-100 text-green-800 rounded-lg whitespace-nowrap">
                               {formatDateDisplay(debt.issue_date)}
@@ -941,6 +932,15 @@ const App = () => {
                           </td>
                           <td className={`px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-right font-bold text-xs sm:text-sm whitespace-nowrap ${isPaid ? 'text-green-600' : 'text-red-600'}`}>
                             {formatCurrency(remaining)}
+                          </td>
+                          <td className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 hidden md:table-cell text-xs sm:text-sm text-gray-600 whitespace-nowrap">{debt.phone_number}</td>
+                          <td className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 hidden sm:table-cell">
+                            <span className="px-2 sm:px-3 py-0.5 sm:py-1 bg-indigo-100 text-indigo-800 rounded-full text-xs font-medium whitespace-nowrap">
+                              {getCompanyById(debt.company_id)?.name || 'Khách lẻ'}
+                            </span>
+                          </td>
+                          <td className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 hidden md:table-cell text-xs text-gray-600 whitespace-nowrap">
+                            {debt.owner_name || debt.owner_username || ''}
                           </td>
                           <td className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-center">
                             {(!currentUserId || debt.user_id === currentUserId) ? (
