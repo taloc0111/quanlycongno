@@ -166,7 +166,11 @@ export default function CustomerApp() {
                     </td>
                     <td className="px-4 py-3 text-gray-600">{c.phone || '—'}</td>
                     <td className="px-4 py-3 text-gray-500 text-xs hidden md:table-cell">{c.owner_name || c.owner_username || ''}</td>
-                    <td className="px-4 py-3 text-gray-600">{c.type === 'company' ? 'Công ty' : 'Cá nhân'}</td>
+                    <td className="px-4 py-3 text-gray-600">
+                      {c.type === 'company'
+                        ? (companies.find((co) => String(co.id) === String(c.company_id))?.name || 'Công ty')
+                        : 'Cá nhân'}
+                    </td>
                     <td className="px-4 py-3 text-right font-semibold text-red-600">{formatCurrency(c.outstanding)}</td>
                     <td className="px-4 py-3 text-right whitespace-nowrap">
                       {(!currentUserId || c.user_id === currentUserId) ? (
@@ -201,32 +205,22 @@ export default function CustomerApp() {
                   value={form.type}
                   onChange={(e) => {
                     const type = e.target.value;
-                    // Đổi sang cá nhân: bỏ liên kết công ty. Đổi sang công ty: chờ chọn từ dropdown.
+                    // Khách lẻ thì bỏ liên kết công ty; "thuộc công ty" thì chờ chọn ở dropdown.
                     setForm(type === 'individual' ? { ...form, type, companyId: '' } : { ...form, type });
                   }}
                   className="w-full border rounded-lg px-3 py-2"
                 >
-                  <option value="individual">Cá nhân</option>
-                  <option value="company">Công ty</option>
+                  <option value="individual">Cá nhân (khách lẻ)</option>
+                  <option value="company">Thuộc công ty</option>
                 </select>
               </div>
 
               {form.type === 'company' && (
                 <div>
-                  <label className="block text-sm text-gray-600 mb-1">Chọn công ty *</label>
+                  <label className="block text-sm text-gray-600 mb-1">Công ty *</label>
                   <select
                     value={form.companyId}
-                    onChange={(e) => {
-                      const comp = companies.find((c) => String(c.id) === e.target.value);
-                      setForm({
-                        ...form,
-                        companyId: e.target.value,
-                        name: comp?.name || '',
-                        phone: comp?.phone || '',
-                        email: comp?.email || '',
-                        address: comp?.address || '',
-                      });
-                    }}
+                    onChange={(e) => setForm({ ...form, companyId: e.target.value })}
                     className="w-full border rounded-lg px-3 py-2"
                   >
                     <option value="">— Chọn công ty —</option>
@@ -240,43 +234,24 @@ export default function CustomerApp() {
                 </div>
               )}
 
+              {/* Thông tin từng khách bay — luôn là một cá nhân, luôn nhập được. */}
               {[
                 ['name', 'Tên khách hàng *'], ['phone', 'Số điện thoại'],
-                ['email', 'Email'], ['address', 'Địa chỉ'],
-              ].map(([k, label]) => {
-                const readOnly = form.type === 'company';
-                return (
-                  <div key={k}>
-                    <label className="block text-sm text-gray-600 mb-1">{label}</label>
-                    <input
-                      value={form[k]}
-                      readOnly={readOnly}
-                      onChange={(e) => setForm({ ...form, [k]: e.target.value })}
-                      className={`w-full border rounded-lg px-3 py-2 focus:border-blue-500 focus:outline-none ${readOnly ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : ''}`}
-                    />
-                  </div>
-                );
-              })}
-              {form.type === 'company' && (
-                <p className="text-xs text-gray-400 -mt-1">Thông tin lấy từ công ty đã chọn. Muốn sửa, vào mục Công ty.</p>
-              )}
-
-              {form.type === 'individual' && (
-                <>
-                  <div>
-                    <label className="block text-sm text-gray-600 mb-1">CCCD/CMND</label>
-                    <input
-                      value={form.idNumber}
-                      onChange={(e) => setForm({ ...form, idNumber: e.target.value })}
-                      className="w-full border rounded-lg px-3 py-2 focus:border-blue-500 focus:outline-none"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm text-gray-600 mb-1">Ngày sinh</label>
-                    <VnDatePicker value={form.birthday} onChange={(v) => setForm({ ...form, birthday: v })} />
-                  </div>
-                </>
-              )}
+                ['email', 'Email'], ['address', 'Địa chỉ'], ['idNumber', 'CCCD/CMND'],
+              ].map(([k, label]) => (
+                <div key={k}>
+                  <label className="block text-sm text-gray-600 mb-1">{label}</label>
+                  <input
+                    value={form[k]}
+                    onChange={(e) => setForm({ ...form, [k]: e.target.value })}
+                    className="w-full border rounded-lg px-3 py-2 focus:border-blue-500 focus:outline-none"
+                  />
+                </div>
+              ))}
+              <div>
+                <label className="block text-sm text-gray-600 mb-1">Ngày sinh</label>
+                <VnDatePicker value={form.birthday} onChange={(v) => setForm({ ...form, birthday: v })} />
+              </div>
             </div>
             <div className="flex justify-end gap-3 border-t px-6 py-4">
               <button onClick={() => setShowForm(false)} className="px-5 py-2 bg-gray-200 rounded-lg font-semibold text-sm">Huỷ</button>
