@@ -796,26 +796,34 @@ const App = () => {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs sm:text-sm font-semibold text-gray-700 mb-1">Đã trả (VNĐ)</label>
+                  <label className="block text-xs sm:text-sm font-semibold text-gray-700 mb-1">
+                    {editingDebtId ? 'Đã trả (tổng — chỉ đọc)' : 'Trả trước (VNĐ)'}
+                  </label>
                   <input
                     type="number"
-                    placeholder="Nhập số tiền đã trả"
+                    placeholder={editingDebtId ? '' : 'Số tiền khách trả trước (nếu có)'}
                     value={newDebt.paid}
                     onChange={(e) => setNewDebt({ ...newDebt, paid: e.target.value })}
-                    className="w-full px-3 sm:px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none transition text-xs sm:text-sm"
+                    disabled={!!editingDebtId}
+                    className="w-full px-3 sm:px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none transition text-xs sm:text-sm disabled:bg-gray-100 disabled:text-gray-500"
                   />
+                  {editingDebtId && (
+                    <p className="text-xs text-gray-400 mt-1">Dùng nút 💵 Thanh toán để ghi nhận thêm các lần trả.</p>
+                  )}
                 </div>
-                <div>
-                  <label className="block text-xs sm:text-sm font-semibold text-gray-700 mb-1">Thanh toán vào TK</label>
-                  <select
-                    value={newDebt.paymentTarget}
-                    onChange={(e) => setNewDebt({ ...newDebt, paymentTarget: e.target.value })}
-                    className="w-full px-3 sm:px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none transition text-xs sm:text-sm"
-                  >
-                    <option value="self">TK cá nhân</option>
-                    <option value="agency">TK cấp trên (nộp quỹ)</option>
-                  </select>
-                </div>
+                {!editingDebtId && (
+                  <div>
+                    <label className="block text-xs sm:text-sm font-semibold text-gray-700 mb-1">Trả trước vào TK</label>
+                    <select
+                      value={newDebt.paymentTarget}
+                      onChange={(e) => setNewDebt({ ...newDebt, paymentTarget: e.target.value })}
+                      className="w-full px-3 sm:px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none transition text-xs sm:text-sm"
+                    >
+                      <option value="self">TK cá nhân</option>
+                      <option value="agency">TK cấp trên (nộp quỹ)</option>
+                    </select>
+                  </div>
+                )}
                 <div>
                   <label className="block text-xs sm:text-sm font-semibold text-gray-700 mb-1">Ghi chú</label>
                   <input

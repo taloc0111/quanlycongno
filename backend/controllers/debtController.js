@@ -82,43 +82,34 @@ const updateDebt = async (req, res) => {
   const { id } = req.params;
   const {
     customerName, phoneNumber, ticketCode, airline, route, flightDate,
-    issueDate, dueDate, ticketAmount, paid, notes, companyId, paymentTarget
+    issueDate, dueDate, ticketAmount, notes, companyId
   } = req.body;
 
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const newPaid = parseFloat(paid) || 0;
 
     const customerId = await upsertCustomer(client, req.user.id, {
       name: customerName, phone: phoneNumber, type: 'individual',
     });
+    // KHÔNG cập nhật cột `paid` và KHÔNG đụng bảng payments ở đây:
+    // `paid` là tổng suy ra từ payments (xem recomputePaid). Tiền trả thêm
+    // được ghi nhận qua màn hình Thanh toán để giữ nguyên lịch sử/audit trail.
     const result = await client.query(
       `UPDATE debts SET
         customer_id = $2, customer_name = $3, phone_number = $4, ticket_code = $5,
         airline = $6, route = $7, flight_date = $8, issue_date = $9, due_date = $10,
-        ticket_amount = $11, paid = $12, notes = $13, company_id = $14
-      WHERE id = $1 AND user_id = $15
+        ticket_amount = $11, notes = $12, company_id = $13
+      WHERE id = $1 AND user_id = $14
       RETURNING *`,
       [
         id, customerId, customerName, phoneNumber, ticketCode, airline || '', route, flightDate,
-        issueDate, dueDate || null, ticketAmount, newPaid, notes, companyId || null, req.user.id,
+        issueDate, dueDate || null, ticketAmount, notes, companyId || null, req.user.id,
       ]
     );
     if (result.rows.length === 0) {
       await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Debt not found' });
-    }
-    // Xóa tất cả payment cũ của debt này rồi tạo lại 1 payment mới
-    // với đúng payment_target và số tiền hiện tại.
-    const target = ['self', 'agency'].includes(paymentTarget) ? paymentTarget : 'self';
-    await client.query('DELETE FROM payments WHERE debt_id = $1 AND user_id = $2', [id, req.user.id]);
-    if (newPaid > 0) {
-      await client.query(
-        `INSERT INTO payments (user_id, debt_id, amount, payment_date, method, payment_target)
-         VALUES ($1, $2, $3, CURRENT_DATE, 'cash', $4)`,
-        [req.user.id, id, newPaid, target]
-      );
     }
     await client.query('COMMIT');
     res.json(result.rows[0]);

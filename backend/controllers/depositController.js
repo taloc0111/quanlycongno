@@ -49,11 +49,15 @@ const updateDeposit = async (req, res) => {
   try {
     const { id } = req.params;
     const { amount, depositDate, method, notes } = req.body;
+    const amt = parseFloat(amount);
+    if (!Number.isFinite(amt) || amt === 0) {
+      return res.status(400).json({ error: 'Số tiền không hợp lệ' });
+    }
     const result = await pool.query(
       `UPDATE fund_deposits SET amount = $2, deposit_date = $3, method = $4, notes = $5
        WHERE id = $1 AND user_id = $6
        RETURNING *`,
-      [id, parseFloat(amount) || 0, depositDate || null, method || null, notes || null, req.user.id]
+      [id, amt, depositDate || null, method || null, notes || null, req.user.id]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Deposit not found' });
     res.json(result.rows[0]);
@@ -79,7 +83,8 @@ const deleteDeposit = async (req, res) => {
 };
 
 // Tính số dư / nợ với đại lý cấp trên.
-// Công thức: đã nộp quỹ + khách trả thẳng vào TK cấp trên − tổng tiền vé phải trả cấp trên.
+// Công thức: đã nộp quỹ (gồm điều chỉnh đầu kỳ, âm = nợ cũ) + khách trả thẳng vào TK cấp trên.
+// Âm = còn nợ cấp trên, dương = dư.
 const getBalance = async (req, res) => {
   try {
     const userId = req.user.id;
