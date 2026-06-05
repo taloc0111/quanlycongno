@@ -18,6 +18,7 @@ const depositRoutes = require('./routes/deposits');
 const statsRoutes = require('./routes/stats');
 const userRoutes = require('./routes/users');
 const routeRoutes = require('./routes/routes');
+const noteRoutes = require('./routes/notes');
 
 // Import middleware
 const { authenticateToken } = require('./middleware/auth');
@@ -54,6 +55,7 @@ app.use('/api/invoices', authenticateToken, attachScope, invoiceRoutes);
 app.use('/api/deposits', authenticateToken, attachScope, depositRoutes);
 app.use('/api/stats', authenticateToken, attachScope, statsRoutes);
 app.use('/api/routes', authenticateToken, routeRoutes);
+app.use('/api/notes', authenticateToken, noteRoutes);
 
 // Health check (cho Render/uptime monitor)
 app.get('/api/health', (req, res) => {
