@@ -361,6 +361,64 @@ const App = () => {
     return companies.find(c => String(c.id) === String(companyId));
   };
 
+  const resetCompanyForm = () => setNewCompany({
+    name: '', taxCode: '', address: '', email: '', contactPerson: '', phone: '', creditLimit: ''
+  });
+
+  const handleSaveCompany = () => {
+    if (!newCompany.name.trim()) {
+      alert('⚠️ Vui lòng nhập tên công ty');
+      return;
+    }
+    const url = editingCompanyId ? `${API_URL}/companies/${editingCompanyId}` : `${API_URL}/companies`;
+    const method = editingCompanyId ? 'PUT' : 'POST';
+    fetch(url, {
+      method,
+      headers: getHeaders(),
+      body: JSON.stringify({
+        name: newCompany.name.trim(),
+        taxCode: newCompany.taxCode,
+        address: newCompany.address,
+        email: newCompany.email,
+        contactPerson: newCompany.contactPerson,
+        phone: newCompany.phone,
+        creditLimit: parseFloat(newCompany.creditLimit) || 0,
+      }),
+    })
+      .then(res => { if (!res.ok) throw new Error(); return res.json(); })
+      .then(saved => {
+        setCompanies(editingCompanyId
+          ? companies.map(c => (c.id === editingCompanyId ? saved : c))
+          : [...companies, saved]);
+        resetCompanyForm();
+        setEditingCompanyId(null);
+        setShowCompanyForm(false);
+        alert(editingCompanyId ? '✅ Cập nhật công ty thành công' : '✅ Đã thêm công ty mới');
+      })
+      .catch(() => alert('❌ Lỗi khi lưu công ty'));
+  };
+
+  const handleEditCompany = (c) => {
+    setNewCompany({
+      name: c.name || '',
+      taxCode: c.tax_code || '',
+      address: c.address || '',
+      email: c.email || '',
+      contactPerson: c.contact_person || '',
+      phone: c.phone || '',
+      creditLimit: c.credit_limit || '',
+    });
+    setEditingCompanyId(c.id);
+    setShowCompanyForm(true);
+  };
+
+  const handleDeleteCompany = (id) => {
+    if (confirm('Xóa công ty này?')) {
+      fetch(`${API_URL}/companies/${id}`, { method: 'DELETE', headers: getHeaders() })
+        .then(() => setCompanies(companies.filter(c => c.id !== id)));
+    }
+  };
+
   const exportToCSV = () => {
     const headers = [
       'Tên khách hàng',
@@ -1058,7 +1116,7 @@ const App = () => {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-2 sm:gap-4 mb-3 sm:mb-4">
                     <input
                       type="text"
-                      placeholder="Tên công ty"
+                      placeholder="Tên công ty *"
                       value={newCompany.name}
                       onChange={(e) => setNewCompany({ ...newCompany, name: e.target.value })}
                       className="px-3 sm:px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-indigo-500 focus:outline-none transition text-xs sm:text-sm"
@@ -1070,16 +1128,84 @@ const App = () => {
                       onChange={(e) => setNewCompany({ ...newCompany, taxCode: e.target.value })}
                       className="px-3 sm:px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-indigo-500 focus:outline-none transition text-xs sm:text-sm"
                     />
+                    <input
+                      type="text"
+                      placeholder="Địa chỉ"
+                      value={newCompany.address}
+                      onChange={(e) => setNewCompany({ ...newCompany, address: e.target.value })}
+                      className="px-3 sm:px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-indigo-500 focus:outline-none transition text-xs sm:text-sm"
+                    />
+                    <input
+                      type="text"
+                      placeholder="Số điện thoại"
+                      value={newCompany.phone}
+                      onChange={(e) => setNewCompany({ ...newCompany, phone: e.target.value })}
+                      className="px-3 sm:px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-indigo-500 focus:outline-none transition text-xs sm:text-sm"
+                    />
+                    <input
+                      type="text"
+                      placeholder="Người liên hệ"
+                      value={newCompany.contactPerson}
+                      onChange={(e) => setNewCompany({ ...newCompany, contactPerson: e.target.value })}
+                      className="px-3 sm:px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-indigo-500 focus:outline-none transition text-xs sm:text-sm"
+                    />
+                    <input
+                      type="email"
+                      placeholder="Email"
+                      value={newCompany.email}
+                      onChange={(e) => setNewCompany({ ...newCompany, email: e.target.value })}
+                      className="px-3 sm:px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-indigo-500 focus:outline-none transition text-xs sm:text-sm"
+                    />
                   </div>
                   <div className="flex gap-2 sm:gap-3">
                     <button
-                      onClick={() => setShowCompanyManager(false)}
+                      onClick={handleSaveCompany}
+                      className="flex items-center gap-1 sm:gap-2 px-3 sm:px-6 py-1.5 sm:py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition font-semibold text-xs sm:text-sm"
+                    >
+                      <Plus size={16} className="sm:w-5 sm:h-5" /> {editingCompanyId ? 'Cập nhật' : 'Lưu công ty'}
+                    </button>
+                    <button
+                      onClick={() => { setShowCompanyForm(false); setEditingCompanyId(null); resetCompanyForm(); }}
                       className="flex items-center gap-1 sm:gap-2 px-3 sm:px-6 py-1.5 sm:py-2 bg-gray-400 text-white rounded-lg hover:bg-gray-500 transition font-semibold text-xs sm:text-sm"
                     >
-                      <X size={16} className="sm:w-5 sm:h-5" /> Đóng
+                      <X size={16} className="sm:w-5 sm:h-5" /> Hủy
                     </button>
                   </div>
                 </div>
+              )}
+
+              {companies.length > 0 ? (
+                <div className="space-y-2 mb-4">
+                  {companies.map((c) => (
+                    <div key={c.id} className="flex items-center justify-between bg-white rounded-lg px-3 sm:px-4 py-2 border border-indigo-100">
+                      <div className="min-w-0">
+                        <p className="font-semibold text-gray-900 text-sm truncate">{c.name}</p>
+                        <p className="text-xs text-gray-500 truncate">
+                          {[c.tax_code && `MST: ${c.tax_code}`, c.phone, c.contact_person, c.address, c.email]
+                            .filter(Boolean).join(' • ') || '—'}
+                        </p>
+                      </div>
+                      <div className="flex gap-1 flex-shrink-0 ml-2">
+                        <button
+                          onClick={() => handleEditCompany(c)}
+                          className="p-1.5 sm:p-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition"
+                          title="Sửa"
+                        >
+                          <Edit2 size={14} className="sm:w-4 sm:h-4" />
+                        </button>
+                        <button
+                          onClick={() => handleDeleteCompany(c.id)}
+                          className="p-1.5 sm:p-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition"
+                          title="Xóa"
+                        >
+                          <Trash2 size={14} className="sm:w-4 sm:h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-gray-500 mb-4">Chưa có công ty nào.</p>
               )}
 
               <button
