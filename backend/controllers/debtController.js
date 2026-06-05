@@ -30,7 +30,7 @@ const getDebts = async (req, res) => {
 const createDebt = async (req, res) => {
   const {
     customerName, phoneNumber, ticketCode, airline, route, flightDate,
-    issueDate, dueDate, ticketAmount, paid, notes, companyId
+    issueDate, dueDate, ticketAmount, paid, notes, companyId, paymentTarget
   } = req.body;
 
   if (!customerName || !ticketAmount) {
@@ -43,6 +43,7 @@ const createDebt = async (req, res) => {
     const customerId = await upsertCustomer(client, req.user.id, {
       name: customerName, phone: phoneNumber, type: 'individual',
     });
+    const paidAmt = parseFloat(paid) || 0;
     const result = await client.query(
       `INSERT INTO debts (
         user_id, customer_id, customer_name, phone_number, ticket_code, airline, route,
@@ -52,10 +53,19 @@ const createDebt = async (req, res) => {
       [
         req.user.id, customerId, customerName, phoneNumber || '', ticketCode || '', airline || '', route || '',
         flightDate || null, issueDate || new Date().toISOString().split('T')[0], dueDate || null,
-        parseFloat(ticketAmount) || 0, parseFloat(paid) || 0, notes || '',
+        parseFloat(ticketAmount) || 0, paidAmt, notes || '',
         companyId || null,
       ]
     );
+    // Tạo payment record nếu có số tiền đã trả (để track payment_target).
+    if (paidAmt > 0) {
+      const target = ['self', 'agency'].includes(paymentTarget) ? paymentTarget : 'self';
+      await client.query(
+        `INSERT INTO payments (user_id, debt_id, amount, payment_date, method, payment_target)
+         VALUES ($1, $2, $3, COALESCE($4, CURRENT_DATE), 'cash', $5)`,
+        [req.user.id, result.rows[0].id, paidAmt, issueDate || null, target]
+      );
+    }
     await client.query('COMMIT');
     res.status(201).json(result.rows[0]);
   } catch (error) {
@@ -72,12 +82,17 @@ const updateDebt = async (req, res) => {
   const { id } = req.params;
   const {
     customerName, phoneNumber, ticketCode, airline, route, flightDate,
-    issueDate, dueDate, ticketAmount, paid, notes, companyId
+    issueDate, dueDate, ticketAmount, paid, notes, companyId, paymentTarget
   } = req.body;
 
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    // Lấy paid hiện tại để tính chênh lệch.
+    const oldDebt = await client.query('SELECT paid FROM debts WHERE id = $1 AND user_id = $2', [id, req.user.id]);
+    const oldPaid = oldDebt.rows.length > 0 ? parseFloat(oldDebt.rows[0].paid) || 0 : 0;
+    const newPaid = parseFloat(paid) || 0;
+
     const customerId = await upsertCustomer(client, req.user.id, {
       name: customerName, phone: phoneNumber, type: 'individual',
     });
@@ -90,12 +105,22 @@ const updateDebt = async (req, res) => {
       RETURNING *`,
       [
         id, customerId, customerName, phoneNumber, ticketCode, airline || '', route, flightDate,
-        issueDate, dueDate || null, ticketAmount, paid, notes, companyId || null, req.user.id,
+        issueDate, dueDate || null, ticketAmount, newPaid, notes, companyId || null, req.user.id,
       ]
     );
     if (result.rows.length === 0) {
       await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Debt not found' });
+    }
+    // Nếu paid tăng, tạo payment record cho phần chênh lệch.
+    const diff = newPaid - oldPaid;
+    if (diff > 0) {
+      const target = ['self', 'agency'].includes(paymentTarget) ? paymentTarget : 'self';
+      await client.query(
+        `INSERT INTO payments (user_id, debt_id, amount, payment_date, method, payment_target)
+         VALUES ($1, $2, $3, CURRENT_DATE, 'cash', $4)`,
+        [req.user.id, id, diff, target]
+      );
     }
     await client.query('COMMIT');
     res.json(result.rows[0]);

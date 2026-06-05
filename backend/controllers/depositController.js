@@ -28,8 +28,8 @@ const createDeposit = async (req, res) => {
   try {
     const { amount, depositDate, method, notes } = req.body;
     const amt = parseFloat(amount);
-    if (!Number.isFinite(amt) || amt <= 0) {
-      return res.status(400).json({ error: 'Số tiền nộp không hợp lệ' });
+    if (!Number.isFinite(amt) || amt === 0) {
+      return res.status(400).json({ error: 'Số tiền không hợp lệ' });
     }
     const result = await pool.query(
       `INSERT INTO fund_deposits (user_id, amount, deposit_date, method, notes)

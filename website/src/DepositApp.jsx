@@ -6,7 +6,7 @@ import { apiGet, apiSend } from './services/client';
 import { formatCurrency, formatDate } from './utils/format';
 import { useAuth } from './auth/AuthContext';
 
-const METHOD = { cash: 'Tiền mặt', bank_transfer: 'Chuyển khoản', momo: 'Momo' };
+const METHOD = { cash: 'Tiền mặt', bank_transfer: 'Chuyển khoản', momo: 'Momo', adjustment: 'Điều chỉnh đầu kỳ' };
 const EMPTY = { amount: '', depositDate: '', method: 'bank_transfer', notes: '' };
 
 export default function DepositApp() {
@@ -53,7 +53,7 @@ export default function DepositApp() {
   };
 
   const save = async () => {
-    if (!(parseFloat(form.amount) > 0)) { alert('⚠️ Nhập số tiền hợp lệ'); return; }
+    if (!(parseFloat(form.amount) !== 0 && Number.isFinite(parseFloat(form.amount)))) { alert('⚠️ Nhập số tiền hợp lệ'); return; }
     try {
       if (editingId) await apiSend('PUT', `/deposits/${editingId}`, form);
       else await apiSend('POST', '/deposits', form);
@@ -138,11 +138,6 @@ export default function DepositApp() {
           </details>
         )}
 
-        <div className="bg-gradient-to-br from-emerald-500 to-teal-600 text-white rounded-2xl p-5 shadow mb-5 inline-block min-w-[240px]">
-          <p className="text-sm opacity-90">Tổng đã nộp {agencyId ? '(đại lý đã chọn)' : '(trong phạm vi)'}</p>
-          <p className="text-2xl font-bold mt-1">{formatCurrency(total)}</p>
-        </div>
-
         {loading && <p className="text-gray-500">Đang tải…</p>}
         {error && <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-red-700">{error}</div>}
 
@@ -167,7 +162,7 @@ export default function DepositApp() {
                   return (
                     <tr key={d.id} className="border-t hover:bg-gray-50 group">
                       <td className="px-4 py-3 font-medium text-gray-800 sticky left-0 z-10 bg-white group-hover:bg-gray-50">{formatDate(d.deposit_date)}</td>
-                      <td className="px-4 py-3 text-right font-semibold text-emerald-600">{formatCurrency(d.amount)}</td>
+                      <td className={`px-4 py-3 text-right font-semibold ${Number(d.amount) >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>{formatCurrency(d.amount)}</td>
                       <td className="px-4 py-3 text-gray-600">{METHOD[d.method] || d.method || '—'}</td>
                       <td className="px-4 py-3 text-gray-500 text-xs hidden md:table-cell">{d.owner_name || d.owner_username || ''}</td>
                       <td className="px-4 py-3 text-gray-600">{d.notes || ''}</td>
@@ -199,8 +194,8 @@ export default function DepositApp() {
             </div>
             <div className="px-6 py-4 space-y-3">
               <div>
-                <label className="block text-sm text-gray-600 mb-1">Số tiền *</label>
-                <input type="number" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} className="w-full border rounded-lg px-3 py-2" />
+                <label className="block text-sm text-gray-600 mb-1">Số tiền * <span className="text-xs text-gray-400">(âm nếu nợ kỳ trước)</span></label>
+                <input type="number" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} className="w-full border rounded-lg px-3 py-2" placeholder="VD: -60000000 (nợ) hoặc 5000000 (nộp)" />
               </div>
               <div>
                 <label className="block text-sm text-gray-600 mb-1">Ngày nộp</label>
@@ -212,6 +207,7 @@ export default function DepositApp() {
                   <option value="bank_transfer">Chuyển khoản</option>
                   <option value="cash">Tiền mặt</option>
                   <option value="momo">Momo</option>
+                  <option value="adjustment">Điều chỉnh đầu kỳ</option>
                 </select>
               </div>
               <div>

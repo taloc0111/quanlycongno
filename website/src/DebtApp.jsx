@@ -118,7 +118,8 @@ const App = () => {
     ticketAmount: '',
     paid: '',
     notes: '',
-    companyId: ''
+    companyId: '',
+    paymentTarget: 'self'
   });
   const [newRoute, setNewRoute] = useState('');
   const [payingDebt, setPayingDebt] = useState(null);
@@ -262,7 +263,8 @@ const App = () => {
         ticketAmount: parseFloat(newDebt.ticketAmount),
         paid: parseFloat(newDebt.paid) || 0,
         notes: newDebt.notes,
-        companyId: newDebt.companyId
+        companyId: newDebt.companyId,
+        paymentTarget: newDebt.paymentTarget
       })
     })
       .then(res => res.json())
@@ -286,7 +288,8 @@ const App = () => {
           ticketAmount: '',
           paid: '',
           notes: '',
-          companyId: ''
+          companyId: '',
+          paymentTarget: 'self'
         });
         setEditingDebtId(null);
         setShowAddForm(false);
@@ -307,7 +310,8 @@ const App = () => {
       ticketAmount: debt.ticket_amount,
       paid: debt.paid,
       notes: debt.notes,
-      companyId: debt.company_id || ''
+      companyId: debt.company_id || '',
+      paymentTarget: 'self'
     });
     setEditingDebtId(debt.id);
     setShowAddForm(true);
@@ -583,7 +587,8 @@ const App = () => {
                     ticketAmount: '',
                     paid: '',
                     notes: '',
-                    companyId: ''
+                    companyId: '',
+                    paymentTarget: 'self'
                   });
                   setShowAddForm(!showAddForm);
                 }}
@@ -799,6 +804,17 @@ const App = () => {
                     onChange={(e) => setNewDebt({ ...newDebt, paid: e.target.value })}
                     className="w-full px-3 sm:px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none transition text-xs sm:text-sm"
                   />
+                </div>
+                <div>
+                  <label className="block text-xs sm:text-sm font-semibold text-gray-700 mb-1">Thanh toán vào TK</label>
+                  <select
+                    value={newDebt.paymentTarget}
+                    onChange={(e) => setNewDebt({ ...newDebt, paymentTarget: e.target.value })}
+                    className="w-full px-3 sm:px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none transition text-xs sm:text-sm"
+                  >
+                    <option value="self">TK cá nhân</option>
+                    <option value="agency">TK cấp trên (nộp quỹ)</option>
+                  </select>
                 </div>
                 <div>
                   <label className="block text-xs sm:text-sm font-semibold text-gray-700 mb-1">Ghi chú</label>
