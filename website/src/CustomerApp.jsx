@@ -31,6 +31,7 @@ export default function CustomerApp() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
+  const [companyFilter, setCompanyFilter] = useState('');
   const [agencyId, setAgencyId] = useState('');
   const [showForm, setShowForm] = useState(false);
   const [showImport, setShowImport] = useState(false);
@@ -57,11 +58,12 @@ export default function CustomerApp() {
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return customers;
-    return customers.filter(
-      (c) => c.name?.toLowerCase().includes(q) || c.phone?.includes(q)
-    );
-  }, [customers, search]);
+    return customers.filter((c) => {
+      const matchText = !q || c.name?.toLowerCase().includes(q) || c.phone?.includes(q);
+      const matchCompany = !companyFilter || String(c.company_id) === companyFilter;
+      return matchText && matchCompany;
+    });
+  }, [customers, search, companyFilter]);
 
   const sorted = sorter.sort(filtered, (c, k) =>
     k === 'name' ? (c.name || '').toLowerCase() : k === 'outstanding' ? Number(c.outstanding) || 0 : '');
@@ -135,6 +137,16 @@ export default function CustomerApp() {
               className="w-full pl-10 pr-4 py-2 border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none"
             />
           </div>
+          <select
+            value={companyFilter}
+            onChange={(e) => setCompanyFilter(e.target.value)}
+            className="px-4 py-2 border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm bg-white"
+          >
+            <option value="">Tất cả công ty</option>
+            {companies.map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
           <AgencyFilter value={agencyId} onChange={setAgencyId} />
         </div>
 
