@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { DollarSign, TrendingDown, AlertTriangle, Users, RefreshCw } from 'lucide-react';
+import { DollarSign, TrendingDown, TrendingUp, AlertTriangle, Users, RefreshCw } from 'lucide-react';
 import { apiGet } from './services/client';
 import { formatCurrency } from './utils/format';
 
@@ -55,8 +55,9 @@ export default function DashboardApp() {
 
         {stats && !loading && (
           <>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4 mb-8">
               <StatCard icon={DollarSign} label="Tổng phải thu" value={formatCurrency(stats.totalAmount)} gradient="from-blue-500 to-blue-600" />
+              <StatCard icon={TrendingUp} label="Tổng lợi nhuận" value={formatCurrency(stats.totalProfit)} gradient="from-green-500 to-emerald-600" />
               <StatCard icon={TrendingDown} label="Còn nợ" value={formatCurrency(stats.outstanding)} gradient="from-orange-500 to-red-600" />
               <StatCard icon={AlertTriangle} label="Nợ quá hạn" value={formatCurrency(stats.overdue)} gradient="from-rose-500 to-pink-600" />
               <StatCard icon={Users} label="Số khách hàng" value={stats.counts.customers} gradient="from-emerald-500 to-teal-600" />
@@ -85,7 +86,8 @@ export default function DashboardApp() {
 
               {/* Monthly */}
               <div className="bg-white rounded-2xl shadow p-5">
-                <h3 className="font-bold text-gray-800 mb-4">Doanh số vé 6 tháng gần nhất</h3>
+                <h3 className="font-bold text-gray-800 mb-1">Doanh số & lợi nhuận vé 6 tháng gần nhất</h3>
+                <p className="text-xs text-gray-400 mb-4">Thanh xanh = doanh số · số bên dưới = lợi nhuận (giá bán − giá gốc)</p>
                 {stats.monthly.length === 0 ? (
                   <p className="text-gray-400 text-sm">Chưa có dữ liệu.</p>
                 ) : (
@@ -101,6 +103,10 @@ export default function DashboardApp() {
                             className="h-full bg-gradient-to-r from-blue-500 to-indigo-600 rounded-full"
                             style={{ width: `${Math.max(4, (m.amount / maxMonthly) * 100)}%` }}
                           />
+                        </div>
+                        <div className="text-right text-xs mt-0.5">
+                          <span className="text-gray-400">Lợi nhuận: </span>
+                          <span className={`font-semibold ${m.profit >= 0 ? 'text-green-600' : 'text-red-600'}`}>{formatCurrency(m.profit)}</span>
                         </div>
                       </div>
                     ))}

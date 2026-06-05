@@ -116,6 +116,7 @@ const App = () => {
     issueDate: '',
     dueDate: '',
     ticketAmount: '',
+    costAmount: '',
     paid: '',
     notes: '',
     companyId: '',
@@ -261,6 +262,7 @@ const App = () => {
         issueDate: newDebt.issueDate || new Date().toISOString().split('T')[0],
         dueDate: newDebt.dueDate || null,
         ticketAmount: parseFloat(newDebt.ticketAmount),
+        costAmount: parseFloat(newDebt.costAmount) || 0,
         paid: parseFloat(newDebt.paid) || 0,
         notes: newDebt.notes,
         companyId: newDebt.companyId,
@@ -286,6 +288,7 @@ const App = () => {
           issueDate: '',
           dueDate: '',
           ticketAmount: '',
+          costAmount: '',
           paid: '',
           notes: '',
           companyId: '',
@@ -308,6 +311,7 @@ const App = () => {
       issueDate: (debt.issue_date || '').slice(0, 10),
       dueDate: (debt.due_date || '').slice(0, 10),
       ticketAmount: debt.ticket_amount,
+      costAmount: debt.cost_amount,
       paid: debt.paid,
       notes: debt.notes,
       companyId: debt.company_id || '',
@@ -484,6 +488,8 @@ const App = () => {
       case 'flight_date': return d.flight_date || '';
       case 'issue_date': return d.issue_date || '';
       case 'ticket_amount': return parseFloat(d.ticket_amount) || 0;
+      case 'cost_amount': return parseFloat(d.cost_amount) || 0;
+      case 'profit': return (parseFloat(d.ticket_amount) || 0) - (parseFloat(d.cost_amount) || 0);
       case 'paid': return parseFloat(d.paid) || 0;
       case 'remaining': return calculateRemaining(d.ticket_amount, d.paid);
       default: return '';
@@ -643,6 +649,7 @@ const App = () => {
                     issueDate: '',
                     dueDate: '',
                     ticketAmount: '',
+                    costAmount: '',
                     paid: '',
                     notes: '',
                     companyId: '',
@@ -844,14 +851,31 @@ const App = () => {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs sm:text-sm font-semibold text-gray-700 mb-1">Tiền vé (VNĐ) *</label>
+                  <label className="block text-xs sm:text-sm font-semibold text-gray-700 mb-1">Tiền vé / giá bán (VNĐ) *</label>
                   <input
                     type="number"
-                    placeholder="Nhập số tiền vé"
+                    placeholder="Giá bán cho khách"
                     value={newDebt.ticketAmount}
                     onChange={(e) => setNewDebt({ ...newDebt, ticketAmount: e.target.value })}
                     className="w-full px-3 sm:px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none transition text-xs sm:text-sm"
                   />
+                </div>
+                <div>
+                  <label className="block text-xs sm:text-sm font-semibold text-gray-700 mb-1">Giá gốc / giá vốn (VNĐ)</label>
+                  <input
+                    type="number"
+                    placeholder="Giá nhập vé"
+                    value={newDebt.costAmount}
+                    onChange={(e) => setNewDebt({ ...newDebt, costAmount: e.target.value })}
+                    className="w-full px-3 sm:px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none transition text-xs sm:text-sm"
+                  />
+                  {newDebt.ticketAmount && newDebt.costAmount && (
+                    <p className="text-xs mt-1 text-gray-500">
+                      Lợi nhuận: <span className={(parseFloat(newDebt.ticketAmount) - parseFloat(newDebt.costAmount)) >= 0 ? 'text-green-600 font-semibold' : 'text-red-600 font-semibold'}>
+                        {formatCurrency(parseFloat(newDebt.ticketAmount) - parseFloat(newDebt.costAmount))}
+                      </span>
+                    </p>
+                  )}
                 </div>
                 <div>
                   <label className="block text-xs sm:text-sm font-semibold text-gray-700 mb-1">
@@ -923,6 +947,8 @@ const App = () => {
                     <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap hidden lg:table-cell">Hãng</th>
                     <th onClick={() => toggleSort('issue_date')} className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap hidden lg:table-cell cursor-pointer select-none hover:bg-blue-700">Ngày xuất vé{sortArrow('issue_date')}</th>
                     <th onClick={() => toggleSort('ticket_amount')} className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-right whitespace-nowrap cursor-pointer select-none hover:bg-blue-700">Tiền vé{sortArrow('ticket_amount')}</th>
+                    <th onClick={() => toggleSort('cost_amount')} className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-right whitespace-nowrap hidden lg:table-cell cursor-pointer select-none hover:bg-blue-700">Giá gốc{sortArrow('cost_amount')}</th>
+                    <th onClick={() => toggleSort('profit')} className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-right whitespace-nowrap cursor-pointer select-none hover:bg-blue-700">Lợi nhuận{sortArrow('profit')}</th>
                     <th onClick={() => toggleSort('paid')} className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-right whitespace-nowrap hidden sm:table-cell cursor-pointer select-none hover:bg-blue-700">Đã trả{sortArrow('paid')}</th>
                     <th onClick={() => toggleSort('remaining')} className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-right whitespace-nowrap cursor-pointer select-none hover:bg-blue-700">Còn nợ{sortArrow('remaining')}</th>
                     <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap hidden md:table-cell">SĐT</th>
@@ -934,7 +960,7 @@ const App = () => {
                 <tbody className="divide-y divide-gray-200">
                   {sortedDebts.length === 0 ? (
                     <tr>
-                      <td colSpan="13" className="px-4 py-8 sm:py-12 text-center text-gray-500 font-medium text-xs sm:text-base">
+                      <td colSpan="15" className="px-4 py-8 sm:py-12 text-center text-gray-500 font-medium text-xs sm:text-base">
                         📊 Chưa có dữ liệu
                       </td>
                     </tr>
@@ -949,6 +975,7 @@ const App = () => {
                       const dotColor = isOverdue ? 'bg-red-600' : payStatus === 'paid' ? 'bg-green-500' : payStatus === 'partial' ? 'bg-amber-500' : 'bg-red-500';
                       const dotTitle = isOverdue ? 'Quá hạn thanh toán' : payStatus === 'paid' ? 'Đã trả đủ' : payStatus === 'partial' ? 'Trả một phần' : 'Chưa trả';
                       const owned = !currentUserId || debt.user_id === currentUserId;
+                      const profit = (Number(debt.ticket_amount) || 0) - (Number(debt.cost_amount) || 0);
                       return (
                         <tr key={debt.id} className={`hover:bg-gray-50 transition ${idx % 2 === 0 ? 'bg-gray-50' : ''}`}>
                           <td className={`px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 font-semibold text-xs sm:text-sm whitespace-nowrap sticky left-0 z-10 ${idx % 2 === 0 ? 'bg-gray-50' : 'bg-white'}`}>
@@ -980,6 +1007,8 @@ const App = () => {
                             </span>
                           </td>
                           <td className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-right font-semibold text-gray-900 text-xs sm:text-sm whitespace-nowrap">{formatCurrency(debt.ticket_amount)}</td>
+                          <td className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-right text-gray-500 text-xs sm:text-sm whitespace-nowrap hidden lg:table-cell">{formatCurrency(debt.cost_amount)}</td>
+                          <td className={`px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-right font-semibold text-xs sm:text-sm whitespace-nowrap ${profit >= 0 ? 'text-green-600' : 'text-red-600'}`}>{formatCurrency(profit)}</td>
                           <td className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-right font-semibold text-green-600 hidden sm:table-cell text-xs sm:text-sm whitespace-nowrap">
                             {formatCurrency(debt.paid)}
                             {Number(debt.agency_paid) > 0 && (

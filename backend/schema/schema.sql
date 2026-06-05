@@ -87,7 +87,8 @@ CREATE TABLE IF NOT EXISTS debts (
   flight_date   DATE,
   issue_date    DATE,
   due_date      DATE,                                    -- hạn thanh toán
-  ticket_amount DECIMAL(15,2) NOT NULL DEFAULT 0,
+  ticket_amount DECIMAL(15,2) NOT NULL DEFAULT 0,        -- giá bán cho khách
+  cost_amount   DECIMAL(15,2) NOT NULL DEFAULT 0,        -- giá gốc/giá vốn (để tính lợi nhuận)
   paid          DECIMAL(15,2) NOT NULL DEFAULT 0,        -- tổng đã trả (suy ra từ payments)
   notes         TEXT,
   company_id    INTEGER REFERENCES companies(id) ON DELETE SET NULL,
@@ -206,6 +207,7 @@ ALTER TABLE users     ADD COLUMN IF NOT EXISTS parent_id INTEGER REFERENCES user
 ALTER TABLE debts     ADD COLUMN IF NOT EXISTS customer_id INTEGER REFERENCES customers(id) ON DELETE SET NULL;
 ALTER TABLE debts     ADD COLUMN IF NOT EXISTS due_date DATE;
 ALTER TABLE debts     ADD COLUMN IF NOT EXISTS airline VARCHAR(50);
+ALTER TABLE debts     ADD COLUMN IF NOT EXISTS cost_amount DECIMAL(15,2) NOT NULL DEFAULT 0;
 
 -- Bỏ ràng buộc "mỗi SĐT 1 khách" (chuyển sang định danh theo tên + SĐT).
 ALTER TABLE customers DROP CONSTRAINT IF EXISTS customers_user_id_phone_key;

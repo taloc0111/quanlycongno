@@ -13,6 +13,7 @@ const getStats = async (req, res) => {
     const totals = await pool.query(
       `SELECT
          (SELECT COALESCE(SUM(ticket_amount),0) FROM debts WHERE user_id=ANY($1))      AS ticket_total,
+         (SELECT COALESCE(SUM(cost_amount),0)   FROM debts WHERE user_id=ANY($1))      AS ticket_cost,
          (SELECT COALESCE(SUM(paid),0)          FROM debts WHERE user_id=ANY($1))      AS ticket_paid,
          (SELECT COALESCE(SUM(total_amount),0)  FROM passports WHERE user_id=ANY($1))  AS passport_total,
          (SELECT COALESCE(SUM(paid_amount),0)   FROM passports WHERE user_id=ANY($1))  AS passport_paid,
@@ -25,6 +26,8 @@ const getStats = async (req, res) => {
     const totalAmount = Number(t.ticket_total) + Number(t.passport_total);
     const totalPaid = Number(t.ticket_paid) + Number(t.passport_paid);
     const outstanding = totalAmount - totalPaid;
+    // Lợi nhuận vé = giá bán − giá gốc (chỉ tính trên vé, hộ chiếu chưa có giá gốc).
+    const totalProfit = Number(t.ticket_total) - Number(t.ticket_cost);
 
     // Nợ quá hạn (due_date < hôm nay và còn nợ).
     const overdue = await pool.query(
@@ -49,6 +52,8 @@ const getStats = async (req, res) => {
     const monthly = await pool.query(
       `SELECT to_char(date_trunc('month', issue_date), 'YYYY-MM') AS month,
               SUM(ticket_amount) AS amount,
+              SUM(cost_amount) AS cost,
+              SUM(ticket_amount - cost_amount) AS profit,
               SUM(paid) AS paid
        FROM debts
        WHERE user_id=ANY($1) AND issue_date >= (CURRENT_DATE - INTERVAL '6 months')
@@ -60,6 +65,7 @@ const getStats = async (req, res) => {
       totalAmount,
       totalPaid,
       outstanding,
+      totalProfit,
       overdue: Number(overdue.rows[0].amount),
       counts: {
         debts: Number(t.debt_count),
@@ -73,6 +79,8 @@ const getStats = async (req, res) => {
       monthly: monthly.rows.map((r) => ({
         month: r.month,
         amount: Number(r.amount),
+        cost: Number(r.cost),
+        profit: Number(r.profit),
         paid: Number(r.paid),
       })),
     });
