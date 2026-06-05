@@ -311,7 +311,7 @@ const App = () => {
       paid: debt.paid,
       notes: debt.notes,
       companyId: debt.company_id || '',
-      paymentTarget: 'self'
+      paymentTarget: Number(debt.agency_paid) > 0 ? 'agency' : 'self'
     });
     setEditingDebtId(debt.id);
     setShowAddForm(true);

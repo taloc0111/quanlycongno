@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Plus, Trash2, X, Landmark, Edit2, TrendingUp, TrendingDown, DollarSign, Users } from 'lucide-react';
+import { Plus, Trash2, X, Landmark, Edit2, TrendingUp, TrendingDown, Users } from 'lucide-react';
 import AgencyFilter from './components/AgencyFilter';
 import VnDatePicker from './components/VnDatePicker';
 import { apiGet, apiSend } from './services/client';
@@ -84,11 +84,7 @@ export default function DepositApp() {
 
         {/* Tổng quan số dư với cấp trên */}
         {balance && (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
-            <div className="bg-gradient-to-br from-blue-500 to-blue-600 text-white rounded-2xl p-4 shadow">
-              <p className="text-xs opacity-90 flex items-center gap-1"><DollarSign size={12} /> Tổng tiền vé (nợ cấp trên)</p>
-              <p className="text-xl font-bold mt-1">{formatCurrency(balance.totalTicket)}</p>
-            </div>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-5">
             <div className="bg-gradient-to-br from-emerald-500 to-teal-600 text-white rounded-2xl p-4 shadow">
               <p className="text-xs opacity-90 flex items-center gap-1"><Landmark size={12} /> Đã nộp quỹ</p>
               <p className="text-xl font-bold mt-1">{formatCurrency(balance.totalDeposited)}</p>

@@ -84,14 +84,7 @@ const getBalance = async (req, res) => {
   try {
     const userId = req.user.id;
 
-    // Tổng tiền vé (user mua từ cấp trên → nợ cấp trên).
-    const ticketRes = await pool.query(
-      'SELECT COALESCE(SUM(ticket_amount), 0) AS total FROM debts WHERE user_id = $1',
-      [userId]
-    );
-    const totalTicket = Number(ticketRes.rows[0].total);
-
-    // Tổng đã nộp quỹ (fund_deposits).
+    // Tổng đã nộp quỹ (fund_deposits) — bao gồm cả điều chỉnh đầu kỳ (âm = nợ cũ).
     const depositRes = await pool.query(
       'SELECT COALESCE(SUM(amount), 0) AS total FROM fund_deposits WHERE user_id = $1',
       [userId]
@@ -117,14 +110,12 @@ const getBalance = async (req, res) => {
       [userId]
     );
 
-    const sentToAgency = totalDeposited + totalCustomerToAgency;
-    const balance = sentToAgency - totalTicket; // âm = còn nợ, dương = dư
+    // Số dư = tổng nộp quỹ + tổng khách trả cấp trên. Âm = còn nợ, dương = dư.
+    const balance = totalDeposited + totalCustomerToAgency;
 
     res.json({
-      totalTicket,
       totalDeposited,
       totalCustomerToAgency,
-      sentToAgency,
       balance,
       agencyPayments: agencyPayments.rows,
     });

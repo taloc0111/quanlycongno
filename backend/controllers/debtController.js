@@ -88,9 +88,6 @@ const updateDebt = async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    // Lấy paid hiện tại để tính chênh lệch.
-    const oldDebt = await client.query('SELECT paid FROM debts WHERE id = $1 AND user_id = $2', [id, req.user.id]);
-    const oldPaid = oldDebt.rows.length > 0 ? parseFloat(oldDebt.rows[0].paid) || 0 : 0;
     const newPaid = parseFloat(paid) || 0;
 
     const customerId = await upsertCustomer(client, req.user.id, {
@@ -112,14 +109,15 @@ const updateDebt = async (req, res) => {
       await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Debt not found' });
     }
-    // Nếu paid tăng, tạo payment record cho phần chênh lệch.
-    const diff = newPaid - oldPaid;
-    if (diff > 0) {
-      const target = ['self', 'agency'].includes(paymentTarget) ? paymentTarget : 'self';
+    // Xóa tất cả payment cũ của debt này rồi tạo lại 1 payment mới
+    // với đúng payment_target và số tiền hiện tại.
+    const target = ['self', 'agency'].includes(paymentTarget) ? paymentTarget : 'self';
+    await client.query('DELETE FROM payments WHERE debt_id = $1 AND user_id = $2', [id, req.user.id]);
+    if (newPaid > 0) {
       await client.query(
         `INSERT INTO payments (user_id, debt_id, amount, payment_date, method, payment_target)
          VALUES ($1, $2, $3, CURRENT_DATE, 'cash', $4)`,
-        [req.user.id, id, diff, target]
+        [req.user.id, id, newPaid, target]
       );
     }
     await client.query('COMMIT');
