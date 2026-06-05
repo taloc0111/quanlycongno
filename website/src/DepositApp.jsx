@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Plus, Trash2, X, Landmark, Edit2 } from 'lucide-react';
+import { Plus, Trash2, X, Landmark, Edit2, TrendingUp, TrendingDown, DollarSign, Users } from 'lucide-react';
 import AgencyFilter from './components/AgencyFilter';
 import VnDatePicker from './components/VnDatePicker';
 import { apiGet, apiSend } from './services/client';
@@ -19,12 +19,18 @@ export default function DepositApp() {
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(EMPTY);
+  const [balance, setBalance] = useState(null);
 
   const load = async () => {
     setLoading(true);
     setError('');
     try {
-      setDeposits(await apiGet(`/deposits${agencyId ? `?agencyId=${agencyId}` : ''}`));
+      const [deps, bal] = await Promise.all([
+        apiGet(`/deposits${agencyId ? `?agencyId=${agencyId}` : ''}`),
+        apiGet('/deposits/balance'),
+      ]);
+      setDeposits(deps);
+      setBalance(bal);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -75,6 +81,62 @@ export default function DepositApp() {
           </div>
         </div>
         <p className="text-sm text-gray-500 mb-4">Ghi lại các lần nộp tiền lên cấp trên. Cấp 1 xem được các lần nộp của đại lý cấp dưới.</p>
+
+        {/* Tổng quan số dư với cấp trên */}
+        {balance && (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+            <div className="bg-gradient-to-br from-blue-500 to-blue-600 text-white rounded-2xl p-4 shadow">
+              <p className="text-xs opacity-90 flex items-center gap-1"><DollarSign size={12} /> Tổng tiền vé (nợ cấp trên)</p>
+              <p className="text-xl font-bold mt-1">{formatCurrency(balance.totalTicket)}</p>
+            </div>
+            <div className="bg-gradient-to-br from-emerald-500 to-teal-600 text-white rounded-2xl p-4 shadow">
+              <p className="text-xs opacity-90 flex items-center gap-1"><Landmark size={12} /> Đã nộp quỹ</p>
+              <p className="text-xl font-bold mt-1">{formatCurrency(balance.totalDeposited)}</p>
+            </div>
+            <div className="bg-gradient-to-br from-orange-500 to-amber-600 text-white rounded-2xl p-4 shadow">
+              <p className="text-xs opacity-90 flex items-center gap-1"><Users size={12} /> Khách trả thẳng cấp trên</p>
+              <p className="text-xl font-bold mt-1">{formatCurrency(balance.totalCustomerToAgency)}</p>
+            </div>
+            <div className={`bg-gradient-to-br ${balance.balance >= 0 ? 'from-green-500 to-emerald-600' : 'from-red-500 to-rose-600'} text-white rounded-2xl p-4 shadow`}>
+              <p className="text-xs opacity-90 flex items-center gap-1">
+                {balance.balance >= 0 ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
+                {balance.balance >= 0 ? 'Dư' : 'Còn nợ cấp trên'}
+              </p>
+              <p className="text-xl font-bold mt-1">{formatCurrency(Math.abs(balance.balance))}</p>
+            </div>
+          </div>
+        )}
+
+        {/* Chi tiết khách trả vào TK cấp trên */}
+        {balance && balance.agencyPayments && balance.agencyPayments.length > 0 && (
+          <details className="mb-5 bg-orange-50 border border-orange-200 rounded-2xl">
+            <summary className="px-5 py-3 cursor-pointer font-semibold text-orange-800 text-sm">
+              Chi tiết khách trả thẳng vào TK cấp trên ({balance.agencyPayments.length} lần — {formatCurrency(balance.totalCustomerToAgency)})
+            </summary>
+            <div className="px-5 pb-4 overflow-auto max-h-60">
+              <table className="min-w-full text-sm mt-2">
+                <thead>
+                  <tr className="text-left text-xs text-gray-500">
+                    <th className="py-1">Ngày</th>
+                    <th className="py-1">Khách hàng</th>
+                    <th className="py-1">Mã vé</th>
+                    <th className="py-1 text-right">Số tiền</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {balance.agencyPayments.map((p) => (
+                    <tr key={p.id} className="border-t border-orange-100">
+                      <td className="py-1.5 text-gray-600">{formatDate(p.payment_date)}</td>
+                      <td className="py-1.5 font-medium">{p.customer_name || '—'}</td>
+                      <td className="py-1.5 text-gray-500">{p.ticket_code || '—'}</td>
+                      <td className="py-1.5 text-right font-semibold text-orange-700">{formatCurrency(p.amount)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </details>
+        )}
 
         <div className="bg-gradient-to-br from-emerald-500 to-teal-600 text-white rounded-2xl p-5 shadow mb-5 inline-block min-w-[240px]">
           <p className="text-sm opacity-90">Tổng đã nộp {agencyId ? '(đại lý đã chọn)' : '(trong phạm vi)'}</p>

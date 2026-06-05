@@ -78,4 +78,60 @@ const deleteDeposit = async (req, res) => {
   }
 };
 
-module.exports = { getDeposits, createDeposit, updateDeposit, deleteDeposit };
+// Tính số dư / nợ với đại lý cấp trên.
+// Công thức: đã nộp quỹ + khách trả thẳng vào TK cấp trên − tổng tiền vé phải trả cấp trên.
+const getBalance = async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    // Tổng tiền vé (user mua từ cấp trên → nợ cấp trên).
+    const ticketRes = await pool.query(
+      'SELECT COALESCE(SUM(ticket_amount), 0) AS total FROM debts WHERE user_id = $1',
+      [userId]
+    );
+    const totalTicket = Number(ticketRes.rows[0].total);
+
+    // Tổng đã nộp quỹ (fund_deposits).
+    const depositRes = await pool.query(
+      'SELECT COALESCE(SUM(amount), 0) AS total FROM fund_deposits WHERE user_id = $1',
+      [userId]
+    );
+    const totalDeposited = Number(depositRes.rows[0].total);
+
+    // Tổng khách trả thẳng vào TK cấp trên (payments.payment_target = 'agency').
+    const agencyPayRes = await pool.query(
+      `SELECT COALESCE(SUM(p.amount), 0) AS total
+       FROM payments p
+       WHERE p.user_id = $1 AND p.payment_target = 'agency'`,
+      [userId]
+    );
+    const totalCustomerToAgency = Number(agencyPayRes.rows[0].total);
+
+    // Chi tiết thanh toán của khách vào TK cấp trên (để hiện danh sách).
+    const agencyPayments = await pool.query(
+      `SELECT p.*, d.customer_name, d.ticket_code
+       FROM payments p
+       LEFT JOIN debts d ON d.id = p.debt_id
+       WHERE p.user_id = $1 AND p.payment_target = 'agency'
+       ORDER BY p.payment_date DESC, p.id DESC`,
+      [userId]
+    );
+
+    const sentToAgency = totalDeposited + totalCustomerToAgency;
+    const balance = sentToAgency - totalTicket; // âm = còn nợ, dương = dư
+
+    res.json({
+      totalTicket,
+      totalDeposited,
+      totalCustomerToAgency,
+      sentToAgency,
+      balance,
+      agencyPayments: agencyPayments.rows,
+    });
+  } catch (error) {
+    logger.error('Get balance error:', error.message);
+    res.status(500).json({ error: 'Failed to fetch balance' });
+  }
+};
+
+module.exports = { getDeposits, createDeposit, updateDeposit, deleteDeposit, getBalance };

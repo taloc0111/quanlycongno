@@ -199,6 +199,9 @@ ALTER TABLE passports ADD COLUMN IF NOT EXISTS customer_id INTEGER REFERENCES cu
 ALTER TABLE passports ADD COLUMN IF NOT EXISTS due_date DATE;
 ALTER TABLE customers ADD COLUMN IF NOT EXISTS birthday DATE;
 
+-- Theo dõi thanh toán vào tài khoản nào: 'self' = TK cá nhân, 'agency' = TK đại lý cấp trên.
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS payment_target VARCHAR(20) NOT NULL DEFAULT 'self';
+
 -- ============================================================================
 -- INDEXES
 -- ============================================================================

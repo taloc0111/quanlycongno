@@ -52,7 +52,7 @@ const getPayments = async (req, res) => {
 };
 
 const createPayment = async (req, res) => {
-  const { debtId, passportId, amount, paymentDate, method, notes } = req.body;
+  const { debtId, passportId, amount, paymentDate, method, notes, paymentTarget } = req.body;
 
   if ((!debtId && !passportId) || (debtId && passportId)) {
     return res.status(400).json({ error: 'Phải gắn với đúng 1 hoá đơn nợ hoặc 1 hộ chiếu' });
@@ -75,11 +75,12 @@ const createPayment = async (req, res) => {
       return res.status(403).json({ error: 'Bạn chỉ có thể ghi nhận thanh toán cho dữ liệu của chính mình' });
     }
 
+    const target = ['self', 'agency'].includes(paymentTarget) ? paymentTarget : 'self';
     const inserted = await client.query(
-      `INSERT INTO payments (user_id, debt_id, passport_id, amount, payment_date, method, notes)
-       VALUES ($1, $2, $3, $4, COALESCE($5, CURRENT_DATE), $6, $7)
+      `INSERT INTO payments (user_id, debt_id, passport_id, amount, payment_date, method, notes, payment_target)
+       VALUES ($1, $2, $3, $4, COALESCE($5, CURRENT_DATE), $6, $7, $8)
        RETURNING *`,
-      [req.user.id, debtId || null, passportId || null, amt, paymentDate || null, method || null, notes || null]
+      [req.user.id, debtId || null, passportId || null, amt, paymentDate || null, method || null, notes || null, target]
     );
     await recomputePaid(client, req.user.id, { debtId, passportId });
     await client.query('COMMIT');

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, LogOut, Lock, Calendar, Edit2, Trash2, Check, X, Search, Download, Upload, Users, TrendingUp, TrendingDown, DollarSign, Users2 } from 'lucide-react';
+import { Plus, LogOut, Lock, Calendar, Edit2, Trash2, Check, X, Search, Download, Upload, Users, TrendingUp, TrendingDown, DollarSign, Users2, Landmark } from 'lucide-react';
 import ImportModal from './components/ImportModal';
 import PaymentModal from './components/PaymentModal';
 import AgencyFilter from './components/AgencyFilter';
@@ -907,7 +907,14 @@ const App = () => {
                             </span>
                           </td>
                           <td className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-right font-semibold text-gray-900 text-xs sm:text-sm whitespace-nowrap">{formatCurrency(debt.ticket_amount)}</td>
-                          <td className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-right font-semibold text-green-600 hidden sm:table-cell text-xs sm:text-sm whitespace-nowrap">{formatCurrency(debt.paid)}</td>
+                          <td className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-right font-semibold text-green-600 hidden sm:table-cell text-xs sm:text-sm whitespace-nowrap">
+                            {formatCurrency(debt.paid)}
+                            {Number(debt.agency_paid) > 0 && (
+                              <span className="block text-[10px] text-orange-600 font-normal" title="Đã chuyển vào TK cấp trên">
+                                <Landmark size={10} className="inline mr-0.5" />{formatCurrency(debt.agency_paid)}
+                              </span>
+                            )}
+                          </td>
                           <td className={`px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-right font-bold text-xs sm:text-sm whitespace-nowrap ${isPaid ? 'text-green-600' : 'text-red-600'}`}>
                             {formatCurrency(remaining)}
                           </td>

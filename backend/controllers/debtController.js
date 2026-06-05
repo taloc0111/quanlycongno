@@ -12,7 +12,8 @@ const getDebts = async (req, res) => {
       ? [Number(agencyId)]
       : req.scope.userIds;
     const result = await pool.query(
-      `SELECT d.*, u.full_name AS owner_name, u.username AS owner_username
+      `SELECT d.*, u.full_name AS owner_name, u.username AS owner_username,
+              COALESCE((SELECT SUM(p.amount) FROM payments p WHERE p.debt_id = d.id AND p.payment_target = 'agency'), 0) AS agency_paid
        FROM debts d JOIN users u ON u.id = d.user_id
        WHERE d.user_id = ANY($1)
        ORDER BY d.issue_date DESC`,

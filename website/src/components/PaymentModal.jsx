@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { X, Trash2, Plus } from 'lucide-react';
+import { X, Trash2, Plus, Landmark, User } from 'lucide-react';
 import VnDatePicker from './VnDatePicker';
 import { apiGet, apiSend } from '../services/client';
 import { formatCurrency, formatDate } from '../utils/format';
@@ -18,6 +18,7 @@ export default function PaymentModal({ target, onClose, onChanged }) {
   const [amount, setAmount] = useState('');
   const [date, setDate] = useState('');
   const [method, setMethod] = useState('cash');
+  const [paymentTarget, setPaymentTarget] = useState('self');
   const [saving, setSaving] = useState(false);
 
   const query = target.type === 'debt' ? `debtId=${target.id}` : `passportId=${target.id}`;
@@ -45,6 +46,7 @@ export default function PaymentModal({ target, onClose, onChanged }) {
       await apiSend('POST', '/payments', {
         [target.type === 'debt' ? 'debtId' : 'passportId']: target.id,
         amount: amt, paymentDate: date || undefined, method,
+        paymentTarget,
       });
       setAmount('');
       await load();
@@ -107,6 +109,13 @@ export default function PaymentModal({ target, onClose, onChanged }) {
                 <option value="momo">Momo</option>
               </select>
             </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Chuyển vào TK</label>
+              <select value={paymentTarget} onChange={(e) => setPaymentTarget(e.target.value)} className="border rounded-lg px-2 py-1.5 text-sm">
+                <option value="self">TK cá nhân</option>
+                <option value="agency">TK cấp trên (nộp quỹ)</option>
+              </select>
+            </div>
             <button onClick={add} disabled={saving} className="flex items-center gap-1 px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm font-semibold disabled:opacity-50">
               <Plus size={16} /> Thêm
             </button>
@@ -125,6 +134,11 @@ export default function PaymentModal({ target, onClose, onChanged }) {
                     <tr key={p.id} className="border-b last:border-0">
                       <td className="py-2 text-gray-600">{formatDate(p.payment_date)}</td>
                       <td className="py-2 text-gray-500">{p.method === 'bank_transfer' ? 'CK' : p.method === 'momo' ? 'Momo' : 'TM'}</td>
+                      <td className="py-2">
+                        {p.payment_target === 'agency'
+                          ? <span className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-orange-100 text-orange-700"><Landmark size={10} /> Cấp trên</span>
+                          : <span className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-blue-100 text-blue-700"><User size={10} /> Cá nhân</span>}
+                      </td>
                       <td className="py-2 text-right font-semibold text-green-600">{formatCurrency(p.amount)}</td>
                       <td className="py-2 text-right">
                         <button onClick={() => remove(p.id)} className="text-red-500 p-1 hover:bg-red-50 rounded"><Trash2 size={14} /></button>
