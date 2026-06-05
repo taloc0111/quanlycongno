@@ -27,6 +27,14 @@ const DEBT_IMPORT_SAMPLE = {
   ticketAmount: 1500000, paid: 500000, notes: 'Vé khứ hồi',
 };
 
+// Tuyến phổ biến gợi ý sẵn (dùng cho mọi user kể cả chưa tự thêm hành trình)
+const DEFAULT_ROUTES = [
+  'HAN-SGN', 'SGN-HAN', 'HAN-DAD', 'DAD-HAN', 'SGN-DAD', 'DAD-SGN',
+  'HAN-CXR', 'CXR-HAN', 'SGN-CXR', 'CXR-SGN', 'HAN-PQC', 'PQC-HAN',
+  'SGN-PQC', 'PQC-SGN', 'HAN-VII', 'VII-HAN', 'SGN-VII', 'VII-SGN',
+  'HAN-HPH', 'HPH-HAN', 'SGN-UIH', 'UIH-SGN',
+];
+
 const formatDateDisplay = (dateString) => {
   if (!dateString) return '';
   if (dateString.includes('T')) {
@@ -87,6 +95,7 @@ const App = () => {
   const [debts, setDebts] = useState([]);
   const [routes, setRoutes] = useState([]);
   const [companies, setCompanies] = useState([]);
+  const [customers, setCustomers] = useState([]);
 
   const [showAddForm, setShowAddForm] = useState(false);
   const [showRouteManager, setShowRouteManager] = useState(false);
@@ -151,15 +160,17 @@ const App = () => {
 
   const loadAllData = async (authToken) => {
     try {
-      const [debtsRes, routesRes, companiesRes] = await Promise.all([
+      const [debtsRes, routesRes, companiesRes, customersRes] = await Promise.all([
         fetch(`${API_URL}/debts${agencyId ? `?agencyId=${agencyId}` : ''}`, { headers: { 'Authorization': `Bearer ${authToken}` } }),
         fetch(`${API_URL}/routes`, { headers: { 'Authorization': `Bearer ${authToken}` } }),
-        fetch(`${API_URL}/companies`, { headers: { 'Authorization': `Bearer ${authToken}` } })
+        fetch(`${API_URL}/companies`, { headers: { 'Authorization': `Bearer ${authToken}` } }),
+        fetch(`${API_URL}/customers`, { headers: { 'Authorization': `Bearer ${authToken}` } })
       ]);
 
       if (debtsRes.ok) setDebts(await debtsRes.json());
       if (routesRes.ok) setRoutes(await routesRes.json());
       if (companiesRes.ok) setCompanies(await companiesRes.json());
+      if (customersRes.ok) setCustomers(await customersRes.json());
     } catch (error) {
       console.error('Load data error:', error);
     }
@@ -653,11 +664,25 @@ const App = () => {
                   <label className="block text-xs sm:text-sm font-semibold text-gray-700 mb-1">Tên khách hàng *</label>
                   <input
                     type="text"
-                    placeholder="Nhập tên khách hàng"
+                    list="customer-name-options"
+                    placeholder="Chọn khách cũ hoặc nhập tên mới"
                     value={newDebt.customerName}
-                    onChange={(e) => setNewDebt({ ...newDebt, customerName: e.target.value })}
+                    onChange={(e) => {
+                      const name = e.target.value;
+                      const match = customers.find((c) => c.name === name);
+                      setNewDebt({
+                        ...newDebt,
+                        customerName: name,
+                        phoneNumber: match ? (match.phone || '') : newDebt.phoneNumber,
+                      });
+                    }}
                     className="w-full px-3 sm:px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none transition text-xs sm:text-sm"
                   />
+                  <datalist id="customer-name-options">
+                    {[...new Map(customers.map((c) => [c.name, c])).values()].map((c) => (
+                      <option key={c.id} value={c.name}>{c.phone || ''}</option>
+                    ))}
+                  </datalist>
                 </div>
                 <div>
                   <label className="block text-xs sm:text-sm font-semibold text-gray-700 mb-1">Số điện thoại</label>
@@ -706,6 +731,9 @@ const App = () => {
                     className="w-full px-3 sm:px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none transition text-xs sm:text-sm"
                   >
                     <option value="">Khách lẻ</option>
+                    {companies.length === 0 && (
+                      <option value="" disabled>— Chưa có công ty, bấm nút &quot;Công ty&quot; để thêm —</option>
+                    )}
                     {companies.map((c) => (
                       <option key={c.id} value={c.id}>{c.name}</option>
                     ))}
@@ -713,16 +741,19 @@ const App = () => {
                 </div>
                 <div>
                   <label className="block text-xs sm:text-sm font-semibold text-gray-700 mb-1">Hành trình</label>
-                  <select
+                  <input
+                    type="text"
+                    list="route-options"
+                    placeholder="Chọn hoặc nhập, VD: HAN-SGN"
                     value={newDebt.route}
-                    onChange={(e) => setNewDebt({ ...newDebt, route: e.target.value })}
+                    onChange={(e) => setNewDebt({ ...newDebt, route: e.target.value.toUpperCase() })}
                     className="w-full px-3 sm:px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none transition text-xs sm:text-sm"
-                  >
-                    <option value="">Chọn hành trình</option>
-                    {routes.map((r, i) => (
-                      <option key={i} value={r}>{r}</option>
+                  />
+                  <datalist id="route-options">
+                    {[...new Set([...routes, ...DEFAULT_ROUTES])].map((r) => (
+                      <option key={r} value={r} />
                     ))}
-                  </select>
+                  </datalist>
                 </div>
                 <div>
                   <label className="block text-xs sm:text-sm font-semibold text-gray-700 mb-1">Ngày bay</label>
