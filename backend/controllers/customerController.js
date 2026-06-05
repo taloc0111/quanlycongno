@@ -35,14 +35,16 @@ const getCustomers = async (req, res) => {
 
 const createCustomer = async (req, res) => {
   try {
-    const { name, phone, email, address, idNumber, type, creditLimit, notes, birthday } = req.body;
+    const { name, phone, email, address, idNumber, type, creditLimit, notes, birthday, companyId } = req.body;
     if (!name) return res.status(400).json({ error: 'Tên khách hàng là bắt buộc' });
 
+    // Chỉ gắn company_id khi là khách loại công ty.
+    const linkedCompany = type === 'company' ? (companyId || null) : null;
     const result = await pool.query(
-      `INSERT INTO customers (user_id, name, phone, email, address, id_number, type, credit_limit, notes, birthday)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+      `INSERT INTO customers (user_id, name, phone, email, address, id_number, type, credit_limit, notes, birthday, company_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
       [req.user.id, name, phone || null, email || null, address || null,
-       idNumber || null, type || 'individual', creditLimit || 0, notes || null, birthday || null]
+       idNumber || null, type || 'individual', creditLimit || 0, notes || null, birthday || null, linkedCompany]
     );
     res.status(201).json(result.rows[0]);
   } catch (error) {
@@ -57,14 +59,15 @@ const createCustomer = async (req, res) => {
 const updateCustomer = async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, phone, email, address, idNumber, type, creditLimit, notes, birthday } = req.body;
+    const { name, phone, email, address, idNumber, type, creditLimit, notes, birthday, companyId } = req.body;
 
+    const linkedCompany = type === 'company' ? (companyId || null) : null;
     const result = await pool.query(
       `UPDATE customers SET
-         name=$2, phone=$3, email=$4, address=$5, id_number=$6, type=$7, credit_limit=$8, notes=$9, birthday=$10
-       WHERE id=$1 AND user_id=$11 RETURNING *`,
+         name=$2, phone=$3, email=$4, address=$5, id_number=$6, type=$7, credit_limit=$8, notes=$9, birthday=$10, company_id=$11
+       WHERE id=$1 AND user_id=$12 RETURNING *`,
       [id, name, phone || null, email || null, address || null,
-       idNumber || null, type || 'individual', creditLimit || 0, notes || null, birthday || null, req.user.id]
+       idNumber || null, type || 'individual', creditLimit || 0, notes || null, birthday || null, linkedCompany, req.user.id]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Customer not found' });
     res.json(result.rows[0]);

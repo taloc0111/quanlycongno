@@ -21,12 +21,13 @@ const CUSTOMER_IMPORT_SAMPLE = {
   address: 'Hà Nội', idNumber: '0010xxxxxxxx', type: 'individual',
 };
 
-const EMPTY = { name: '', phone: '', email: '', address: '', idNumber: '', type: 'individual', creditLimit: '', notes: '', birthday: '' };
+const EMPTY = { name: '', phone: '', email: '', address: '', idNumber: '', type: 'individual', creditLimit: '', notes: '', birthday: '', companyId: '' };
 
 export default function CustomerApp() {
   const { user } = useAuth();
   const currentUserId = user?.id;
   const [customers, setCustomers] = useState([]);
+  const [companies, setCompanies] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
@@ -51,6 +52,9 @@ export default function CustomerApp() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { load(); }, [agencyId]);
 
+  // Danh sách công ty (để gắn cho khách loại "Công ty").
+  useEffect(() => { apiGet('/companies').then(setCompanies).catch(() => {}); }, []);
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return customers;
@@ -69,12 +73,14 @@ export default function CustomerApp() {
       idNumber: c.id_number || '', type: c.type || 'individual',
       creditLimit: c.credit_limit || '', notes: c.notes || '',
       birthday: (c.birthday || '').slice(0, 10),
+      companyId: c.company_id || '',
     });
     setEditingId(c.id);
     setShowForm(true);
   };
 
   const save = async () => {
+    if (form.type === 'company' && !form.companyId) { alert('⚠️ Vui lòng chọn công ty'); return; }
     if (!form.name.trim()) { alert('⚠️ Nhập tên khách hàng'); return; }
     try {
       if (editingId) await apiSend('PUT', `/customers/${editingId}`, form);
@@ -189,33 +195,88 @@ export default function CustomerApp() {
               <button onClick={() => setShowForm(false)} className="text-gray-400 hover:text-gray-700"><X size={22} /></button>
             </div>
             <div className="px-6 py-4 space-y-3">
-              {[
-                ['name', 'Tên khách hàng *'], ['phone', 'Số điện thoại'], ['email', 'Email'],
-                ['address', 'Địa chỉ'], ['idNumber', 'CCCD/CMND'],
-              ].map(([k, label]) => (
-                <div key={k}>
-                  <label className="block text-sm text-gray-600 mb-1">{label}</label>
-                  <input
-                    value={form[k]}
-                    onChange={(e) => setForm({ ...form, [k]: e.target.value })}
-                    className="w-full border rounded-lg px-3 py-2 focus:border-blue-500 focus:outline-none"
-                  />
-                </div>
-              ))}
-              <div>
-                <label className="block text-sm text-gray-600 mb-1">Ngày sinh</label>
-                <VnDatePicker
-                  value={form.birthday}
-                  onChange={(v) => setForm({ ...form, birthday: v })}
-                />
-              </div>
               <div>
                 <label className="block text-sm text-gray-600 mb-1">Loại</label>
-                <select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })} className="w-full border rounded-lg px-3 py-2">
+                <select
+                  value={form.type}
+                  onChange={(e) => {
+                    const type = e.target.value;
+                    // Đổi sang cá nhân: bỏ liên kết công ty. Đổi sang công ty: chờ chọn từ dropdown.
+                    setForm(type === 'individual' ? { ...form, type, companyId: '' } : { ...form, type });
+                  }}
+                  className="w-full border rounded-lg px-3 py-2"
+                >
                   <option value="individual">Cá nhân</option>
                   <option value="company">Công ty</option>
                 </select>
               </div>
+
+              {form.type === 'company' && (
+                <div>
+                  <label className="block text-sm text-gray-600 mb-1">Chọn công ty *</label>
+                  <select
+                    value={form.companyId}
+                    onChange={(e) => {
+                      const comp = companies.find((c) => String(c.id) === e.target.value);
+                      setForm({
+                        ...form,
+                        companyId: e.target.value,
+                        name: comp?.name || '',
+                        phone: comp?.phone || '',
+                        email: comp?.email || '',
+                        address: comp?.address || '',
+                      });
+                    }}
+                    className="w-full border rounded-lg px-3 py-2"
+                  >
+                    <option value="">— Chọn công ty —</option>
+                    {companies.map((c) => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </select>
+                  {companies.length === 0 && (
+                    <p className="text-xs text-amber-600 mt-1">Chưa có công ty. Tạo ở mục Công nợ vé → nút “Công ty”.</p>
+                  )}
+                </div>
+              )}
+
+              {[
+                ['name', 'Tên khách hàng *'], ['phone', 'Số điện thoại'],
+                ['email', 'Email'], ['address', 'Địa chỉ'],
+              ].map(([k, label]) => {
+                const readOnly = form.type === 'company';
+                return (
+                  <div key={k}>
+                    <label className="block text-sm text-gray-600 mb-1">{label}</label>
+                    <input
+                      value={form[k]}
+                      readOnly={readOnly}
+                      onChange={(e) => setForm({ ...form, [k]: e.target.value })}
+                      className={`w-full border rounded-lg px-3 py-2 focus:border-blue-500 focus:outline-none ${readOnly ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : ''}`}
+                    />
+                  </div>
+                );
+              })}
+              {form.type === 'company' && (
+                <p className="text-xs text-gray-400 -mt-1">Thông tin lấy từ công ty đã chọn. Muốn sửa, vào mục Công ty.</p>
+              )}
+
+              {form.type === 'individual' && (
+                <>
+                  <div>
+                    <label className="block text-sm text-gray-600 mb-1">CCCD/CMND</label>
+                    <input
+                      value={form.idNumber}
+                      onChange={(e) => setForm({ ...form, idNumber: e.target.value })}
+                      className="w-full border rounded-lg px-3 py-2 focus:border-blue-500 focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm text-gray-600 mb-1">Ngày sinh</label>
+                    <VnDatePicker value={form.birthday} onChange={(v) => setForm({ ...form, birthday: v })} />
+                  </div>
+                </>
+              )}
             </div>
             <div className="flex justify-end gap-3 border-t px-6 py-4">
               <button onClick={() => setShowForm(false)} className="px-5 py-2 bg-gray-200 rounded-lg font-semibold text-sm">Huỷ</button>
