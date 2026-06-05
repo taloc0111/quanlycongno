@@ -11,7 +11,11 @@ registerLocale('vi', vi);
  * onChange: called with ISO string 'YYYY-MM-DD' or ''
  */
 export default function VnDatePicker({ value, onChange, className, placeholder, ...rest }) {
-  const selected = value ? new Date(value + 'T00:00:00') : null;
+  // Normalize: take only YYYY-MM-DD part to avoid double-T or timezone issues
+  const isoDate = value ? value.slice(0, 10) : '';
+  const selected = isoDate ? new Date(isoDate + 'T00:00:00') : null;
+  // Guard against invalid dates
+  const safeSelected = selected && !isNaN(selected.getTime()) ? selected : null;
 
   const handleChange = (date) => {
     if (!date) { onChange(''); return; }
@@ -23,7 +27,7 @@ export default function VnDatePicker({ value, onChange, className, placeholder, 
 
   return (
     <DatePicker
-      selected={selected}
+      selected={safeSelected}
       onChange={handleChange}
       dateFormat="dd/MM/yyyy"
       locale="vi"
