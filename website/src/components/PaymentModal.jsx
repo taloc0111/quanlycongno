@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { X, Trash2, Plus } from 'lucide-react';
+import VnDatePicker from './VnDatePicker';
 import { apiGet, apiSend } from '../services/client';
 import { formatCurrency, formatDate } from '../utils/format';
 
@@ -96,7 +97,7 @@ export default function PaymentModal({ target, onClose, onChanged }) {
             </div>
             <div>
               <label className="block text-xs text-gray-500 mb-1">Ngày</label>
-              <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="border rounded-lg px-2 py-1.5 text-sm" />
+              <VnDatePicker value={date} onChange={setDate} className="border rounded-lg px-2 py-1.5 text-sm" />
             </div>
             <div>
               <label className="block text-xs text-gray-500 mb-1">Hình thức</label>

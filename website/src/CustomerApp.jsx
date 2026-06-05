@@ -4,6 +4,7 @@ import ImportModal from './components/ImportModal';
 import AgencyFilter from './components/AgencyFilter';
 import { apiGet, apiSend } from './services/client';
 import { formatCurrency } from './utils/format';
+import VnDatePicker from './components/VnDatePicker';
 import { useAuth } from './auth/AuthContext';
 import { useSort } from './hooks/useSort';
 
@@ -20,7 +21,7 @@ const CUSTOMER_IMPORT_SAMPLE = {
   address: 'Hà Nội', idNumber: '0010xxxxxxxx', type: 'individual',
 };
 
-const EMPTY = { name: '', phone: '', email: '', address: '', idNumber: '', type: 'individual', creditLimit: '', notes: '' };
+const EMPTY = { name: '', phone: '', email: '', address: '', idNumber: '', type: 'individual', creditLimit: '', notes: '', birthday: '' };
 
 export default function CustomerApp() {
   const { user } = useAuth();
@@ -67,6 +68,7 @@ export default function CustomerApp() {
       name: c.name || '', phone: c.phone || '', email: c.email || '', address: c.address || '',
       idNumber: c.id_number || '', type: c.type || 'individual',
       creditLimit: c.credit_limit || '', notes: c.notes || '',
+      birthday: (c.birthday || '').slice(0, 10),
     });
     setEditingId(c.id);
     setShowForm(true);
@@ -200,6 +202,13 @@ export default function CustomerApp() {
                   />
                 </div>
               ))}
+              <div>
+                <label className="block text-sm text-gray-600 mb-1">Ngày sinh</label>
+                <VnDatePicker
+                  value={form.birthday}
+                  onChange={(v) => setForm({ ...form, birthday: v })}
+                />
+              </div>
               <div>
                 <label className="block text-sm text-gray-600 mb-1">Loại</label>
                 <select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })} className="w-full border rounded-lg px-3 py-2">

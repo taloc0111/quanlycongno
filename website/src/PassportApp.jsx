@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Plus, LogOut, Edit2, Trash2, Check, X, Search, Filter, TrendingUp, Users, DollarSign, AlertCircle, FileText, Upload } from 'lucide-react';
 import ImportModal from './components/ImportModal';
 import AgencyFilter from './components/AgencyFilter';
+import VnDatePicker from './components/VnDatePicker';
 import { useAuth } from './auth/AuthContext';
 import { useSort } from './hooks/useSort';
 
@@ -437,19 +438,17 @@ export default function PassportApp() {
                   </div>
                   <div>
                     <label className="block text-sm font-semibold text-gray-700 mb-2">Ngày Làm *</label>
-                    <input
-                      type="date"
+                    <VnDatePicker
                       value={formData.serviceDate}
-                      onChange={(e) => setFormData({...formData, serviceDate: e.target.value})}
+                      onChange={(v) => setFormData({...formData, serviceDate: v})}
                       className="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none transition"
                     />
                   </div>
                   <div>
                     <label className="block text-sm font-semibold text-gray-700 mb-2">Hạn thanh toán</label>
-                    <input
-                      type="date"
+                    <VnDatePicker
                       value={formData.dueDate}
-                      onChange={(e) => setFormData({...formData, dueDate: e.target.value})}
+                      onChange={(v) => setFormData({...formData, dueDate: v})}
                       className="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none transition"
                     />
                   </div>

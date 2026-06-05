@@ -197,6 +197,7 @@ ALTER TABLE debts     ADD COLUMN IF NOT EXISTS airline VARCHAR(50);
 ALTER TABLE customers DROP CONSTRAINT IF EXISTS customers_user_id_phone_key;
 ALTER TABLE passports ADD COLUMN IF NOT EXISTS customer_id INTEGER REFERENCES customers(id) ON DELETE SET NULL;
 ALTER TABLE passports ADD COLUMN IF NOT EXISTS due_date DATE;
+ALTER TABLE customers ADD COLUMN IF NOT EXISTS birthday DATE;
 
 -- ============================================================================
 -- INDEXES

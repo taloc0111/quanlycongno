@@ -2,6 +2,10 @@
 @tailwind components;
 @tailwind utilities;
 
+/* react-datepicker overrides */
+.react-datepicker-wrapper { width: 100%; }
+.react-datepicker__close-icon::after { background-color: #6b7280 !important; }
+
 * {
   margin: 0;
   padding: 0;

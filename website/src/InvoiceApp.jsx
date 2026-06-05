@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Plus, Trash2, X, FileText, Eye } from 'lucide-react';
 import AgencyFilter from './components/AgencyFilter';
+import VnDatePicker from './components/VnDatePicker';
 import { apiGet, apiSend } from './services/client';
 import { formatCurrency, formatDate } from './utils/format';
 import { useAuth } from './auth/AuthContext';
@@ -194,11 +195,11 @@ export default function InvoiceApp() {
                 </div>
                 <div>
                   <label className="block text-sm text-gray-600 mb-1">Ngày lập</label>
-                  <input type="date" value={form.issueDate} onChange={(e) => setForm({ ...form, issueDate: e.target.value })} className="w-full border rounded-lg px-3 py-2" />
+                  <VnDatePicker value={form.issueDate} onChange={(v) => setForm({ ...form, issueDate: v })} />
                 </div>
                 <div>
                   <label className="block text-sm text-gray-600 mb-1">Hạn thanh toán</label>
-                  <input type="date" value={form.dueDate} onChange={(e) => setForm({ ...form, dueDate: e.target.value })} className="w-full border rounded-lg px-3 py-2" />
+                  <VnDatePicker value={form.dueDate} onChange={(v) => setForm({ ...form, dueDate: v })} />
                 </div>
               </div>
 

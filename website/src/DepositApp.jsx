@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Plus, Trash2, X, Landmark, Edit2 } from 'lucide-react';
 import AgencyFilter from './components/AgencyFilter';
+import VnDatePicker from './components/VnDatePicker';
 import { apiGet, apiSend } from './services/client';
 import { formatCurrency, formatDate } from './utils/format';
 import { useAuth } from './auth/AuthContext';
@@ -141,7 +142,7 @@ export default function DepositApp() {
               </div>
               <div>
                 <label className="block text-sm text-gray-600 mb-1">Ngày nộp</label>
-                <input type="date" value={form.depositDate} onChange={(e) => setForm({ ...form, depositDate: e.target.value })} className="w-full border rounded-lg px-3 py-2" />
+                <VnDatePicker value={form.depositDate} onChange={(v) => setForm({ ...form, depositDate: v })} />
               </div>
               <div>
                 <label className="block text-sm text-gray-600 mb-1">Hình thức</label>

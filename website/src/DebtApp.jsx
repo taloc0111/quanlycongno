@@ -3,6 +3,7 @@ import { Plus, LogOut, Lock, Calendar, Edit2, Trash2, Check, X, Search, Download
 import ImportModal from './components/ImportModal';
 import PaymentModal from './components/PaymentModal';
 import AgencyFilter from './components/AgencyFilter';
+import VnDatePicker from './components/VnDatePicker';
 import { useAuth } from './auth/AuthContext';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
@@ -757,28 +758,25 @@ const App = () => {
                 </div>
                 <div>
                   <label className="block text-xs sm:text-sm font-semibold text-gray-700 mb-1">Ngày bay</label>
-                  <input
-                    type="date"
+                  <VnDatePicker
                     value={newDebt.flightDate}
-                    onChange={(e) => setNewDebt({ ...newDebt, flightDate: e.target.value })}
+                    onChange={(v) => setNewDebt({ ...newDebt, flightDate: v })}
                     className="w-full px-3 sm:px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none transition text-xs sm:text-sm"
                   />
                 </div>
                 <div>
                   <label className="block text-xs sm:text-sm font-semibold text-gray-700 mb-1">Ngày xuất vé</label>
-                  <input
-                    type="date"
+                  <VnDatePicker
                     value={newDebt.issueDate}
-                    onChange={(e) => setNewDebt({ ...newDebt, issueDate: e.target.value })}
+                    onChange={(v) => setNewDebt({ ...newDebt, issueDate: v })}
                     className="w-full px-3 sm:px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none transition text-xs sm:text-sm"
                   />
                 </div>
                 <div>
                   <label className="block text-xs sm:text-sm font-semibold text-gray-700 mb-1">Hạn thanh toán</label>
-                  <input
-                    type="date"
+                  <VnDatePicker
                     value={newDebt.dueDate}
-                    onChange={(e) => setNewDebt({ ...newDebt, dueDate: e.target.value })}
+                    onChange={(v) => setNewDebt({ ...newDebt, dueDate: v })}
                     className="w-full px-3 sm:px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none transition text-xs sm:text-sm"
                   />
                 </div>
