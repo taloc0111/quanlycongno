@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { LogOut, Menu } from 'lucide-react';
-import { ZALO_URL } from '../utils/contact';
+import { ZALO_URL, ZALO_ENABLED } from '../utils/contact';
 
 /**
  * Vỏ ứng dụng với sidebar trái cố định (desktop) + thanh trên có nút menu (mobile).
@@ -121,9 +121,11 @@ export default function Layout({ nav, activeKey, onSelect, user, onLogout, child
             {trialDays <= 0
               ? '⛔ Tài khoản dùng thử đã hết hạn — '
               : `🎁 Bản dùng thử — còn ${trialDays} ngày. `}
-            <a href={ZALO_URL} target="_blank" rel="noopener noreferrer" className="underline font-bold">
-              Liên hệ nâng cấp qua Zalo
-            </a>
+            {ZALO_ENABLED && (
+              <a href={ZALO_URL} target="_blank" rel="noopener noreferrer" className="underline font-bold">
+                Liên hệ nâng cấp qua Zalo
+              </a>
+            )}
           </div>
         )}
         <main>{children}</main>

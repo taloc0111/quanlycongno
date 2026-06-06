@@ -1,10 +1,13 @@
 import { useState } from 'react';
 import { X, MessageCircle } from 'lucide-react';
-import { ZALO_URL } from '../utils/contact';
+import { ZALO_URL, ZALO_ENABLED } from '../utils/contact';
 
 // Nút liên hệ Zalo nổi góc dưới-phải (hiện ở mọi trang). Có thể thu gọn.
+// Tắt hẳn bằng env VITE_ZALO_ENABLED=false.
 export default function ZaloButton() {
   const [open, setOpen] = useState(true);
+
+  if (!ZALO_ENABLED) return null;
 
   if (!open) {
     return (
