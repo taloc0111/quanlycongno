@@ -1532,7 +1532,7 @@ const App = () => {
       {/* Toast thông báo (thay alert) */}
       {toast && (
         <div
-          className={`fixed bottom-5 right-5 z-[70] px-4 py-3 rounded-lg shadow-lg text-white text-sm font-medium ${toast.type === 'error' ? 'bg-red-600' : 'bg-green-600'}`}
+          className={`fixed bottom-24 right-5 z-[70] px-4 py-3 rounded-lg shadow-lg text-white text-sm font-medium ${toast.type === 'error' ? 'bg-red-600' : 'bg-green-600'}`}
         >
           {toast.type === 'error' ? '❌ ' : '✅ '}{toast.message}
         </div>

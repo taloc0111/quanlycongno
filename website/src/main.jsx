@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import './index.css'
 import { AuthProvider } from './auth/AuthContext.jsx'
 import AppLauncher from './AppLauncher.jsx'
+import ZaloButton from './components/ZaloButton.jsx'
 
 class ErrorBoundary extends Component {
   constructor(props) { super(props); this.state = { error: null }; }
@@ -28,6 +29,7 @@ createRoot(document.getElementById('root')).render(
       <AuthProvider>
         <AppLauncher />
       </AuthProvider>
+      <ZaloButton />
     </ErrorBoundary>
   </StrictMode>,
 )
