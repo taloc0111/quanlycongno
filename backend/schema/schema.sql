@@ -197,6 +197,26 @@ CREATE TABLE IF NOT EXISTS sticky_notes (
   updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
+-- ---------------------------------------------------------------------------
+-- TICKET_WATCHES — yêu cầu "canh vé" cho khách (theo dõi vé rẻ theo chặng/ngày).
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS ticket_watches (
+  id            SERIAL PRIMARY KEY,
+  user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  customer_name VARCHAR(255) NOT NULL,
+  phone_number  VARCHAR(20),
+  route         VARCHAR(100),                          -- VD: SGN-HAN
+  depart_date   DATE,                                  -- ngày đi mong muốn
+  return_date   DATE,                                  -- ngày về (khứ hồi, có thể trống)
+  airline       VARCHAR(50),
+  pax           INTEGER DEFAULT 1,                     -- số khách
+  target_price  DECIMAL(15,2) DEFAULT 0,               -- giá mong muốn
+  status        VARCHAR(20) NOT NULL DEFAULT 'watching', -- watching | quoted | booked | cancelled
+  notes         TEXT,
+  created_at    TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+  updated_at    TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
 -- ============================================================================
 -- NÂNG CẤP DB CŨ — thêm cột mới nếu chưa có (an toàn cho DB đang có dữ liệu)
 -- ============================================================================
@@ -245,6 +265,8 @@ CREATE INDEX IF NOT EXISTS idx_payments_passport_id   ON payments(passport_id);
 
 CREATE INDEX IF NOT EXISTS idx_fund_deposits_user_id  ON fund_deposits(user_id);
 CREATE INDEX IF NOT EXISTS idx_sticky_notes_user_id   ON sticky_notes(user_id);
+CREATE INDEX IF NOT EXISTS idx_ticket_watches_user_id ON ticket_watches(user_id);
+CREATE INDEX IF NOT EXISTS idx_ticket_watches_depart  ON ticket_watches(depart_date);
 CREATE INDEX IF NOT EXISTS idx_invoices_user_id       ON invoices(user_id);
 CREATE INDEX IF NOT EXISTS idx_invoices_customer_id   ON invoices(customer_id);
 CREATE INDEX IF NOT EXISTS idx_invoice_items_invoice  ON invoice_items(invoice_id);
@@ -264,7 +286,7 @@ DO $$
 DECLARE
   t TEXT;
 BEGIN
-  FOREACH t IN ARRAY ARRAY['users','companies','customers','debts','passports','invoices','sticky_notes']
+  FOREACH t IN ARRAY ARRAY['users','companies','customers','debts','passports','invoices','sticky_notes','ticket_watches']
   LOOP
     EXECUTE format('DROP TRIGGER IF EXISTS trg_%I_updated_at ON %I;', t, t);
     EXECUTE format(
