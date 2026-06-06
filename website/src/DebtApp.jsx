@@ -83,6 +83,24 @@ const StatCard = ({ icon: Icon, label, value, color, trend }) => (
   </div>
 );
 
+// Các cột có thể ẩn/hiện (5 cột lõi không nằm ở đây vì luôn hiện).
+const TOGGLE_COLS = [
+  { key: 'ticket_source', label: 'Nguồn vé' },
+  { key: 'issue_date', label: 'Ngày xuất vé' },
+  { key: 'ticket_amount', label: 'Tiền vé' },
+  { key: 'cost_amount', label: 'Giá gốc' },
+  { key: 'profit', label: 'Lợi nhuận' },
+  { key: 'paid', label: 'Đã trả' },
+  { key: 'remaining', label: 'Còn nợ' },
+  { key: 'phone', label: 'SĐT' },
+  { key: 'company', label: 'Công ty' },
+  { key: 'agency', label: 'Đại lý' },
+];
+const DEFAULT_VISIBLE = {
+  ticket_source: true, issue_date: true, ticket_amount: true, cost_amount: true, profit: true,
+  paid: true, remaining: true, phone: true, company: true, agency: false,
+};
+
 const App = () => {
   const { user: authUser } = useAuth();
   const currentUserId = authUser?.id;
@@ -137,8 +155,9 @@ const App = () => {
   const [confirmState, setConfirmState] = useState(null); // { message, title?, confirmText?, onConfirm }
   const [toast, setToast] = useState(null);               // { message, type }
   const [selectedIds, setSelectedIds] = useState([]);
-  const [showAgencyCol, setShowAgencyCol] = useState(false); // cột Đại lý ẩn mặc định
-  const [showCompanyCol, setShowCompanyCol] = useState(true); // cột Công ty
+  // Ẩn/hiện cột (trừ 5 cột lõi luôn hiện: Khách hàng, Mã vé, Hành trình, Ngày bay, Hãng).
+  const [visibleCols, setVisibleCols] = useState(DEFAULT_VISIBLE);
+  const [showColMenu, setShowColMenu] = useState(false);
   const [newCompany, setNewCompany] = useState({
     name: '',
     taxCode: '',
@@ -851,20 +870,34 @@ const App = () => {
               >
                 <Download size={16} className="sm:w-5 sm:h-5" /> <span className="hidden sm:inline">CSV</span>
               </button>
-              <button
-                onClick={() => setShowCompanyCol(v => !v)}
-                className="flex items-center gap-1 sm:gap-2 px-3 sm:px-4 py-1.5 sm:py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition font-semibold text-xs sm:text-sm"
-                title={showCompanyCol ? 'Ẩn cột Công ty' : 'Hiện cột Công ty'}
-              >
-                {showCompanyCol ? <EyeOff size={16} className="sm:w-5 sm:h-5" /> : <Eye size={16} className="sm:w-5 sm:h-5" />} <span className="hidden sm:inline">{showCompanyCol ? 'Ẩn Công ty' : 'Hiện Công ty'}</span>
-              </button>
-              <button
-                onClick={() => setShowAgencyCol(v => !v)}
-                className="flex items-center gap-1 sm:gap-2 px-3 sm:px-4 py-1.5 sm:py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition font-semibold text-xs sm:text-sm"
-                title={showAgencyCol ? 'Ẩn cột Đại lý' : 'Hiện cột Đại lý'}
-              >
-                {showAgencyCol ? <EyeOff size={16} className="sm:w-5 sm:h-5" /> : <Eye size={16} className="sm:w-5 sm:h-5" />} <span className="hidden sm:inline">{showAgencyCol ? 'Ẩn Đại lý' : 'Hiện Đại lý'}</span>
-              </button>
+              <div className="relative">
+                <button
+                  onClick={() => setShowColMenu((v) => !v)}
+                  className="flex items-center gap-1 sm:gap-2 px-3 sm:px-4 py-1.5 sm:py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition font-semibold text-xs sm:text-sm"
+                  title="Tùy chọn cột hiển thị"
+                >
+                  <Eye size={16} className="sm:w-5 sm:h-5" /> <span className="hidden sm:inline">Cột</span>
+                </button>
+                {showColMenu && (
+                  <>
+                    <div className="fixed inset-0 z-10" onClick={() => setShowColMenu(false)} />
+                    <div className="absolute right-0 mt-1 w-56 bg-white border rounded-lg shadow-xl z-20 p-2">
+                      <p className="text-xs text-gray-400 px-2 py-1">Hiện/ẩn cột (5 cột chính luôn hiện)</p>
+                      {TOGGLE_COLS.map((c) => (
+                        <label key={c.key} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-gray-50 cursor-pointer text-sm text-gray-700">
+                          <input
+                            type="checkbox"
+                            checked={!!visibleCols[c.key]}
+                            onChange={() => setVisibleCols((v) => ({ ...v, [c.key]: !v[c.key] }))}
+                            className="w-4 h-4 rounded"
+                          />
+                          {c.label}
+                        </label>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
             </div>
 
             {/* Search & Filter */}
@@ -1167,30 +1200,26 @@ const App = () => {
                       </span>
                     </th>
                     <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap">Mã vé</th>
-                    <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap hidden lg:table-cell">Hành trình</th>
-                    <th onClick={() => toggleSort('flight_date')} className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap hidden xl:table-cell cursor-pointer select-none hover:bg-blue-700">Ngày bay{sortArrow('flight_date')}</th>
-                    <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap hidden lg:table-cell">Hãng</th>
-                    <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap hidden lg:table-cell">Nguồn vé</th>
-                    <th onClick={() => toggleSort('issue_date')} className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap hidden lg:table-cell cursor-pointer select-none hover:bg-blue-700">Ngày xuất vé{sortArrow('issue_date')}</th>
-                    <th onClick={() => toggleSort('ticket_amount')} className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-right whitespace-nowrap cursor-pointer select-none hover:bg-blue-700">Tiền vé{sortArrow('ticket_amount')}</th>
-                    <th onClick={() => toggleSort('cost_amount')} className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-right whitespace-nowrap hidden lg:table-cell cursor-pointer select-none hover:bg-blue-700">Giá gốc{sortArrow('cost_amount')}</th>
-                    <th onClick={() => toggleSort('profit')} className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-right whitespace-nowrap cursor-pointer select-none hover:bg-blue-700">Lợi nhuận{sortArrow('profit')}</th>
-                    <th onClick={() => toggleSort('paid')} className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-right whitespace-nowrap hidden sm:table-cell cursor-pointer select-none hover:bg-blue-700">Đã trả{sortArrow('paid')}</th>
-                    <th onClick={() => toggleSort('remaining')} className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-right whitespace-nowrap cursor-pointer select-none hover:bg-blue-700">Còn nợ{sortArrow('remaining')}</th>
-                    <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap hidden md:table-cell">SĐT</th>
-                    {showCompanyCol && (
-                      <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap hidden sm:table-cell">Công ty</th>
-                    )}
-                    {showAgencyCol && (
-                      <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap">Đại lý</th>
-                    )}
+                    <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap">Hành trình</th>
+                    <th onClick={() => toggleSort('flight_date')} className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap cursor-pointer select-none hover:bg-blue-700">Ngày bay{sortArrow('flight_date')}</th>
+                    <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap">Hãng</th>
+                    {visibleCols.ticket_source && <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap">Nguồn vé</th>}
+                    {visibleCols.issue_date && <th onClick={() => toggleSort('issue_date')} className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap cursor-pointer select-none hover:bg-blue-700">Ngày xuất vé{sortArrow('issue_date')}</th>}
+                    {visibleCols.ticket_amount && <th onClick={() => toggleSort('ticket_amount')} className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-right whitespace-nowrap cursor-pointer select-none hover:bg-blue-700">Tiền vé{sortArrow('ticket_amount')}</th>}
+                    {visibleCols.cost_amount && <th onClick={() => toggleSort('cost_amount')} className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-right whitespace-nowrap cursor-pointer select-none hover:bg-blue-700">Giá gốc{sortArrow('cost_amount')}</th>}
+                    {visibleCols.profit && <th onClick={() => toggleSort('profit')} className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-right whitespace-nowrap cursor-pointer select-none hover:bg-blue-700">Lợi nhuận{sortArrow('profit')}</th>}
+                    {visibleCols.paid && <th onClick={() => toggleSort('paid')} className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-right whitespace-nowrap cursor-pointer select-none hover:bg-blue-700">Đã trả{sortArrow('paid')}</th>}
+                    {visibleCols.remaining && <th onClick={() => toggleSort('remaining')} className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-right whitespace-nowrap cursor-pointer select-none hover:bg-blue-700">Còn nợ{sortArrow('remaining')}</th>}
+                    {visibleCols.phone && <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap">SĐT</th>}
+                    {visibleCols.company && <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap">Công ty</th>}
+                    {visibleCols.agency && <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap">Đại lý</th>}
                     <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-center whitespace-nowrap">Thao tác</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-200">
                   {sortedDebts.length === 0 ? (
                     <tr>
-                      <td colSpan="15" className="px-4 py-8 sm:py-12 text-center text-gray-500 font-medium text-xs sm:text-base">
+                      <td colSpan={6 + TOGGLE_COLS.filter((c) => visibleCols[c.key]).length} className="px-4 py-8 sm:py-12 text-center text-gray-500 font-medium text-xs sm:text-base">
                         📊 Chưa có dữ liệu
                       </td>
                     </tr>
@@ -1232,42 +1261,48 @@ const App = () => {
                               {debt.ticket_code}
                             </span>
                           </td>
-                          <td className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 hidden lg:table-cell">
+                          <td className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4">
                             <span className="px-2 sm:px-3 py-0.5 sm:py-1 bg-teal-100 text-teal-800 rounded-full text-xs font-medium whitespace-nowrap">
                               {debt.route}
                             </span>
                           </td>
-                          <td className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-xs sm:text-sm font-medium text-gray-900 hidden xl:table-cell whitespace-nowrap">{formatDateDisplay(debt.flight_date)}</td>
-                          <td className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-xs sm:text-sm text-gray-600 whitespace-nowrap hidden lg:table-cell">{debt.airline}</td>
-                          <td className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-xs sm:text-sm text-gray-600 whitespace-nowrap hidden lg:table-cell">{debt.ticket_source || '—'}</td>
-                          <td className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-xs sm:text-sm font-medium text-gray-600 hidden lg:table-cell">
-                            <span className="px-2 sm:px-3 py-0.5 sm:py-1 bg-green-100 text-green-800 rounded-lg whitespace-nowrap">
-                              {formatDateDisplay(debt.issue_date)}
-                            </span>
-                          </td>
-                          <td className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-right font-semibold text-gray-900 text-xs sm:text-sm whitespace-nowrap">{formatCurrency(debt.ticket_amount)}</td>
-                          <td className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-right text-gray-500 text-xs sm:text-sm whitespace-nowrap hidden lg:table-cell">{formatCurrency(debt.cost_amount)}</td>
-                          <td className={`px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-right font-semibold text-xs sm:text-sm whitespace-nowrap ${profit >= 0 ? 'text-green-600' : 'text-red-600'}`}>{formatCurrency(profit)}</td>
-                          <td className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-right font-semibold text-green-600 hidden sm:table-cell text-xs sm:text-sm whitespace-nowrap">
-                            {formatCurrency(debt.paid)}
-                            {Number(debt.agency_paid) > 0 && (
-                              <span className="block text-[10px] text-orange-600 font-normal" title="Đã chuyển vào TK cấp trên">
-                                <Landmark size={10} className="inline mr-0.5" />{formatCurrency(debt.agency_paid)}
+                          <td className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-xs sm:text-sm font-medium text-gray-900 whitespace-nowrap">{formatDateDisplay(debt.flight_date)}</td>
+                          <td className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-xs sm:text-sm text-gray-600 whitespace-nowrap">{debt.airline}</td>
+                          {visibleCols.ticket_source && <td className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-xs sm:text-sm text-gray-600 whitespace-nowrap">{debt.ticket_source || '—'}</td>}
+                          {visibleCols.issue_date && (
+                            <td className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-xs sm:text-sm font-medium text-gray-600">
+                              <span className="px-2 sm:px-3 py-0.5 sm:py-1 bg-green-100 text-green-800 rounded-lg whitespace-nowrap">
+                                {formatDateDisplay(debt.issue_date)}
                               </span>
-                            )}
-                          </td>
-                          <td className={`px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-right font-bold text-xs sm:text-sm whitespace-nowrap ${isPaid ? 'text-green-600' : 'text-red-600'}`}>
-                            {formatCurrency(remaining)}
-                          </td>
-                          <td className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 hidden md:table-cell text-xs sm:text-sm text-gray-600 whitespace-nowrap">{debt.phone_number}</td>
-                          {showCompanyCol && (
-                            <td className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 hidden sm:table-cell">
+                            </td>
+                          )}
+                          {visibleCols.ticket_amount && <td className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-right font-semibold text-gray-900 text-xs sm:text-sm whitespace-nowrap">{formatCurrency(debt.ticket_amount)}</td>}
+                          {visibleCols.cost_amount && <td className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-right text-gray-500 text-xs sm:text-sm whitespace-nowrap">{formatCurrency(debt.cost_amount)}</td>}
+                          {visibleCols.profit && <td className={`px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-right font-semibold text-xs sm:text-sm whitespace-nowrap ${profit >= 0 ? 'text-green-600' : 'text-red-600'}`}>{formatCurrency(profit)}</td>}
+                          {visibleCols.paid && (
+                            <td className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-right font-semibold text-green-600 text-xs sm:text-sm whitespace-nowrap">
+                              {formatCurrency(debt.paid)}
+                              {Number(debt.agency_paid) > 0 && (
+                                <span className="block text-[10px] text-orange-600 font-normal" title="Đã chuyển vào TK cấp trên">
+                                  <Landmark size={10} className="inline mr-0.5" />{formatCurrency(debt.agency_paid)}
+                                </span>
+                              )}
+                            </td>
+                          )}
+                          {visibleCols.remaining && (
+                            <td className={`px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-right font-bold text-xs sm:text-sm whitespace-nowrap ${isPaid ? 'text-green-600' : 'text-red-600'}`}>
+                              {formatCurrency(remaining)}
+                            </td>
+                          )}
+                          {visibleCols.phone && <td className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-xs sm:text-sm text-gray-600 whitespace-nowrap">{debt.phone_number}</td>}
+                          {visibleCols.company && (
+                            <td className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4">
                               <span className="px-2 sm:px-3 py-0.5 sm:py-1 bg-indigo-100 text-indigo-800 rounded-full text-xs font-medium whitespace-nowrap">
                                 {getCompanyById(debt.company_id)?.name || 'Khách lẻ'}
                               </span>
                             </td>
                           )}
-                          {showAgencyCol && (
+                          {visibleCols.agency && (
                             <td className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-xs text-gray-600 whitespace-nowrap">
                               {debt.owner_name || debt.owner_username || ''}
                             </td>
