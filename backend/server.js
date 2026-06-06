@@ -31,6 +31,10 @@ const { attachScope } = require('./middleware/scope');
 
 const app = express();
 
+// Chạy sau proxy (Render/Vercel/Nginx) — tin proxy đầu tiên để rate-limit lấy đúng IP
+// từ X-Forwarded-For. Số hop chỉnh qua TRUST_PROXY (mặc định 1).
+app.set('trust proxy', Number(process.env.TRUST_PROXY || 1));
+
 // Bảo mật HTTP headers
 app.use(helmet());
 
