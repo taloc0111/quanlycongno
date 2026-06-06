@@ -12,6 +12,7 @@ if (isConfigured) {
     port: env.smtp.port,
     secure: env.smtp.port === 465, // 465 = SSL; 587 = STARTTLS
     auth: { user: env.smtp.user, pass: env.smtp.pass },
+    family: 4,                  // ép IPv4 (Render không có outbound IPv6)
     pool: true,                 // tái dùng kết nối cho nhanh
     connectionTimeout: 10000,   // fail nhanh nếu không kết nối được (10s)
     greetingTimeout: 10000,

@@ -1,4 +1,8 @@
 // server.js
+// Ưu tiên IPv4 khi resolve DNS — Render không có outbound IPv6, nếu để mặc định
+// (IPv6 trước) sẽ lỗi ENETUNREACH khi kết nối SMTP Gmail.
+require('dns').setDefaultResultOrder('ipv4first');
+
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
