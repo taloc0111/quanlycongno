@@ -455,8 +455,10 @@ const App = () => {
       debt.notes
     ]);
 
-    const csv = [headers, ...rows].map(row => row.map(cell => `"${cell}"`).join(',')).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const esc = (cell) => `"${String(cell ?? '').replace(/"/g, '""')}"`;
+    const csv = [headers, ...rows].map(row => row.map(esc).join(',')).join('\r\n');
+    // ﻿ = BOM UTF-8 để Excel nhận đúng tiếng Việt thay vì đọc theo ANSI.
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
     link.download = `cong-no-ve-may-bay-${new Date().toISOString().split('T')[0]}.csv`;
