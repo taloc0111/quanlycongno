@@ -138,6 +138,7 @@ const App = () => {
   const [toast, setToast] = useState(null);               // { message, type }
   const [selectedIds, setSelectedIds] = useState([]);
   const [showAgencyCol, setShowAgencyCol] = useState(false); // cột Đại lý ẩn mặc định
+  const [showCompanyCol, setShowCompanyCol] = useState(true); // cột Công ty
   const [newCompany, setNewCompany] = useState({
     name: '',
     taxCode: '',
@@ -851,6 +852,13 @@ const App = () => {
                 <Download size={16} className="sm:w-5 sm:h-5" /> <span className="hidden sm:inline">CSV</span>
               </button>
               <button
+                onClick={() => setShowCompanyCol(v => !v)}
+                className="flex items-center gap-1 sm:gap-2 px-3 sm:px-4 py-1.5 sm:py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition font-semibold text-xs sm:text-sm"
+                title={showCompanyCol ? 'Ẩn cột Công ty' : 'Hiện cột Công ty'}
+              >
+                {showCompanyCol ? <EyeOff size={16} className="sm:w-5 sm:h-5" /> : <Eye size={16} className="sm:w-5 sm:h-5" />} <span className="hidden sm:inline">{showCompanyCol ? 'Ẩn Công ty' : 'Hiện Công ty'}</span>
+              </button>
+              <button
                 onClick={() => setShowAgencyCol(v => !v)}
                 className="flex items-center gap-1 sm:gap-2 px-3 sm:px-4 py-1.5 sm:py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition font-semibold text-xs sm:text-sm"
                 title={showAgencyCol ? 'Ẩn cột Đại lý' : 'Hiện cột Đại lý'}
@@ -1170,7 +1178,9 @@ const App = () => {
                     <th onClick={() => toggleSort('paid')} className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-right whitespace-nowrap hidden sm:table-cell cursor-pointer select-none hover:bg-blue-700">Đã trả{sortArrow('paid')}</th>
                     <th onClick={() => toggleSort('remaining')} className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-right whitespace-nowrap cursor-pointer select-none hover:bg-blue-700">Còn nợ{sortArrow('remaining')}</th>
                     <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap hidden md:table-cell">SĐT</th>
-                    <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap hidden sm:table-cell">Công ty</th>
+                    {showCompanyCol && (
+                      <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap hidden sm:table-cell">Công ty</th>
+                    )}
                     {showAgencyCol && (
                       <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap">Đại lý</th>
                     )}
@@ -1250,11 +1260,13 @@ const App = () => {
                             {formatCurrency(remaining)}
                           </td>
                           <td className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 hidden md:table-cell text-xs sm:text-sm text-gray-600 whitespace-nowrap">{debt.phone_number}</td>
-                          <td className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 hidden sm:table-cell">
-                            <span className="px-2 sm:px-3 py-0.5 sm:py-1 bg-indigo-100 text-indigo-800 rounded-full text-xs font-medium whitespace-nowrap">
-                              {getCompanyById(debt.company_id)?.name || 'Khách lẻ'}
-                            </span>
-                          </td>
+                          {showCompanyCol && (
+                            <td className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 hidden sm:table-cell">
+                              <span className="px-2 sm:px-3 py-0.5 sm:py-1 bg-indigo-100 text-indigo-800 rounded-full text-xs font-medium whitespace-nowrap">
+                                {getCompanyById(debt.company_id)?.name || 'Khách lẻ'}
+                              </span>
+                            </td>
+                          )}
                           {showAgencyCol && (
                             <td className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-xs text-gray-600 whitespace-nowrap">
                               {debt.owner_name || debt.owner_username || ''}
