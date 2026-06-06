@@ -187,14 +187,16 @@ const forgotPassword = async (req, res) => {
       <p>Bạn (hoặc ai đó) đã yêu cầu đặt lại mật khẩu. Bấm vào link dưới đây (hiệu lực trong 1 giờ):</p>
       <p><a href="${link}">${link}</a></p>
       <p>Nếu không phải bạn, hãy bỏ qua email này.</p>`;
-    try {
-      const sent = await sendMail({ to: email.trim(), subject: 'Đặt lại mật khẩu', html, text: link });
-      if (!sent) logger.info(`[DEV] Link đặt lại mật khẩu cho ${email}: ${link}`);
-    } catch (mailErr) {
-      logger.error('Gửi email reset thất bại:', mailErr.message);
-      logger.info(`[Fallback] Link đặt lại mật khẩu cho ${email}: ${link}`);
-    }
+
+    // Trả lời NGAY, không chờ SMTP (gửi email chạy nền cho nhanh).
     res.json(generic);
+    sendMail({ to: email.trim(), subject: 'Đặt lại mật khẩu', html, text: link })
+      .then((sent) => { if (!sent) logger.info(`[DEV] Link đặt lại mật khẩu cho ${email}: ${link}`); })
+      .catch((mailErr) => {
+        logger.error('Gửi email reset thất bại:', mailErr.message);
+        logger.info(`[Fallback] Link đặt lại mật khẩu cho ${email}: ${link}`);
+      });
+    return;
   } catch (error) {
     logger.error('Forgot password error:', error.message);
     res.json(generic); // vẫn trả chung, tránh lộ lỗi
