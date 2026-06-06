@@ -14,6 +14,10 @@ const authenticateToken = (req, res, next) => {
     if (err) {
       return res.status(403).json({ error: 'Invalid or expired token' });
     }
+    // Chặn token còn hạn nhưng tài khoản dùng thử đã hết hạn.
+    if (user.trialEndsAt && Date.now() > user.trialEndsAt) {
+      return res.status(403).json({ error: 'Tài khoản dùng thử đã hết hạn', trialExpired: true });
+    }
     req.user = user;
     next();
   });

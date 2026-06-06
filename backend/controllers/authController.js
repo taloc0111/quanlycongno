@@ -7,7 +7,13 @@ const logger = require('../config/logger');
 
 function signToken(user) {
   return jwt.sign(
-    { id: user.id, username: user.username, role: user.role || 'user' },
+    {
+      id: user.id,
+      username: user.username,
+      role: user.role || 'user',
+      // Mốc hết hạn dùng thử (epoch ms) nhúng vào token để middleware chặn không cần query DB.
+      trialEndsAt: user.trial_ends_at ? new Date(user.trial_ends_at).getTime() : null,
+    },
     env.jwtSecret,
     { expiresIn: env.jwtExpire }
   );
@@ -33,6 +39,14 @@ const login = async (req, res) => {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
+    // Chặn tài khoản dùng thử đã hết hạn (trial_ends_at != null và đã qua).
+    if (user.trial_ends_at && new Date(user.trial_ends_at).getTime() < Date.now()) {
+      return res.status(403).json({
+        error: 'Tài khoản dùng thử đã hết hạn (14 ngày). Vui lòng liên hệ để nâng cấp.',
+        trialExpired: true,
+      });
+    }
+
     const token = signToken(user);
     res.json({
       token,
@@ -40,6 +54,7 @@ const login = async (req, res) => {
       userId: user.id,
       fullName: user.full_name || null,
       role: user.role || 'user',
+      trialEndsAt: user.trial_ends_at || null,
     });
   } catch (error) {
     logger.error('Login error:', error.message);
@@ -59,10 +74,11 @@ const register = async (req, res) => {
     }
 
     const hashed = await bcrypt.hash(password, 10);
+    // Tài khoản mới = dùng thử 14 ngày kể từ lúc đăng ký.
     const result = await pool.query(
-      `INSERT INTO users (username, password_hash, full_name)
-       VALUES ($1, $2, $3)
-       RETURNING id, username, full_name, role`,
+      `INSERT INTO users (username, password_hash, full_name, trial_ends_at)
+       VALUES ($1, $2, $3, CURRENT_TIMESTAMP + INTERVAL '14 days')
+       RETURNING id, username, full_name, role, trial_ends_at`,
       [username, hashed, fullName || null]
     );
 
@@ -74,6 +90,7 @@ const register = async (req, res) => {
       userId: user.id,
       fullName: user.full_name,
       role: user.role,
+      trialEndsAt: user.trial_ends_at || null,
     });
   } catch (error) {
     if (error.code === '23505') {

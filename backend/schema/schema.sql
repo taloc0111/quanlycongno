@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS users (
   full_name     VARCHAR(255),
   email         VARCHAR(255),
   role          VARCHAR(20)  NOT NULL DEFAULT 'user',   -- user | admin
+  trial_ends_at TIMESTAMPTZ,                             -- NULL = không giới hạn; có giá trị = tài khoản dùng thử
   created_at    TIMESTAMPTZ  DEFAULT CURRENT_TIMESTAMP,
   updated_at    TIMESTAMPTZ  DEFAULT CURRENT_TIMESTAMP
 );
@@ -225,6 +226,7 @@ CREATE TABLE IF NOT EXISTS ticket_watches (
 ALTER TABLE users     ADD COLUMN IF NOT EXISTS role VARCHAR(20) NOT NULL DEFAULT 'user';
 ALTER TABLE users     ADD COLUMN IF NOT EXISTS full_name VARCHAR(255);
 ALTER TABLE users     ADD COLUMN IF NOT EXISTS parent_id INTEGER REFERENCES users(id) ON DELETE SET NULL;
+ALTER TABLE users     ADD COLUMN IF NOT EXISTS trial_ends_at TIMESTAMPTZ;
 
 ALTER TABLE debts     ADD COLUMN IF NOT EXISTS customer_id INTEGER REFERENCES customers(id) ON DELETE SET NULL;
 ALTER TABLE debts     ADD COLUMN IF NOT EXISTS due_date DATE;

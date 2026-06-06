@@ -22,6 +22,12 @@ export default function Layout({ nav, activeKey, onSelect, user, onLogout, child
   }
 
   const activeLabel = nav.find((n) => n.key === activeKey)?.label || '';
+
+  // Banner dùng thử: số ngày còn lại (nếu tài khoản có trial_ends_at).
+  let trialDays = null;
+  if (user?.trialEndsAt) {
+    trialDays = Math.ceil((new Date(user.trialEndsAt).getTime() - Date.now()) / 86400000);
+  }
   const ROLE_LABEL = { admin: 'Quản trị viên', agency: 'Đại lý cấp 1', user: 'Đại lý cấp 2' };
   const roleLabel = ROLE_LABEL[user?.role] || 'Đã đăng nhập';
 
@@ -109,6 +115,13 @@ export default function Layout({ nav, activeKey, onSelect, user, onLogout, child
           <button onClick={() => setMobileOpen(true)}><Menu size={22} /></button>
           <span className="font-semibold">{activeLabel}</span>
         </header>
+        {trialDays !== null && (
+          <div className={`px-4 py-2 text-sm font-medium text-center ${trialDays <= 0 ? 'bg-red-600 text-white' : trialDays <= 3 ? 'bg-amber-500 text-white' : 'bg-blue-50 text-blue-700 border-b border-blue-200'}`}>
+            {trialDays <= 0
+              ? '⛔ Tài khoản dùng thử đã hết hạn — vui lòng liên hệ để nâng cấp.'
+              : `🎁 Bản dùng thử — còn ${trialDays} ngày.`}
+          </div>
+        )}
         <main>{children}</main>
       </div>
     </div>

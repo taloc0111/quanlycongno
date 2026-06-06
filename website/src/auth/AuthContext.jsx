@@ -20,7 +20,25 @@ export function AuthProvider({ children }) {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || 'Đăng nhập thất bại');
-    const authUser = { id: data.userId, username: data.username, fullName: data.fullName, role: data.role };
+    const authUser = { id: data.userId, username: data.username, fullName: data.fullName, role: data.role, trialEndsAt: data.trialEndsAt || null };
+    localStorage.setItem('token', data.token);
+    localStorage.setItem('currentUser', data.username);
+    localStorage.setItem('authUser', JSON.stringify(authUser));
+    setToken(data.token);
+    setUser(authUser);
+    return data;
+  }, []);
+
+  // Đăng ký tài khoản dùng thử mới (14 ngày).
+  const register = useCallback(async ({ username, password, fullName }) => {
+    const res = await fetch(`${API_URL}/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password, fullName }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'Đăng ký thất bại');
+    const authUser = { id: data.userId, username: data.username, fullName: data.fullName, role: data.role, trialEndsAt: data.trialEndsAt || null };
     localStorage.setItem('token', data.token);
     localStorage.setItem('currentUser', data.username);
     localStorage.setItem('authUser', JSON.stringify(authUser));
@@ -47,7 +65,7 @@ export function AuthProvider({ children }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ token, user, isAuthenticated: !!token, login, logout, updateUser }}>
+    <AuthContext.Provider value={{ token, user, isAuthenticated: !!token, login, register, logout, updateUser }}>
       {children}
     </AuthContext.Provider>
   );
