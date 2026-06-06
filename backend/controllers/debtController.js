@@ -30,7 +30,7 @@ const getDebts = async (req, res) => {
 const createDebt = async (req, res) => {
   const {
     customerName, phoneNumber, ticketCode, airline, route, flightDate,
-    issueDate, dueDate, ticketAmount, costAmount, paid, notes, companyId, paymentTarget
+    issueDate, dueDate, ticketAmount, costAmount, paid, notes, companyId, paymentTarget, ticketSource
   } = req.body;
 
   if (!customerName || !ticketAmount) {
@@ -47,13 +47,13 @@ const createDebt = async (req, res) => {
     const result = await client.query(
       `INSERT INTO debts (
         user_id, customer_id, customer_name, phone_number, ticket_code, airline, route,
-        flight_date, issue_date, due_date, ticket_amount, cost_amount, paid, notes, company_id
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+        flight_date, issue_date, due_date, ticket_source, ticket_amount, cost_amount, paid, notes, company_id
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
       RETURNING *`,
       [
         req.user.id, customerId, customerName, phoneNumber || '', ticketCode || '', airline || '', route || '',
         flightDate || null, issueDate || new Date().toISOString().split('T')[0], dueDate || null,
-        parseFloat(ticketAmount) || 0, parseFloat(costAmount) || 0, paidAmt, notes || '',
+        ticketSource || null, parseFloat(ticketAmount) || 0, parseFloat(costAmount) || 0, paidAmt, notes || '',
         companyId || null,
       ]
     );
@@ -82,7 +82,7 @@ const updateDebt = async (req, res) => {
   const { id } = req.params;
   const {
     customerName, phoneNumber, ticketCode, airline, route, flightDate,
-    issueDate, dueDate, ticketAmount, costAmount, notes, companyId
+    issueDate, dueDate, ticketAmount, costAmount, notes, companyId, ticketSource
   } = req.body;
 
   const client = await pool.connect();
@@ -99,12 +99,12 @@ const updateDebt = async (req, res) => {
       `UPDATE debts SET
         customer_id = $2, customer_name = $3, phone_number = $4, ticket_code = $5,
         airline = $6, route = $7, flight_date = $8, issue_date = $9, due_date = $10,
-        ticket_amount = $11, cost_amount = $12, notes = $13, company_id = $14
-      WHERE id = $1 AND user_id = $15
+        ticket_source = $11, ticket_amount = $12, cost_amount = $13, notes = $14, company_id = $15
+      WHERE id = $1 AND user_id = $16
       RETURNING *`,
       [
         id, customerId, customerName, phoneNumber, ticketCode, airline || '', route, flightDate,
-        issueDate, dueDate || null, ticketAmount, parseFloat(costAmount) || 0, notes, companyId || null, req.user.id,
+        issueDate, dueDate || null, ticketSource || null, ticketAmount, parseFloat(costAmount) || 0, notes, companyId || null, req.user.id,
       ]
     );
     if (result.rows.length === 0) {

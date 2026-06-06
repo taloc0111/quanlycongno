@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, LogOut, Lock, Calendar, Edit2, Trash2, Check, X, Search, Download, Upload, Users, TrendingUp, TrendingDown, DollarSign, Users2, Landmark } from 'lucide-react';
+import { Plus, LogOut, Lock, Calendar, Edit2, Trash2, Check, X, Search, Download, Upload, Users, TrendingUp, TrendingDown, DollarSign, Users2, Landmark, Eye, EyeOff } from 'lucide-react';
 import ImportModal from './components/ImportModal';
 import PaymentModal from './components/PaymentModal';
 import AgencyFilter from './components/AgencyFilter';
@@ -118,6 +118,7 @@ const App = () => {
     flightDate: '',
     issueDate: '',
     dueDate: '',
+    ticketSource: '',
     ticketAmount: '',
     costAmount: '',
     paid: '',
@@ -136,6 +137,7 @@ const App = () => {
   const [confirmState, setConfirmState] = useState(null); // { message, title?, confirmText?, onConfirm }
   const [toast, setToast] = useState(null);               // { message, type }
   const [selectedIds, setSelectedIds] = useState([]);
+  const [showAgencyCol, setShowAgencyCol] = useState(false); // cột Đại lý ẩn mặc định
   const [newCompany, setNewCompany] = useState({
     name: '',
     taxCode: '',
@@ -276,6 +278,7 @@ const App = () => {
         flightDate: newDebt.flightDate,
         issueDate: newDebt.issueDate || new Date().toISOString().split('T')[0],
         dueDate: newDebt.dueDate || null,
+        ticketSource: newDebt.ticketSource,
         ticketAmount: parseFloat(newDebt.ticketAmount),
         costAmount: parseFloat(newDebt.costAmount) || 0,
         paid: parseFloat(newDebt.paid) || 0,
@@ -302,6 +305,7 @@ const App = () => {
           flightDate: '',
           issueDate: '',
           dueDate: '',
+          ticketSource: '',
           ticketAmount: '',
           costAmount: '',
           paid: '',
@@ -325,6 +329,7 @@ const App = () => {
       flightDate: (debt.flight_date || '').slice(0, 10),
       issueDate: (debt.issue_date || '').slice(0, 10),
       dueDate: (debt.due_date || '').slice(0, 10),
+      ticketSource: debt.ticket_source || '',
       ticketAmount: debt.ticket_amount,
       costAmount: debt.cost_amount,
       paid: debt.paid,
@@ -487,6 +492,7 @@ const App = () => {
       'Số điện thoại',
       'Mã vé',
       'Hãng',
+      'Nguồn vé',
       'Hành trình',
       'Ngày bay',
       'Ngày xuất vé',
@@ -509,6 +515,7 @@ const App = () => {
         debt.phone_number,
         debt.ticket_code,
         debt.airline,
+        debt.ticket_source || '',
         debt.route,
         formatDateDisplay(debt.flight_date),
         formatDateDisplay(debt.issue_date),
@@ -537,7 +544,7 @@ const App = () => {
   const exportToXLSX = async () => {
     // --- Sheet 1: chi tiết ---
     const headers = [
-      'Khách hàng', 'Công ty', 'SĐT', 'Mã vé', 'Hãng', 'Hành trình', 'Ngày bay', 'Ngày xuất vé',
+      'Khách hàng', 'Công ty', 'SĐT', 'Mã vé', 'Hãng', 'Nguồn vé', 'Hành trình', 'Ngày bay', 'Ngày xuất vé',
       'Tiền vé', 'Giá gốc', 'Lợi nhuận', 'Đã thanh toán', 'Thanh toán vào', 'Còn nợ', 'Ghi chú',
     ];
     const rows = filteredDebts.map((debt) => {
@@ -550,6 +557,7 @@ const App = () => {
         debt.phone_number || '',
         debt.ticket_code || '',
         debt.airline || '',
+        debt.ticket_source || '',
         debt.route || '',
         formatDateDisplay(debt.flight_date),
         formatDateDisplay(debt.issue_date),
@@ -586,8 +594,8 @@ const App = () => {
         {
           name: 'Công nợ vé',
           aoa: [headers, ...rows],
-          colWidths: [22, 18, 13, 12, 14, 14, 12, 12, 13, 13, 13, 14, 16, 13, 22],
-          moneyCols: [8, 9, 10, 11, 13], // Tiền vé, Giá gốc, Lợi nhuận, Đã thanh toán, Còn nợ
+          colWidths: [22, 18, 13, 12, 14, 16, 14, 12, 12, 13, 13, 13, 14, 16, 13, 22],
+          moneyCols: [9, 10, 11, 12, 14], // Tiền vé, Giá gốc, Lợi nhuận, Đã thanh toán, Còn nợ
         },
         {
           name: 'Tổng kết tháng',
@@ -650,6 +658,9 @@ const App = () => {
   const allSelected = selectableIds.length > 0 && selectableIds.every(id => selectedIds.includes(id));
   const toggleSelectAll = () =>
     setSelectedIds(allSelected ? [] : selectableIds);
+
+  // Gợi ý nguồn xuất vé: các giá trị đã từng nhập (không trùng).
+  const ticketSources = [...new Set(debts.map(d => d.ticket_source).filter(Boolean))].sort();
 
   const toggleSort = (key) => {
     if (sortBy === key) setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
@@ -795,6 +806,7 @@ const App = () => {
                     flightDate: '',
                     issueDate: '',
                     dueDate: '',
+                    ticketSource: '',
                     ticketAmount: '',
                     costAmount: '',
                     paid: '',
@@ -837,6 +849,13 @@ const App = () => {
                 className="flex items-center gap-1 sm:gap-2 px-3 sm:px-4 py-1.5 sm:py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition font-semibold text-xs sm:text-sm"
               >
                 <Download size={16} className="sm:w-5 sm:h-5" /> <span className="hidden sm:inline">CSV</span>
+              </button>
+              <button
+                onClick={() => setShowAgencyCol(v => !v)}
+                className="flex items-center gap-1 sm:gap-2 px-3 sm:px-4 py-1.5 sm:py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition font-semibold text-xs sm:text-sm"
+                title={showAgencyCol ? 'Ẩn cột Đại lý' : 'Hiện cột Đại lý'}
+              >
+                {showAgencyCol ? <EyeOff size={16} className="sm:w-5 sm:h-5" /> : <Eye size={16} className="sm:w-5 sm:h-5" />} <span className="hidden sm:inline">{showAgencyCol ? 'Ẩn Đại lý' : 'Hiện Đại lý'}</span>
               </button>
             </div>
 
@@ -927,6 +946,22 @@ const App = () => {
                     onChange={(e) => setNewDebt({ ...newDebt, ticketCode: e.target.value })}
                     className="w-full px-3 sm:px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none transition text-xs sm:text-sm"
                   />
+                </div>
+                <div>
+                  <label className="block text-xs sm:text-sm font-semibold text-gray-700 mb-1">Nguồn xuất vé</label>
+                  <input
+                    type="text"
+                    list="ticket-source-options"
+                    placeholder="VD: Ngọc Mai, website, Bảo Gia Trần"
+                    value={newDebt.ticketSource}
+                    onChange={(e) => setNewDebt({ ...newDebt, ticketSource: e.target.value })}
+                    className="w-full px-3 sm:px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none transition text-xs sm:text-sm"
+                  />
+                  <datalist id="ticket-source-options">
+                    {ticketSources.map((s) => (
+                      <option key={s} value={s} />
+                    ))}
+                  </datalist>
                 </div>
                 <div>
                   <label className="block text-xs sm:text-sm font-semibold text-gray-700 mb-1">Hãng vé</label>
@@ -1127,6 +1162,7 @@ const App = () => {
                     <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap hidden lg:table-cell">Hành trình</th>
                     <th onClick={() => toggleSort('flight_date')} className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap hidden xl:table-cell cursor-pointer select-none hover:bg-blue-700">Ngày bay{sortArrow('flight_date')}</th>
                     <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap hidden lg:table-cell">Hãng</th>
+                    <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap hidden lg:table-cell">Nguồn vé</th>
                     <th onClick={() => toggleSort('issue_date')} className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap hidden lg:table-cell cursor-pointer select-none hover:bg-blue-700">Ngày xuất vé{sortArrow('issue_date')}</th>
                     <th onClick={() => toggleSort('ticket_amount')} className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-right whitespace-nowrap cursor-pointer select-none hover:bg-blue-700">Tiền vé{sortArrow('ticket_amount')}</th>
                     <th onClick={() => toggleSort('cost_amount')} className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-right whitespace-nowrap hidden lg:table-cell cursor-pointer select-none hover:bg-blue-700">Giá gốc{sortArrow('cost_amount')}</th>
@@ -1135,7 +1171,9 @@ const App = () => {
                     <th onClick={() => toggleSort('remaining')} className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-right whitespace-nowrap cursor-pointer select-none hover:bg-blue-700">Còn nợ{sortArrow('remaining')}</th>
                     <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap hidden md:table-cell">SĐT</th>
                     <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap hidden sm:table-cell">Công ty</th>
-                    <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap hidden md:table-cell">Đại lý</th>
+                    {showAgencyCol && (
+                      <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap">Đại lý</th>
+                    )}
                     <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-center whitespace-nowrap">Thao tác</th>
                   </tr>
                 </thead>
@@ -1191,6 +1229,7 @@ const App = () => {
                           </td>
                           <td className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-xs sm:text-sm font-medium text-gray-900 hidden xl:table-cell whitespace-nowrap">{formatDateDisplay(debt.flight_date)}</td>
                           <td className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-xs sm:text-sm text-gray-600 whitespace-nowrap hidden lg:table-cell">{debt.airline}</td>
+                          <td className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-xs sm:text-sm text-gray-600 whitespace-nowrap hidden lg:table-cell">{debt.ticket_source || '—'}</td>
                           <td className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-xs sm:text-sm font-medium text-gray-600 hidden lg:table-cell">
                             <span className="px-2 sm:px-3 py-0.5 sm:py-1 bg-green-100 text-green-800 rounded-lg whitespace-nowrap">
                               {formatDateDisplay(debt.issue_date)}
@@ -1216,9 +1255,11 @@ const App = () => {
                               {getCompanyById(debt.company_id)?.name || 'Khách lẻ'}
                             </span>
                           </td>
-                          <td className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 hidden md:table-cell text-xs text-gray-600 whitespace-nowrap">
-                            {debt.owner_name || debt.owner_username || ''}
-                          </td>
+                          {showAgencyCol && (
+                            <td className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-xs text-gray-600 whitespace-nowrap">
+                              {debt.owner_name || debt.owner_username || ''}
+                            </td>
+                          )}
                           <td className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-center">
                             {(!currentUserId || debt.user_id === currentUserId) ? (
                               <div className="flex gap-1 sm:gap-2 justify-center flex-shrink-0">
