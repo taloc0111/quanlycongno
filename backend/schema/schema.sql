@@ -93,6 +93,7 @@ CREATE TABLE IF NOT EXISTS debts (
   paid          DECIMAL(15,2) NOT NULL DEFAULT 0,        -- tổng đã trả (suy ra từ payments)
   notes         TEXT,
   company_id    INTEGER REFERENCES companies(id) ON DELETE SET NULL,
+  checked_in    BOOLEAN NOT NULL DEFAULT FALSE,         -- đã check-in online cho khách chưa
   created_at    TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
   updated_at    TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
@@ -230,6 +231,7 @@ ALTER TABLE debts     ADD COLUMN IF NOT EXISTS due_date DATE;
 ALTER TABLE debts     ADD COLUMN IF NOT EXISTS airline VARCHAR(50);
 ALTER TABLE debts     ADD COLUMN IF NOT EXISTS cost_amount DECIMAL(15,2) NOT NULL DEFAULT 0;
 ALTER TABLE debts     ADD COLUMN IF NOT EXISTS ticket_source VARCHAR(100);
+ALTER TABLE debts     ADD COLUMN IF NOT EXISTS checked_in BOOLEAN NOT NULL DEFAULT FALSE;
 
 -- Bỏ ràng buộc "mỗi SĐT 1 khách" (chuyển sang định danh theo tên + SĐT).
 ALTER TABLE customers DROP CONSTRAINT IF EXISTS customers_user_id_phone_key;

@@ -42,7 +42,13 @@ export default function Layout({ nav, activeKey, onSelect, user, onLogout, child
                     active ? 'bg-white text-indigo-700 shadow' : 'text-white/80 hover:bg-white/10'
                   }`}
                 >
-                  <Icon size={18} /> {item.label}
+                  <Icon size={18} />
+                  <span className="flex-1 text-left">{item.label}</span>
+                  {item.badge ? (
+                    <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-red-500 text-white text-[11px] font-bold">
+                      {item.badge}
+                    </span>
+                  ) : null}
                 </button>
               );
             })}

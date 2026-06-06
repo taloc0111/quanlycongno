@@ -143,6 +143,23 @@ const deleteDebt = async (req, res) => {
   }
 };
 
+// Đánh dấu đã/chưa check-in online cho khách.
+const setCheckin = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { checkedIn } = req.body;
+    const result = await pool.query(
+      'UPDATE debts SET checked_in = $1 WHERE id = $2 AND user_id = $3 RETURNING *',
+      [!!checkedIn, id, req.user.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Debt not found' });
+    res.json(result.rows[0]);
+  } catch (error) {
+    logger.error('Set checkin error:', error.message);
+    res.status(500).json({ error: 'Failed to update check-in' });
+  }
+};
+
 // Xóa nhiều bản ghi cùng lúc (chỉ xóa của chính mình). payments tự xóa theo (ON DELETE CASCADE).
 const bulkDeleteDebts = async (req, res) => {
   try {
@@ -297,6 +314,7 @@ module.exports = {
   createDebt,
   updateDebt,
   deleteDebt,
+  setCheckin,
   bulkDeleteDebts,
   bulkCreateDebts,
   importDebts,
