@@ -4,6 +4,7 @@ import ImportModal from './components/ImportModal';
 import PaymentModal from './components/PaymentModal';
 import AgencyFilter from './components/AgencyFilter';
 import VnDatePicker from './components/VnDatePicker';
+import MoneyInput from './components/MoneyInput';
 import { useAuth } from './auth/AuthContext';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
@@ -852,21 +853,19 @@ const App = () => {
                 </div>
                 <div>
                   <label className="block text-xs sm:text-sm font-semibold text-gray-700 mb-1">Tiền vé / giá bán (VNĐ) *</label>
-                  <input
-                    type="number"
+                  <MoneyInput
                     placeholder="Giá bán cho khách"
                     value={newDebt.ticketAmount}
-                    onChange={(e) => setNewDebt({ ...newDebt, ticketAmount: e.target.value })}
+                    onChange={(v) => setNewDebt({ ...newDebt, ticketAmount: v })}
                     className="w-full px-3 sm:px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none transition text-xs sm:text-sm"
                   />
                 </div>
                 <div>
                   <label className="block text-xs sm:text-sm font-semibold text-gray-700 mb-1">Giá gốc / giá vốn (VNĐ)</label>
-                  <input
-                    type="number"
+                  <MoneyInput
                     placeholder="Giá nhập vé"
                     value={newDebt.costAmount}
-                    onChange={(e) => setNewDebt({ ...newDebt, costAmount: e.target.value })}
+                    onChange={(v) => setNewDebt({ ...newDebt, costAmount: v })}
                     className="w-full px-3 sm:px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none transition text-xs sm:text-sm"
                   />
                   {newDebt.ticketAmount && newDebt.costAmount && (
@@ -881,11 +880,10 @@ const App = () => {
                   <label className="block text-xs sm:text-sm font-semibold text-gray-700 mb-1">
                     {editingDebtId ? 'Đã trả (tổng — chỉ đọc)' : 'Trả trước (VNĐ)'}
                   </label>
-                  <input
-                    type="number"
+                  <MoneyInput
                     placeholder={editingDebtId ? '' : 'Số tiền khách trả trước (nếu có)'}
                     value={newDebt.paid}
-                    onChange={(e) => setNewDebt({ ...newDebt, paid: e.target.value })}
+                    onChange={(v) => setNewDebt({ ...newDebt, paid: v })}
                     disabled={!!editingDebtId}
                     className="w-full px-3 sm:px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none transition text-xs sm:text-sm disabled:bg-gray-100 disabled:text-gray-500"
                   />
