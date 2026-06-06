@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { PlaneTakeoff, Check, Clock, RefreshCw } from 'lucide-react';
+import { PlaneTakeoff, Check, Clock, RefreshCw, ExternalLink } from 'lucide-react';
 import { apiGet, apiSend } from './services/client';
 import Toast from './components/Toast';
 import { useToast } from './hooks/useFeedback';
+import { detectAirline } from './utils/airlines';
 
 const toYmd = (dt) => `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
 const fmt = (s) => (s ? s.slice(0, 10).split('-').reverse().join('/') : '');
@@ -67,27 +68,41 @@ export default function UpcomingFlightsApp() {
         <p className="text-gray-400 text-sm">Không có chuyến nào.</p>
       ) : (
         <div className="space-y-2">
-          {items.map((d) => (
+          {items.map((d) => {
+            const airline = detectAirline(d.airline);
+            return (
             <div key={d.id} className={`flex items-center gap-3 bg-white rounded-xl border px-4 py-3 ${d.checked_in ? 'border-green-200 opacity-70' : 'border-gray-200'}`}>
               <div className="min-w-0 flex-1">
                 <p className="font-semibold text-gray-900 truncate">{d.customer_name}{d.phone_number ? <span className="text-xs text-gray-400 font-normal"> · {d.phone_number}</span> : null}</p>
                 <p className="text-sm text-gray-600">
                   <span className="font-medium">{d.route || '—'}</span>
-                  {d.airline ? <span className="text-gray-400"> · {d.airline}</span> : null}
+                  {d.airline ? <span className="text-gray-400"> · {airline?.name || d.airline}</span> : null}
                   {d.ticket_code ? <span className="text-gray-400"> · {d.ticket_code}</span> : null}
                   <span className="text-gray-400"> · bay {fmt(d.flight_date)}</span>
                 </p>
               </div>
+              {airline && (
+                <a
+                  href={airline.checkinUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs sm:text-sm font-semibold shrink-0 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 transition"
+                  title={`Mở web check-in ${airline.name}`}
+                >
+                  <ExternalLink size={15} /> Web check-in
+                </a>
+              )}
               <button
                 onClick={() => toggleCheckin(d)}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs sm:text-sm font-semibold shrink-0 transition ${
                   d.checked_in ? 'bg-green-100 text-green-700 hover:bg-green-200' : 'bg-blue-600 text-white hover:bg-blue-700'
                 }`}
               >
-                <Check size={15} /> {d.checked_in ? 'Đã check-in' : 'Check-in'}
+                <Check size={15} /> {d.checked_in ? 'Đã đánh dấu' : 'Đánh dấu xong'}
               </button>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
