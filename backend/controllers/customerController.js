@@ -92,6 +92,24 @@ const deleteCustomer = async (req, res) => {
   }
 };
 
+// Xóa nhiều khách hàng cùng lúc (chỉ của chính mình).
+const bulkDeleteCustomers = async (req, res) => {
+  try {
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: 'Không có bản ghi nào để xóa' });
+    }
+    const result = await pool.query(
+      'DELETE FROM customers WHERE id = ANY($1) AND user_id = $2 RETURNING id',
+      [ids.map(Number).filter(Number.isFinite), req.user.id]
+    );
+    res.json({ deleted: result.rows.length });
+  } catch (error) {
+    logger.error('Bulk delete customers error:', error.message);
+    res.status(500).json({ error: 'Failed to delete customers' });
+  }
+};
+
 // Import danh bạ khách hàng từ Excel/CSV. Bỏ qua trùng SĐT (không lỗi).
 const importCustomers = async (req, res) => {
   try {
@@ -160,5 +178,6 @@ module.exports = {
   createCustomer,
   updateCustomer,
   deleteCustomer,
+  bulkDeleteCustomers,
   importCustomers,
 };

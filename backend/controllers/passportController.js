@@ -124,6 +124,24 @@ const deletePassport = async (req, res) => {
   }
 };
 
+// Xóa nhiều hộ chiếu cùng lúc (chỉ của chính mình). payments tự xóa theo (ON DELETE CASCADE).
+const bulkDeletePassports = async (req, res) => {
+  try {
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: 'Không có bản ghi nào để xóa' });
+    }
+    const result = await pool.query(
+      'DELETE FROM passports WHERE id = ANY($1) AND user_id = $2 RETURNING id',
+      [ids.map(Number).filter(Number.isFinite), req.user.id]
+    );
+    res.json({ deleted: result.rows.length });
+  } catch (error) {
+    logger.error('Bulk delete passports error:', error.message);
+    res.status(500).json({ error: 'Failed to delete passports' });
+  }
+};
+
 // Bulk import passports
 const bulkCreatePassports = async (req, res) => {
   try {
@@ -263,6 +281,7 @@ module.exports = {
   createPassport,
   updatePassport,
   deletePassport,
+  bulkDeletePassports,
   bulkCreatePassports,
   importPassports,
 };

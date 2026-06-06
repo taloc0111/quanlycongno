@@ -5,6 +5,9 @@ import AgencyFilter from './components/AgencyFilter';
 import VnDatePicker from './components/VnDatePicker';
 import { useAuth } from './auth/AuthContext';
 import { useSort } from './hooks/useSort';
+import ConfirmDialog from './components/ConfirmDialog';
+import Toast from './components/Toast';
+import { useToast, useConfirm } from './hooks/useFeedback';
 
 // Cấu hình cột import hộ chiếu (khớp key với backend /passports/import).
 const PASSPORT_IMPORT_FIELDS = [
@@ -60,7 +63,10 @@ export default function PassportApp() {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
   const [filterMonth, setFilterMonth] = useState('');
+  const [selectedIds, setSelectedIds] = useState([]);
   const sorter = useSort();
+  const { toast, showToast } = useToast();
+  const { confirmState, askConfirm, closeConfirm } = useConfirm();
 
   const [formData, setFormData] = useState({
     passportNumber: '',
@@ -128,7 +134,7 @@ export default function PassportApp() {
 
   const handleSubmit = async () => {
     if (!formData.customerName || !formData.serviceDate || !formData.totalAmount) {
-      alert('⚠️ Vui lòng nhập đầy đủ thông tin bắt buộc');
+      showToast('Vui lòng nhập đầy đủ thông tin bắt buộc', 'error');
       return;
     }
 
@@ -160,10 +166,10 @@ export default function PassportApp() {
           setPassports([...passports, data]);
         }
         resetForm();
-        alert('✅ Thành công!');
+        showToast(editingId ? 'Cập nhật thành công' : 'Đã thêm bản ghi');
       }
     } catch (error) {
-      alert('❌ Lỗi: ' + error.message);
+      showToast('Lỗi: ' + error.message, 'error');
     }
   };
 
@@ -183,16 +189,41 @@ export default function PassportApp() {
     setShowForm(true);
   };
 
-  const handleDelete = (id) => {
-    if (confirm('Xóa bản ghi này?')) {
-      fetch(`${API_URL}/${id}`, {
+  const handleDelete = (p) => {
+    askConfirm(`Xóa hồ sơ của "${p.customer_name}"?`, () => {
+      fetch(`${API_URL}/${p.id}`, {
         method: 'DELETE',
         headers: getHeaders()
-      }).then(() => {
-        setPassports(passports.filter(p => p.id !== id));
-        alert('✅ Xóa thành công');
-      });
-    }
+      })
+        .then(() => {
+          setPassports(passports.filter(x => x.id !== p.id));
+          setSelectedIds(prev => prev.filter(x => x !== p.id));
+          showToast('Đã xóa hồ sơ');
+        })
+        .catch(() => showToast('Lỗi khi xóa', 'error'));
+    });
+  };
+
+  const toggleSelect = (id) =>
+    setSelectedIds(prev => (prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]));
+
+  const handleBulkDelete = () => {
+    if (selectedIds.length === 0) return;
+    askConfirm(`Xóa ${selectedIds.length} hồ sơ đã chọn? Hành động này không thể hoàn tác.`, () => {
+      fetch(`${API_URL}/bulk-delete`, {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({ ids: selectedIds }),
+      })
+        .then(res => { if (!res.ok) throw new Error(); return res.json(); })
+        .then(data => {
+          const removed = new Set(selectedIds);
+          setPassports(passports.filter(p => !removed.has(p.id)));
+          setSelectedIds([]);
+          showToast(`Đã xóa ${data.deleted} hồ sơ`);
+        })
+        .catch(() => showToast('Lỗi khi xóa hàng loạt', 'error'));
+    }, { confirmText: `Xóa ${selectedIds.length} mục` });
   };
 
   const resetForm = () => {
@@ -241,6 +272,10 @@ export default function PassportApp() {
       : k === 'service_date' ? (p.service_date || '')
       : k === 'total_amount' ? Number(p.total_amount) || 0
       : k === 'remaining' ? (Number(p.total_amount) || 0) - (Number(p.paid_amount) || 0) : '');
+
+  const selectableIds = sortedData.filter(p => !currentUserId || p.user_id === currentUserId).map(p => p.id);
+  const allSelected = selectableIds.length > 0 && selectableIds.every(id => selectedIds.includes(id));
+  const toggleSelectAll = () => setSelectedIds(allSelected ? [] : selectableIds);
 
   const stats = {
     customers: new Set(filteredData.map(p => p.customer_name)).size,
@@ -503,13 +538,31 @@ export default function PassportApp() {
           </div>
         )}
 
+        {/* Thanh xóa hàng loạt */}
+        {selectedIds.length > 0 && (
+          <div className="flex items-center justify-between gap-3 mb-3 px-4 py-2.5 bg-red-50 border border-red-200 rounded-xl">
+            <span className="text-sm font-medium text-red-700">Đã chọn {selectedIds.length} hồ sơ</span>
+            <div className="flex gap-2">
+              <button onClick={() => setSelectedIds([])} className="px-3 py-1.5 rounded-lg bg-white border text-gray-600 hover:bg-gray-50 text-sm font-semibold">Bỏ chọn</button>
+              <button onClick={handleBulkDelete} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-600 text-white hover:bg-red-700 text-sm font-semibold">
+                <Trash2 size={15} /> Xóa đã chọn ({selectedIds.length})
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Table */}
         <div className="bg-white rounded-2xl shadow-lg overflow-hidden">
           <div className="overflow-auto max-h-[70vh]">
             <table className="w-full">
               <thead className="sticky top-0 z-10 [&_th]:bg-blue-600">
                 <tr className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white">
-                  <th className="px-6 py-4 text-left font-semibold sticky left-0 z-20">Số Hồ Sơ</th>
+                  <th className="px-6 py-4 text-left font-semibold sticky left-0 z-20">
+                    <span className="inline-flex items-center gap-2">
+                      <input type="checkbox" checked={allSelected} onChange={toggleSelectAll} title="Chọn tất cả" className="w-4 h-4 rounded cursor-pointer" />
+                      Số Hồ Sơ
+                    </span>
+                  </th>
                   <th onClick={() => sorter.toggle('customer_name')} className="px-6 py-4 text-left font-semibold cursor-pointer select-none hover:bg-blue-700">Khách Hàng{sorter.arrow('customer_name')}</th>
                   <th className="px-6 py-4 text-left font-semibold hidden md:table-cell">Đại Lý</th>
                   <th className="px-6 py-4 text-left font-semibold hidden sm:table-cell">SĐT</th>
@@ -537,8 +590,13 @@ export default function PassportApp() {
                     return (
                       <tr key={p.id} className={`hover:bg-blue-50 transition ${idx % 2 === 0 ? 'bg-gray-50/50' : ''}`}>
                         <td className={`px-6 py-4 font-mono font-semibold text-blue-600 sticky left-0 z-10 ${idx % 2 === 0 ? 'bg-gray-50' : 'bg-white'}`}>
-                          <span className="px-3 py-1 bg-blue-100 rounded-lg">
-                            {p.passport_number || 'N/A'}
+                          <span className="inline-flex items-center gap-2">
+                            {owned && (
+                              <input type="checkbox" checked={selectedIds.includes(p.id)} onChange={() => toggleSelect(p.id)} className="w-4 h-4 rounded cursor-pointer shrink-0" />
+                            )}
+                            <span className="px-3 py-1 bg-blue-100 rounded-lg">
+                              {p.passport_number || 'N/A'}
+                            </span>
                           </span>
                         </td>
                         <td className="px-6 py-4 font-semibold">
@@ -572,7 +630,7 @@ export default function PassportApp() {
                                 <Edit2 size={18} />
                               </button>
                               <button
-                                onClick={() => handleDelete(p.id)}
+                                onClick={() => handleDelete(p)}
                                 className="p-2 text-red-600 hover:bg-red-100 rounded-lg transition"
                                 title="Xóa"
                               >
@@ -603,6 +661,15 @@ export default function PassportApp() {
         onImport={importPassportsFromRows}
         onSuccess={() => loadData(token)}
       />
+
+      <ConfirmDialog
+        open={!!confirmState}
+        message={confirmState?.message}
+        confirmText={confirmState?.confirmText}
+        onCancel={closeConfirm}
+        onConfirm={() => { confirmState?.onConfirm?.(); closeConfirm(); }}
+      />
+      <Toast toast={toast} />
     </div>
   );
 }

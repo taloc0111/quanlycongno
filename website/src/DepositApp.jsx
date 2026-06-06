@@ -6,6 +6,9 @@ import MoneyInput from './components/MoneyInput';
 import { apiGet, apiSend } from './services/client';
 import { formatCurrency, formatDate } from './utils/format';
 import { useAuth } from './auth/AuthContext';
+import ConfirmDialog from './components/ConfirmDialog';
+import Toast from './components/Toast';
+import { useToast, useConfirm } from './hooks/useFeedback';
 
 const METHOD = { cash: 'Tiền mặt', bank_transfer: 'Chuyển khoản', momo: 'Momo', adjustment: 'Điều chỉnh đầu kỳ' };
 const EMPTY = { amount: '', depositDate: '', method: 'bank_transfer', notes: '' };
@@ -21,6 +24,9 @@ export default function DepositApp() {
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(EMPTY);
   const [balance, setBalance] = useState(null);
+  const [selectedIds, setSelectedIds] = useState([]);
+  const { toast, showToast } = useToast();
+  const { confirmState, askConfirm, closeConfirm } = useConfirm();
 
   const load = async () => {
     setLoading(true);
@@ -54,20 +60,45 @@ export default function DepositApp() {
   };
 
   const save = async () => {
-    if (!(parseFloat(form.amount) !== 0 && Number.isFinite(parseFloat(form.amount)))) { alert('⚠️ Nhập số tiền hợp lệ'); return; }
+    if (!(parseFloat(form.amount) !== 0 && Number.isFinite(parseFloat(form.amount)))) { showToast('Nhập số tiền hợp lệ', 'error'); return; }
     try {
       if (editingId) await apiSend('PUT', `/deposits/${editingId}`, form);
       else await apiSend('POST', '/deposits', form);
       setShowForm(false);
+      showToast(editingId ? 'Cập nhật thành công' : 'Đã ghi nhận nộp quỹ');
       load();
-    } catch (err) { alert('Lỗi: ' + err.message); }
+    } catch (err) { showToast('Lỗi: ' + err.message, 'error'); }
   };
 
-  const remove = async (id) => {
-    if (!confirm('Xóa lần nộp quỹ này?')) return;
-    try { await apiSend('DELETE', `/deposits/${id}`); load(); }
-    catch (err) { alert('Lỗi: ' + err.message); }
+  const remove = (d) => {
+    askConfirm(`Xóa lần nộp quỹ ${formatCurrency(d.amount)} ngày ${formatDate(d.deposit_date)}?`, async () => {
+      try {
+        await apiSend('DELETE', `/deposits/${d.id}`);
+        setSelectedIds(prev => prev.filter(x => x !== d.id));
+        showToast('Đã xóa lần nộp quỹ');
+        load();
+      } catch (err) { showToast('Lỗi: ' + err.message, 'error'); }
+    });
   };
+
+  const toggleSelect = (id) =>
+    setSelectedIds(prev => (prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]));
+
+  const handleBulkDelete = () => {
+    if (selectedIds.length === 0) return;
+    askConfirm(`Xóa ${selectedIds.length} lần nộp quỹ đã chọn? Hành động này không thể hoàn tác.`, async () => {
+      try {
+        const data = await apiSend('POST', '/deposits/bulk-delete', { ids: selectedIds });
+        setSelectedIds([]);
+        showToast(`Đã xóa ${data.deleted} lần nộp quỹ`);
+        load();
+      } catch (err) { showToast('Lỗi: ' + err.message, 'error'); }
+    }, { confirmText: `Xóa ${selectedIds.length} mục` });
+  };
+
+  const selectableIds = deposits.filter(d => !currentUserId || d.user_id === currentUserId).map(d => d.id);
+  const allSelected = selectableIds.length > 0 && selectableIds.every(id => selectedIds.includes(id));
+  const toggleSelectAll = () => setSelectedIds(allSelected ? [] : selectableIds);
 
   return (
     <div className="min-h-screen bg-gray-50 p-4 sm:p-6">
@@ -135,6 +166,18 @@ export default function DepositApp() {
           </details>
         )}
 
+        {selectedIds.length > 0 && (
+          <div className="flex items-center justify-between gap-3 mb-3 px-4 py-2.5 bg-red-50 border border-red-200 rounded-xl">
+            <span className="text-sm font-medium text-red-700">Đã chọn {selectedIds.length} lần nộp quỹ</span>
+            <div className="flex gap-2">
+              <button onClick={() => setSelectedIds([])} className="px-3 py-1.5 rounded-lg bg-white border text-gray-600 hover:bg-gray-50 text-sm font-semibold">Bỏ chọn</button>
+              <button onClick={handleBulkDelete} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-600 text-white hover:bg-red-700 text-sm font-semibold">
+                <Trash2 size={15} /> Xóa đã chọn ({selectedIds.length})
+              </button>
+            </div>
+          </div>
+        )}
+
         {loading && <p className="text-gray-500">Đang tải…</p>}
         {error && <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-red-700">{error}</div>}
 
@@ -143,7 +186,12 @@ export default function DepositApp() {
             <table className="min-w-full text-sm">
               <thead className="bg-gray-50 sticky top-0 z-10 [&_th]:bg-gray-50">
                 <tr>
-                  <th className="px-4 py-3 text-left font-semibold text-gray-600 sticky left-0 z-20">Ngày nộp</th>
+                  <th className="px-4 py-3 text-left font-semibold text-gray-600 sticky left-0 z-20">
+                    <span className="inline-flex items-center gap-2">
+                      <input type="checkbox" checked={allSelected} onChange={toggleSelectAll} title="Chọn tất cả" className="w-4 h-4 rounded cursor-pointer" />
+                      Ngày nộp
+                    </span>
+                  </th>
                   <th className="px-4 py-3 text-right font-semibold text-gray-600">Số tiền</th>
                   <th className="px-4 py-3 text-left font-semibold text-gray-600">Hình thức</th>
                   <th className="px-4 py-3 text-left font-semibold text-gray-600 hidden md:table-cell">Đại lý</th>
@@ -158,7 +206,14 @@ export default function DepositApp() {
                   const owned = !currentUserId || d.user_id === currentUserId;
                   return (
                     <tr key={d.id} className="border-t hover:bg-gray-50 group">
-                      <td className="px-4 py-3 font-medium text-gray-800 sticky left-0 z-10 bg-white group-hover:bg-gray-50">{formatDate(d.deposit_date)}</td>
+                      <td className="px-4 py-3 font-medium text-gray-800 sticky left-0 z-10 bg-white group-hover:bg-gray-50">
+                        <span className="inline-flex items-center gap-2">
+                          {owned && (
+                            <input type="checkbox" checked={selectedIds.includes(d.id)} onChange={() => toggleSelect(d.id)} className="w-4 h-4 rounded cursor-pointer shrink-0" />
+                          )}
+                          {formatDate(d.deposit_date)}
+                        </span>
+                      </td>
                       <td className={`px-4 py-3 text-right font-semibold ${Number(d.amount) >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>{formatCurrency(d.amount)}</td>
                       <td className="px-4 py-3 text-gray-600">{METHOD[d.method] || d.method || '—'}</td>
                       <td className="px-4 py-3 text-gray-500 text-xs hidden md:table-cell">{d.owner_name || d.owner_username || ''}</td>
@@ -167,7 +222,7 @@ export default function DepositApp() {
                         {owned ? (
                           <>
                             <button onClick={() => openEdit(d)} className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg"><Edit2 size={16} /></button>
-                            <button onClick={() => remove(d.id)} className="p-2 text-red-600 hover:bg-red-50 rounded-lg"><Trash2 size={16} /></button>
+                            <button onClick={() => remove(d)} className="p-2 text-red-600 hover:bg-red-50 rounded-lg"><Trash2 size={16} /></button>
                           </>
                         ) : (
                           <span className="text-xs text-gray-400 italic">Chỉ xem</span>
@@ -219,6 +274,15 @@ export default function DepositApp() {
           </div>
         </div>
       )}
+
+      <ConfirmDialog
+        open={!!confirmState}
+        message={confirmState?.message}
+        confirmText={confirmState?.confirmText}
+        onCancel={closeConfirm}
+        onConfirm={() => { confirmState?.onConfirm?.(); closeConfirm(); }}
+      />
+      <Toast toast={toast} />
     </div>
   );
 }

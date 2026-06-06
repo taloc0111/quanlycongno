@@ -82,6 +82,24 @@ const deleteDeposit = async (req, res) => {
   }
 };
 
+// Xóa nhiều lần nộp quỹ cùng lúc (chỉ của chính mình).
+const bulkDeleteDeposits = async (req, res) => {
+  try {
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: 'Không có bản ghi nào để xóa' });
+    }
+    const result = await pool.query(
+      'DELETE FROM fund_deposits WHERE id = ANY($1) AND user_id = $2 RETURNING id',
+      [ids.map(Number).filter(Number.isFinite), req.user.id]
+    );
+    res.json({ deleted: result.rows.length });
+  } catch (error) {
+    logger.error('Bulk delete deposits error:', error.message);
+    res.status(500).json({ error: 'Failed to delete deposits' });
+  }
+};
+
 // Tính số dư / nợ với đại lý cấp trên.
 // Công thức: đã nộp quỹ (gồm điều chỉnh đầu kỳ, âm = nợ cũ) + khách trả thẳng vào TK cấp trên.
 // Âm = còn nợ cấp trên, dương = dư.
@@ -130,4 +148,4 @@ const getBalance = async (req, res) => {
   }
 };
 
-module.exports = { getDeposits, createDeposit, updateDeposit, deleteDeposit, getBalance };
+module.exports = { getDeposits, createDeposit, updateDeposit, deleteDeposit, bulkDeleteDeposits, getBalance };

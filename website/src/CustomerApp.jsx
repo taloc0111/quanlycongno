@@ -7,6 +7,9 @@ import { formatCurrency } from './utils/format';
 import VnDatePicker from './components/VnDatePicker';
 import { useAuth } from './auth/AuthContext';
 import { useSort } from './hooks/useSort';
+import ConfirmDialog from './components/ConfirmDialog';
+import Toast from './components/Toast';
+import { useToast, useConfirm } from './hooks/useFeedback';
 
 const CUSTOMER_IMPORT_FIELDS = [
   { key: 'name', label: 'Tên khách hàng', required: true, aliases: ['khách hàng', 'ho ten', 'họ tên'] },
@@ -37,7 +40,10 @@ export default function CustomerApp() {
   const [showImport, setShowImport] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(EMPTY);
+  const [selectedIds, setSelectedIds] = useState([]);
   const sorter = useSort();
+  const { toast, showToast } = useToast();
+  const { confirmState, askConfirm, closeConfirm } = useConfirm();
 
   const load = async () => {
     setLoading(true);
@@ -68,6 +74,10 @@ export default function CustomerApp() {
   const sorted = sorter.sort(filtered, (c, k) =>
     k === 'name' ? (c.name || '').toLowerCase() : k === 'outstanding' ? Number(c.outstanding) || 0 : '');
 
+  const selectableIds = sorted.filter(c => !currentUserId || c.user_id === currentUserId).map(c => c.id);
+  const allSelected = selectableIds.length > 0 && selectableIds.every(id => selectedIds.includes(id));
+  const toggleSelectAll = () => setSelectedIds(allSelected ? [] : selectableIds);
+
   const openAdd = () => { setForm(EMPTY); setEditingId(null); setShowForm(true); };
   const openEdit = (c) => {
     setForm({
@@ -82,22 +92,43 @@ export default function CustomerApp() {
   };
 
   const save = async () => {
-    if (form.type === 'company' && !form.companyId) { alert('⚠️ Vui lòng chọn công ty'); return; }
-    if (!form.name.trim()) { alert('⚠️ Nhập tên khách hàng'); return; }
+    if (form.type === 'company' && !form.companyId) { showToast('Vui lòng chọn công ty', 'error'); return; }
+    if (!form.name.trim()) { showToast('Nhập tên khách hàng', 'error'); return; }
     try {
       if (editingId) await apiSend('PUT', `/customers/${editingId}`, form);
       else await apiSend('POST', '/customers', form);
       setShowForm(false);
+      showToast(editingId ? 'Cập nhật khách hàng thành công' : 'Đã thêm khách hàng');
       load();
     } catch (err) {
-      alert('Lỗi: ' + err.message);
+      showToast('Lỗi: ' + err.message, 'error');
     }
   };
 
-  const remove = async (id) => {
-    if (!confirm('Xóa khách hàng này?')) return;
-    try { await apiSend('DELETE', `/customers/${id}`); load(); }
-    catch (err) { alert('Lỗi: ' + err.message); }
+  const remove = (c) => {
+    askConfirm(`Xóa khách hàng "${c.name}"?`, async () => {
+      try {
+        await apiSend('DELETE', `/customers/${c.id}`);
+        setSelectedIds(prev => prev.filter(x => x !== c.id));
+        showToast('Đã xóa khách hàng');
+        load();
+      } catch (err) { showToast('Lỗi: ' + err.message, 'error'); }
+    });
+  };
+
+  const toggleSelect = (id) =>
+    setSelectedIds(prev => (prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]));
+
+  const handleBulkDelete = () => {
+    if (selectedIds.length === 0) return;
+    askConfirm(`Xóa ${selectedIds.length} khách hàng đã chọn? Hành động này không thể hoàn tác.`, async () => {
+      try {
+        const data = await apiSend('POST', '/customers/bulk-delete', { ids: selectedIds });
+        setSelectedIds([]);
+        showToast(`Đã xóa ${data.deleted} khách hàng`);
+        load();
+      } catch (err) { showToast('Lỗi: ' + err.message, 'error'); }
+    }, { confirmText: `Xóa ${selectedIds.length} mục` });
   };
 
   const importCustomers = async (rows) => {
@@ -150,6 +181,18 @@ export default function CustomerApp() {
           <AgencyFilter value={agencyId} onChange={setAgencyId} />
         </div>
 
+        {selectedIds.length > 0 && (
+          <div className="flex items-center justify-between gap-3 mb-3 px-4 py-2.5 bg-red-50 border border-red-200 rounded-xl">
+            <span className="text-sm font-medium text-red-700">Đã chọn {selectedIds.length} khách hàng</span>
+            <div className="flex gap-2">
+              <button onClick={() => setSelectedIds([])} className="px-3 py-1.5 rounded-lg bg-white border text-gray-600 hover:bg-gray-50 text-sm font-semibold">Bỏ chọn</button>
+              <button onClick={handleBulkDelete} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-600 text-white hover:bg-red-700 text-sm font-semibold">
+                <Trash2 size={15} /> Xóa đã chọn ({selectedIds.length})
+              </button>
+            </div>
+          </div>
+        )}
+
         {loading && <p className="text-gray-500">Đang tải…</p>}
         {error && <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-red-700">{error}</div>}
 
@@ -158,7 +201,12 @@ export default function CustomerApp() {
             <table className="min-w-full text-sm">
               <thead className="bg-gray-50 sticky top-0 z-10 [&_th]:bg-gray-50">
                 <tr>
-                  <th onClick={() => sorter.toggle('name')} className="px-4 py-3 text-left font-semibold text-gray-600 sticky left-0 z-20 cursor-pointer select-none hover:bg-gray-100">Tên{sorter.arrow('name')}</th>
+                  <th className="px-4 py-3 text-left font-semibold text-gray-600 sticky left-0 z-20">
+                    <span className="inline-flex items-center gap-2">
+                      <input type="checkbox" checked={allSelected} onChange={toggleSelectAll} title="Chọn tất cả" className="w-4 h-4 rounded cursor-pointer" />
+                      <span onClick={() => sorter.toggle('name')} className="cursor-pointer select-none hover:text-gray-900">Tên{sorter.arrow('name')}</span>
+                    </span>
+                  </th>
                   <th className="px-4 py-3 text-left font-semibold text-gray-600">SĐT</th>
                   <th className="px-4 py-3 text-left font-semibold text-gray-600 hidden md:table-cell">Đại lý</th>
                   <th className="px-4 py-3 text-left font-semibold text-gray-600">Loại</th>
@@ -172,9 +220,14 @@ export default function CustomerApp() {
                 ) : sorted.map((c) => (
                   <tr key={c.id} className="border-t hover:bg-gray-50 group">
                     <td className="px-4 py-3 font-medium text-gray-800 sticky left-0 z-10 bg-white group-hover:bg-gray-50">
-                      {(!currentUserId || c.user_id === currentUserId) ? (
-                        <span onClick={() => openEdit(c)} title="Bấm để sửa" className="cursor-pointer hover:underline">{c.name}</span>
-                      ) : c.name}
+                      <span className="inline-flex items-center gap-2">
+                        {(!currentUserId || c.user_id === currentUserId) && (
+                          <input type="checkbox" checked={selectedIds.includes(c.id)} onChange={() => toggleSelect(c.id)} className="w-4 h-4 rounded cursor-pointer shrink-0" />
+                        )}
+                        {(!currentUserId || c.user_id === currentUserId) ? (
+                          <span onClick={() => openEdit(c)} title="Bấm để sửa" className="cursor-pointer hover:underline">{c.name}</span>
+                        ) : c.name}
+                      </span>
                     </td>
                     <td className="px-4 py-3 text-gray-600">{c.phone || '—'}</td>
                     <td className="px-4 py-3 text-gray-500 text-xs hidden md:table-cell">{c.owner_name || c.owner_username || ''}</td>
@@ -188,7 +241,7 @@ export default function CustomerApp() {
                       {(!currentUserId || c.user_id === currentUserId) ? (
                         <>
                           <button onClick={() => openEdit(c)} className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg"><Edit2 size={16} /></button>
-                          <button onClick={() => remove(c.id)} className="p-2 text-red-600 hover:bg-red-50 rounded-lg"><Trash2 size={16} /></button>
+                          <button onClick={() => remove(c)} className="p-2 text-red-600 hover:bg-red-50 rounded-lg"><Trash2 size={16} /></button>
                         </>
                       ) : (
                         <span className="text-xs text-gray-400 italic">Chỉ xem</span>
@@ -283,6 +336,15 @@ export default function CustomerApp() {
         onImport={importCustomers}
         onSuccess={load}
       />
+
+      <ConfirmDialog
+        open={!!confirmState}
+        message={confirmState?.message}
+        confirmText={confirmState?.confirmText}
+        onCancel={closeConfirm}
+        onConfirm={() => { confirmState?.onConfirm?.(); closeConfirm(); }}
+      />
+      <Toast toast={toast} />
     </div>
   );
 }
