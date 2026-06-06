@@ -219,6 +219,19 @@ CREATE TABLE IF NOT EXISTS ticket_watches (
   updated_at    TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
+-- ---------------------------------------------------------------------------
+-- AIRLINES — hãng bay + link check-in tự khai báo (để khỏi sửa code khi có hãng mới).
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS airlines (
+  id          SERIAL PRIMARY KEY,
+  user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name        VARCHAR(100) NOT NULL,   -- tên hãng (dùng để khớp với ô "Hãng" của vé)
+  code        VARCHAR(10),             -- mã 2 ký tự (VD: VJ, VN) — tùy chọn
+  checkin_url TEXT NOT NULL,           -- link check-in online của hãng
+  created_at  TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+  updated_at  TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
 -- ============================================================================
 -- NÂNG CẤP DB CŨ — thêm cột mới nếu chưa có (an toàn cho DB đang có dữ liệu)
 -- ============================================================================
@@ -271,6 +284,7 @@ CREATE INDEX IF NOT EXISTS idx_fund_deposits_user_id  ON fund_deposits(user_id);
 CREATE INDEX IF NOT EXISTS idx_sticky_notes_user_id   ON sticky_notes(user_id);
 CREATE INDEX IF NOT EXISTS idx_ticket_watches_user_id ON ticket_watches(user_id);
 CREATE INDEX IF NOT EXISTS idx_ticket_watches_depart  ON ticket_watches(depart_date);
+CREATE INDEX IF NOT EXISTS idx_airlines_user_id       ON airlines(user_id);
 CREATE INDEX IF NOT EXISTS idx_invoices_user_id       ON invoices(user_id);
 CREATE INDEX IF NOT EXISTS idx_invoices_customer_id   ON invoices(customer_id);
 CREATE INDEX IF NOT EXISTS idx_invoice_items_invoice  ON invoice_items(invoice_id);
@@ -290,7 +304,7 @@ DO $$
 DECLARE
   t TEXT;
 BEGIN
-  FOREACH t IN ARRAY ARRAY['users','companies','customers','debts','passports','invoices','sticky_notes','ticket_watches']
+  FOREACH t IN ARRAY ARRAY['users','companies','customers','debts','passports','invoices','sticky_notes','ticket_watches','airlines']
   LOOP
     EXECUTE format('DROP TRIGGER IF EXISTS trg_%I_updated_at ON %I;', t, t);
     EXECUTE format(

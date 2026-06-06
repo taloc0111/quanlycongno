@@ -10,6 +10,7 @@ const fmt = (s) => (s ? s.slice(0, 10).split('-').reverse().join('/') : '');
 
 export default function UpcomingFlightsApp() {
   const [debts, setDebts] = useState([]);
+  const [airlines, setAirlines] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [onlyPending, setOnlyPending] = useState(false);
@@ -29,6 +30,7 @@ export default function UpcomingFlightsApp() {
     }
   };
   useEffect(() => { load(); }, []);
+  useEffect(() => { apiGet('/airlines').then(setAirlines).catch(() => {}); }, []);
 
   const dayDiff = (ymd) => Math.round((new Date(ymd + 'T00:00:00') - new Date(today + 'T00:00:00')) / 86400000);
 
@@ -69,7 +71,7 @@ export default function UpcomingFlightsApp() {
       ) : (
         <div className="space-y-2">
           {items.map((d) => {
-            const airline = detectAirline(d.airline);
+            const airline = detectAirline(d.airline, airlines);
             return (
             <div key={d.id} className={`flex items-center gap-3 bg-white rounded-xl border px-4 py-3 ${d.checked_in ? 'border-green-200 opacity-70' : 'border-gray-200'}`}>
               <div className="min-w-0 flex-1">

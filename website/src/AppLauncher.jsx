@@ -15,6 +15,7 @@ import ProfileApp from './ProfileApp.jsx';
 import NotesApp from './NotesApp.jsx';
 import TicketWatchApp from './TicketWatchApp.jsx';
 import UpcomingFlightsApp from './UpcomingFlightsApp.jsx';
+import AirlinesApp from './AirlinesApp.jsx';
 
 // roles: nếu có → chỉ hiện với các role này. Không có → hiện cho tất cả.
 const NAV = [
@@ -25,6 +26,7 @@ const NAV = [
   { key: 'upcoming', label: 'Sắp bay', icon: PlaneLanding, group: 'Nghiệp vụ', Component: UpcomingFlightsApp },
   { key: 'passport', label: 'Hộ chiếu', icon: BookOpen, group: 'Nghiệp vụ', Component: PassportApp },
   { key: 'customer', label: 'Khách hàng', icon: Users, group: 'Danh mục', Component: CustomerApp },
+  { key: 'airlines', label: 'Hãng bay', icon: PlaneTakeoff, group: 'Danh mục', Component: AirlinesApp },
   { key: 'invoice', label: 'Hóa đơn', icon: Receipt, group: 'Tài chính', Component: InvoiceApp },
   { key: 'deposit', label: 'Nộp quỹ', icon: Landmark, group: 'Tài chính', Component: DepositApp },
   { key: 'agency', label: 'Đại lý', icon: Network, group: 'Hệ thống', Component: AgencyApp, roles: ['admin', 'agency'] },
