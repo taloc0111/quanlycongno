@@ -6,10 +6,10 @@ const strip = (s) =>
 
 // Hãng mặc định (có sẵn, không cần khai báo).
 export const DEFAULT_AIRLINES = [
-  { name: 'Vietnam Airlines', checkinUrl: 'https://www.vietnamairlines.com/vn/en/travel-information/check-in', names: ['vietnam airlines', 'vietnamairlines', 'vna'], code2: 'vn' },
-  { name: 'Vietjet Air', checkinUrl: 'https://www.vietjetair.com/en/checkin', names: ['vietjet'], code2: 'vj' },
-  { name: 'Bamboo Airways', checkinUrl: 'https://www.bambooairways.com/vn/en/travel-info/check-in/online-check-in', names: ['bamboo'], code2: 'qh' },
-  { name: 'Pacific Airlines', checkinUrl: 'https://www.pacificairlines.com/', names: ['pacific', 'jetstar'], code2: 'bl' },
+  { name: 'Vietnam Airlines', checkinUrl: 'https://www.vietnamairlines.com/vn/vi/buy-tickets-other-products/booking-and-manage-bookings/check-in', names: ['vietnam airlines', 'vietnamairlines', 'vna'], code2: 'vn' },
+  { name: 'Vietjet Air', checkinUrl: 'https://www.vietjetair.com/vi/checkin', names: ['vietjet'], code2: 'vj' },
+  { name: 'Bamboo Airways', checkinUrl: 'https://www.bambooairways.com/vn/vi/travel-info/check-in/online-check-in', names: ['bamboo'], code2: 'qh' },
+  { name: 'Pacific Airlines', checkinUrl: 'https://www.pacificairlines.com/vn/vi/', names: ['pacific', 'jetstar'], code2: 'bl' },
   { name: 'Vietravel Airlines', checkinUrl: 'https://booking.vietravelairlines.com/vi/checkin', names: ['vietravel'], code2: 'vu' },
 ];
 
