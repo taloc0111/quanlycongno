@@ -25,6 +25,18 @@ module.exports = {
   jwtSecret: process.env.JWT_SECRET,
   jwtExpire: process.env.JWT_EXPIRE || '24h',
 
+  // URL frontend để dựng link đặt lại mật khẩu (vd https://app.example.com).
+  appUrl: (process.env.APP_URL || 'http://localhost:5173').replace(/\/$/, ''),
+
+  // Cấu hình SMTP gửi email (tùy chọn — chưa cấu hình thì link reset ghi ra log).
+  smtp: {
+    host: process.env.SMTP_HOST || '',
+    port: parseInt(process.env.SMTP_PORT || '587', 10),
+    user: process.env.SMTP_USER || '',
+    pass: process.env.SMTP_PASS || '',
+    from: process.env.SMTP_FROM || process.env.SMTP_USER || '',
+  },
+
   // Danh sách origin được phép gọi API (frontend). Phân tách bằng dấu phẩy.
   corsOrigins: (process.env.CORS_ORIGINS || 'http://localhost:5173,http://localhost:3000')
     .split(',')

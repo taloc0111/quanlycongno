@@ -232,6 +232,19 @@ CREATE TABLE IF NOT EXISTS airlines (
   updated_at  TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
+-- ---------------------------------------------------------------------------
+-- PASSWORD_RESETS — token đặt lại mật khẩu (gửi qua email, hết hạn + dùng 1 lần).
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS password_resets (
+  id         SERIAL PRIMARY KEY,
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token_hash VARCHAR(255) NOT NULL,                  -- sha256 của token (không lưu token thô)
+  expires_at TIMESTAMPTZ NOT NULL,
+  used       BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_password_resets_token ON password_resets(token_hash);
+
 -- ============================================================================
 -- NÂNG CẤP DB CŨ — thêm cột mới nếu chưa có (an toàn cho DB đang có dữ liệu)
 -- ============================================================================

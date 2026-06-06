@@ -1,7 +1,7 @@
 // routes/auth.js
 const express = require('express');
 const rateLimit = require('express-rate-limit');
-const { login, register, getProfile, updateProfile, changePassword } = require('../controllers/authController');
+const { login, register, getProfile, updateProfile, changePassword, forgotPassword, resetPassword } = require('../controllers/authController');
 const { authenticateToken } = require('../middleware/auth');
 
 const router = express.Router();
@@ -17,6 +17,8 @@ const authLimiter = rateLimit({
 
 router.post('/login', authLimiter, login);
 router.post('/register', authLimiter, register);
+router.post('/forgot-password', authLimiter, forgotPassword);
+router.post('/reset-password', authLimiter, resetPassword);
 router.get('/profile', authenticateToken, getProfile);
 router.put('/profile', authenticateToken, updateProfile);
 router.put('/password', authenticateToken, changePassword);

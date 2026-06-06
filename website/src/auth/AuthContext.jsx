@@ -30,11 +30,11 @@ export function AuthProvider({ children }) {
   }, []);
 
   // Đăng ký tài khoản dùng thử mới (14 ngày).
-  const register = useCallback(async ({ username, password, fullName }) => {
+  const register = useCallback(async ({ username, password, fullName, email }) => {
     const res = await fetch(`${API_URL}/auth/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password, fullName }),
+      body: JSON.stringify({ username, password, fullName, email }),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || 'Đăng ký thất bại');
@@ -44,6 +44,30 @@ export function AuthProvider({ children }) {
     localStorage.setItem('authUser', JSON.stringify(authUser));
     setToken(data.token);
     setUser(authUser);
+    return data;
+  }, []);
+
+  // Gửi yêu cầu đặt lại mật khẩu (qua email). Không cần đăng nhập.
+  const forgotPassword = useCallback(async (email) => {
+    const res = await fetch(`${API_URL}/auth/forgot-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'Gửi yêu cầu thất bại');
+    return data;
+  }, []);
+
+  // Đặt lại mật khẩu bằng token từ email.
+  const resetPassword = useCallback(async (token, newPassword) => {
+    const res = await fetch(`${API_URL}/auth/reset-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, newPassword }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'Đặt lại mật khẩu thất bại');
     return data;
   }, []);
 
@@ -65,7 +89,7 @@ export function AuthProvider({ children }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ token, user, isAuthenticated: !!token, login, register, logout, updateUser }}>
+    <AuthContext.Provider value={{ token, user, isAuthenticated: !!token, login, register, forgotPassword, resetPassword, logout, updateUser }}>
       {children}
     </AuthContext.Provider>
   );

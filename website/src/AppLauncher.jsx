@@ -3,6 +3,7 @@ import { LayoutDashboard, FileText, BookOpen, Users, Receipt, Network, UserCircl
 import { useAuth } from './auth/AuthContext.jsx';
 import { apiGet } from './services/client';
 import LoginPage from './auth/LoginPage.jsx';
+import ResetPasswordPage from './auth/ResetPasswordPage.jsx';
 import TrialExpired from './components/TrialExpired.jsx';
 import Layout from './components/Layout.jsx';
 import DashboardApp from './DashboardApp.jsx';
@@ -48,6 +49,10 @@ export default function AppLauncher() {
       .then((rows) => setTomorrowCount(rows.filter((r) => (r.flight_date || '').slice(0, 10) === tmrw && !r.checked_in).length))
       .catch(() => {});
   }, [isAuthenticated, active]);
+
+  // Link đặt lại mật khẩu: /?reset=<token> → hiện trang đổi mật khẩu (kể cả khi chưa đăng nhập).
+  const resetToken = new URLSearchParams(window.location.search).get('reset');
+  if (resetToken) return <ResetPasswordPage token={resetToken} />;
 
   if (!isAuthenticated) return <LoginPage />;
 
