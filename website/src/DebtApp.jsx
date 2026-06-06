@@ -164,6 +164,7 @@ const App = () => {
     } catch { return DEFAULT_VISIBLE; }
   });
   const [showColMenu, setShowColMenu] = useState(false);
+  const [page, setPage] = useState(1);
   useEffect(() => {
     localStorage.setItem('debtVisibleCols', JSON.stringify(visibleCols));
   }, [visibleCols]);
@@ -687,6 +688,14 @@ const App = () => {
   const allSelected = selectableIds.length > 0 && selectableIds.every(id => selectedIds.includes(id));
   const toggleSelectAll = () =>
     setSelectedIds(allSelected ? [] : selectableIds);
+
+  // Phân trang phía client (chỉ render 1 trang cho nhẹ; export/chọn-tất-cả vẫn trên toàn bộ danh sách lọc).
+  const PAGE_SIZE = 50;
+  const totalPages = Math.max(1, Math.ceil(sortedDebts.length / PAGE_SIZE));
+  const curPage = Math.min(page, totalPages);
+  const pagedDebts = sortedDebts.slice((curPage - 1) * PAGE_SIZE, curPage * PAGE_SIZE);
+  // Về trang 1 khi đổi bộ lọc.
+  useEffect(() => { setPage(1); }, [searchTerm, filterStatus, filterMonth, agencyId]);
 
   // Gợi ý nguồn xuất vé: các giá trị đã từng nhập (không trùng).
   const ticketSources = [...new Set(debts.map(d => d.ticket_source).filter(Boolean))].sort();
@@ -1233,7 +1242,7 @@ const App = () => {
                       </td>
                     </tr>
                   ) : (
-                    sortedDebts.map((debt, idx) => {
+                    pagedDebts.map((debt, idx) => {
                       const remaining = calculateRemaining(debt.ticket_amount, debt.paid);
                       const isPaid = remaining <= 0;
                       // Trạng thái thanh toán: đã đủ (xanh) / trả một phần (cam) / chưa trả (đỏ)
@@ -1352,6 +1361,18 @@ const App = () => {
                 </tbody>
               </table>
             </div>
+            {sortedDebts.length > PAGE_SIZE && (
+              <div className="flex items-center justify-between gap-3 px-4 py-3 border-t bg-gray-50 text-xs sm:text-sm">
+                <span className="text-gray-500">
+                  {(curPage - 1) * PAGE_SIZE + 1}–{Math.min(curPage * PAGE_SIZE, sortedDebts.length)} / {sortedDebts.length} dòng
+                </span>
+                <div className="flex items-center gap-1">
+                  <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={curPage <= 1} className="px-3 py-1.5 rounded-lg border bg-white disabled:opacity-40 hover:bg-gray-100 font-semibold">Trước</button>
+                  <span className="px-2 text-gray-600">Trang {curPage}/{totalPages}</span>
+                  <button onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={curPage >= totalPages} className="px-3 py-1.5 rounded-lg border bg-white disabled:opacity-40 hover:bg-gray-100 font-semibold">Sau</button>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Route Manager */}

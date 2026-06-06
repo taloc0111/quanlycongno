@@ -3,6 +3,7 @@ import { LayoutDashboard, FileText, BookOpen, Users, Receipt, Network, UserCircl
 import { useAuth } from './auth/AuthContext.jsx';
 import { apiGet } from './services/client';
 import LoginPage from './auth/LoginPage.jsx';
+import TrialExpired from './components/TrialExpired.jsx';
 import Layout from './components/Layout.jsx';
 import DashboardApp from './DashboardApp.jsx';
 import DebtApp from './DebtApp.jsx';
@@ -49,6 +50,11 @@ export default function AppLauncher() {
   }, [isAuthenticated, active]);
 
   if (!isAuthenticated) return <LoginPage />;
+
+  // Chặn app khi hết hạn dùng thử (server vẫn là nguồn chính; đây là UX phía client).
+  if (user?.trialEndsAt && Date.now() > new Date(user.trialEndsAt).getTime()) {
+    return <TrialExpired user={user} onLogout={logout} />;
+  }
 
   const nav = NAV
     .filter((n) => !n.roles || n.roles.includes(user?.role))

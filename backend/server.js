@@ -2,9 +2,12 @@
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
+const fs = require('fs');
+const path = require('path');
 
 const env = require('./config/env');
 const logger = require('./config/logger');
+const pool = require('./config/database');
 
 // Import routes
 const authRoutes = require('./routes/auth');
@@ -78,6 +81,25 @@ app.use((err, req, res, next) => {
   res.status(err.status || 500).json({ error: err.message || 'Internal server error' });
 });
 
-app.listen(env.port, () => {
-  logger.info(`🚀 Server running on port ${env.port} (${env.nodeEnv})`);
+// Tự áp schema (idempotent) khi khởi động — khỏi phải nhớ chạy migrate thủ công.
+// Tắt bằng AUTO_MIGRATE=false nếu muốn quản lý migrate riêng.
+async function ensureSchema() {
+  if (String(process.env.AUTO_MIGRATE || 'true').toLowerCase() === 'false') {
+    logger.info('AUTO_MIGRATE=false — bỏ qua áp schema khi khởi động.');
+    return;
+  }
+  try {
+    const sql = fs.readFileSync(path.join(__dirname, 'schema', 'schema.sql'), 'utf8');
+    await pool.query(sql);
+    logger.info('✅ Schema đã được áp dụng khi khởi động.');
+  } catch (err) {
+    // Không chặn server chạy — DB có thể đã đúng schema; chỉ ghi log để xử lý sau.
+    logger.error('⚠️ Áp schema khi khởi động thất bại:', err.message);
+  }
+}
+
+ensureSchema().finally(() => {
+  app.listen(env.port, () => {
+    logger.info(`🚀 Server running on port ${env.port} (${env.nodeEnv})`);
+  });
 });

@@ -41,6 +41,7 @@ export default function CustomerApp() {
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(EMPTY);
   const [selectedIds, setSelectedIds] = useState([]);
+  const [page, setPage] = useState(1);
   const sorter = useSort();
   const { toast, showToast } = useToast();
   const { confirmState, askConfirm, closeConfirm } = useConfirm();
@@ -77,6 +78,13 @@ export default function CustomerApp() {
   const selectableIds = sorted.filter(c => !currentUserId || c.user_id === currentUserId).map(c => c.id);
   const allSelected = selectableIds.length > 0 && selectableIds.every(id => selectedIds.includes(id));
   const toggleSelectAll = () => setSelectedIds(allSelected ? [] : selectableIds);
+
+  // Phân trang phía client.
+  const PAGE_SIZE = 50;
+  const totalPages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
+  const curPage = Math.min(page, totalPages);
+  const pagedCustomers = sorted.slice((curPage - 1) * PAGE_SIZE, curPage * PAGE_SIZE);
+  useEffect(() => { setPage(1); }, [search, companyFilter, agencyId]);
 
   const openAdd = () => { setForm(EMPTY); setEditingId(null); setShowForm(true); };
   const openEdit = (c) => {
@@ -217,7 +225,7 @@ export default function CustomerApp() {
               <tbody>
                 {sorted.length === 0 ? (
                   <tr><td colSpan={6} className="px-4 py-8 text-center text-gray-400">Chưa có khách hàng.</td></tr>
-                ) : sorted.map((c) => (
+                ) : pagedCustomers.map((c) => (
                   <tr key={c.id} className="border-t hover:bg-gray-50 group">
                     <td className="px-4 py-3 font-medium text-gray-800 sticky left-0 z-10 bg-white group-hover:bg-gray-50">
                       <span className="inline-flex items-center gap-2">
@@ -251,6 +259,18 @@ export default function CustomerApp() {
                 ))}
               </tbody>
             </table>
+            {sorted.length > PAGE_SIZE && (
+              <div className="flex items-center justify-between gap-3 px-4 py-3 border-t bg-gray-50 text-xs sm:text-sm">
+                <span className="text-gray-500">
+                  {(curPage - 1) * PAGE_SIZE + 1}–{Math.min(curPage * PAGE_SIZE, sorted.length)} / {sorted.length} khách
+                </span>
+                <div className="flex items-center gap-1">
+                  <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={curPage <= 1} className="px-3 py-1.5 rounded-lg border bg-white disabled:opacity-40 hover:bg-gray-100 font-semibold">Trước</button>
+                  <span className="px-2 text-gray-600">Trang {curPage}/{totalPages}</span>
+                  <button onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={curPage >= totalPages} className="px-3 py-1.5 rounded-lg border bg-white disabled:opacity-40 hover:bg-gray-100 font-semibold">Sau</button>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
