@@ -156,8 +156,17 @@ const App = () => {
   const [toast, setToast] = useState(null);               // { message, type }
   const [selectedIds, setSelectedIds] = useState([]);
   // Ẩn/hiện cột (trừ 5 cột lõi luôn hiện: Khách hàng, Mã vé, Hành trình, Ngày bay, Hãng).
-  const [visibleCols, setVisibleCols] = useState(DEFAULT_VISIBLE);
+  // Nhớ lựa chọn qua localStorage; gộp với mặc định để cột mới (nếu có) vẫn đúng.
+  const [visibleCols, setVisibleCols] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('debtVisibleCols') || 'null');
+      return saved ? { ...DEFAULT_VISIBLE, ...saved } : DEFAULT_VISIBLE;
+    } catch { return DEFAULT_VISIBLE; }
+  });
   const [showColMenu, setShowColMenu] = useState(false);
+  useEffect(() => {
+    localStorage.setItem('debtVisibleCols', JSON.stringify(visibleCols));
+  }, [visibleCols]);
   const [newCompany, setNewCompany] = useState({
     name: '',
     taxCode: '',
