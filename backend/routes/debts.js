@@ -5,6 +5,7 @@ const {
   createDebt,
   updateDebt,
   deleteDebt,
+  bulkDeleteDebts,
   bulkCreateDebts,
   importDebts
 } = require('../controllers/debtController');
@@ -15,6 +16,7 @@ router.get('/', getDebts);
 router.post('/', createDebt);
 router.put('/:id', updateDebt);
 router.delete('/:id', deleteDebt);
+router.post('/bulk-delete', bulkDeleteDebts);
 router.post('/bulk', bulkCreateDebts);
 router.post('/import', importDebts);
 

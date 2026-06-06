@@ -5,6 +5,7 @@ import PaymentModal from './components/PaymentModal';
 import AgencyFilter from './components/AgencyFilter';
 import VnDatePicker from './components/VnDatePicker';
 import MoneyInput from './components/MoneyInput';
+import ConfirmDialog from './components/ConfirmDialog';
 import { exportWorkbook } from './utils/excel';
 import { useAuth } from './auth/AuthContext';
 
@@ -131,6 +132,10 @@ const App = () => {
   const [filterMonth, setFilterMonth] = useState('all');
   const [sortBy, setSortBy] = useState('');      // cột đang sort
   const [sortDir, setSortDir] = useState('asc'); // asc | desc
+  // Hộp thoại xác nhận + toast (thay confirm()/alert() gốc) + chọn nhiều để xóa.
+  const [confirmState, setConfirmState] = useState(null); // { message, title?, confirmText?, onConfirm }
+  const [toast, setToast] = useState(null);               // { message, type }
+  const [selectedIds, setSelectedIds] = useState([]);
   const [newCompany, setNewCompany] = useState({
     name: '',
     taxCode: '',
@@ -162,6 +167,14 @@ const App = () => {
     'Authorization': `Bearer ${token}`,
     'Content-Type': 'application/json'
   });
+
+  // Toast nhỏ góc màn hình, tự ẩn sau 2.5s.
+  const showToast = (message, type = 'success') => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 2500);
+  };
+  // Mở hộp thoại xác nhận; chạy action khi người dùng bấm đồng ý.
+  const askConfirm = (message, onConfirm, opts = {}) => setConfirmState({ message, onConfirm, ...opts });
 
   const loadAllData = async (authToken) => {
     try {
@@ -230,7 +243,7 @@ const App = () => {
   };
 
   const handleLogout = () => {
-    if (confirm('Bạn có chắc muốn đăng xuất?')) {
+    askConfirm('Bạn có chắc muốn đăng xuất?', () => {
       setIsLoggedIn(false);
       setCurrentUser('');
       setToken('');
@@ -239,12 +252,12 @@ const App = () => {
       setCompanies([]);
       localStorage.removeItem('token');
       localStorage.removeItem('currentUser');
-    }
+    }, { title: 'Đăng xuất', confirmText: 'Đăng xuất', danger: false });
   };
 
   const handleAddDebt = () => {
     if (!newDebt.customerName || !newDebt.ticketAmount) {
-      alert('⚠️ Vui lòng nhập tên khách hàng và tiền vé');
+      showToast('Vui lòng nhập tên khách hàng và tiền vé', 'error');
       return;
     }
 
@@ -275,10 +288,10 @@ const App = () => {
       .then(debt => {
         if (editingDebtId) {
           setDebts(debts.map(d => d.id === editingDebtId ? debt : d));
-          alert('✅ Cập nhật công nợ thành công');
+          showToast('Cập nhật công nợ thành công');
         } else {
           setDebts([...debts, debt]);
-          alert('✅ Đã thêm công nợ mới');
+          showToast('Đã thêm công nợ mới');
         }
         setNewDebt({
           customerName: '',
@@ -299,7 +312,7 @@ const App = () => {
         setEditingDebtId(null);
         setShowAddForm(false);
       })
-      .catch(() => alert('❌ Lỗi khi lưu công nợ'));
+      .catch(() => showToast('Lỗi khi lưu công nợ', 'error'));
   };
 
   const handleEditDebt = (debt) => {
@@ -323,19 +336,48 @@ const App = () => {
     setShowAddForm(true);
   };
 
-  const handleDeleteDebt = (id) => {
-    if (confirm('Xóa bản ghi này?')) {
-      fetch(`${API_URL}/debts/${id}`, {
+  const handleDeleteDebt = (debt) => {
+    askConfirm(`Xóa công nợ của "${debt.customer_name}"?`, () => {
+      fetch(`${API_URL}/debts/${debt.id}`, {
         method: 'DELETE',
         headers: getHeaders()
-      }).then(() => setDebts(debts.filter(d => d.id !== id)));
-    }
+      })
+        .then(() => {
+          setDebts(debts.filter(d => d.id !== debt.id));
+          setSelectedIds(prev => prev.filter(x => x !== debt.id));
+          showToast('Đã xóa công nợ');
+        })
+        .catch(() => showToast('Lỗi khi xóa', 'error'));
+    });
+  };
+
+  // ----- Chọn nhiều & xóa hàng loạt -----
+  const toggleSelect = (id) =>
+    setSelectedIds(prev => (prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]));
+
+  const handleBulkDelete = () => {
+    if (selectedIds.length === 0) return;
+    askConfirm(`Xóa ${selectedIds.length} công nợ đã chọn? Hành động này không thể hoàn tác.`, () => {
+      fetch(`${API_URL}/debts/bulk-delete`, {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({ ids: selectedIds }),
+      })
+        .then(res => { if (!res.ok) throw new Error(); return res.json(); })
+        .then(data => {
+          const removed = new Set(selectedIds);
+          setDebts(debts.filter(d => !removed.has(d.id)));
+          setSelectedIds([]);
+          showToast(`Đã xóa ${data.deleted} công nợ`);
+        })
+        .catch(() => showToast('Lỗi khi xóa hàng loạt', 'error'));
+    }, { confirmText: `Xóa ${selectedIds.length} mục` });
   };
 
   const handleAddRoute = () => {
     const trimmedRoute = newRoute.trim().toUpperCase();
     if (!trimmedRoute) {
-      alert('⚠️ Vui lòng nhập hành trình');
+      showToast('Vui lòng nhập hành trình', 'error');
       return;
     }
 
@@ -348,18 +390,20 @@ const App = () => {
       .then(data => {
         setRoutes([...routes, data.route].sort());
         setNewRoute('');
-        alert('✅ Đã thêm hành trình');
+        showToast('Đã thêm hành trình');
       })
-      .catch(() => alert('❌ Lỗi khi thêm hành trình'));
+      .catch(() => showToast('Lỗi khi thêm hành trình', 'error'));
   };
 
   const handleDeleteRoute = (route) => {
-    if (confirm(`Xóa ${route}?`)) {
+    askConfirm(`Xóa hành trình "${route}"?`, () => {
       fetch(`${API_URL}/routes/${encodeURIComponent(route)}`, {
         method: 'DELETE',
         headers: getHeaders()
-      }).then(() => setRoutes(routes.filter(r => r !== route)));
-    }
+      })
+        .then(() => { setRoutes(routes.filter(r => r !== route)); showToast('Đã xóa hành trình'); })
+        .catch(() => showToast('Lỗi khi xóa hành trình', 'error'));
+    });
   };
 
   const getCompanyById = (companyId) => {
@@ -373,7 +417,7 @@ const App = () => {
 
   const handleSaveCompany = () => {
     if (!newCompany.name.trim()) {
-      alert('⚠️ Vui lòng nhập tên công ty');
+      showToast('Vui lòng nhập tên công ty', 'error');
       return;
     }
     const url = editingCompanyId ? `${API_URL}/companies/${editingCompanyId}` : `${API_URL}/companies`;
@@ -399,9 +443,9 @@ const App = () => {
         resetCompanyForm();
         setEditingCompanyId(null);
         setShowCompanyForm(false);
-        alert(editingCompanyId ? '✅ Cập nhật công ty thành công' : '✅ Đã thêm công ty mới');
+        showToast(editingCompanyId ? 'Cập nhật công ty thành công' : 'Đã thêm công ty mới');
       })
-      .catch(() => alert('❌ Lỗi khi lưu công ty'));
+      .catch(() => showToast('Lỗi khi lưu công ty', 'error'));
   };
 
   const handleEditCompany = (c) => {
@@ -418,11 +462,12 @@ const App = () => {
     setShowCompanyForm(true);
   };
 
-  const handleDeleteCompany = (id) => {
-    if (confirm('Xóa công ty này?')) {
-      fetch(`${API_URL}/companies/${id}`, { method: 'DELETE', headers: getHeaders() })
-        .then(() => setCompanies(companies.filter(c => c.id !== id)));
-    }
+  const handleDeleteCompany = (company) => {
+    askConfirm(`Xóa công ty "${company.name}"?`, () => {
+      fetch(`${API_URL}/companies/${company.id}`, { method: 'DELETE', headers: getHeaders() })
+        .then(() => { setCompanies(companies.filter(c => c.id !== company.id)); showToast('Đã xóa công ty'); })
+        .catch(() => showToast('Lỗi khi xóa công ty', 'error'));
+    });
   };
 
   // Nhãn "Thanh toán vào": phân biệt tiền khách trả vào TK cá nhân hay nộp quỹ cấp trên.
@@ -552,7 +597,7 @@ const App = () => {
         },
       ]);
     } catch {
-      alert('❌ Lỗi khi xuất Excel');
+      showToast('Lỗi khi xuất Excel', 'error');
     }
   };
 
@@ -597,6 +642,14 @@ const App = () => {
         return sortDir === 'desc' ? -cmp : cmp;
       })
     : filteredDebts;
+
+  // Các dòng được phép chọn để xóa (chỉ của chính mình).
+  const selectableIds = sortedDebts
+    .filter(d => !currentUserId || d.user_id === currentUserId)
+    .map(d => d.id);
+  const allSelected = selectableIds.length > 0 && selectableIds.every(id => selectedIds.includes(id));
+  const toggleSelectAll = () =>
+    setSelectedIds(allSelected ? [] : selectableIds);
 
   const toggleSort = (key) => {
     if (sortBy === key) setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
@@ -1031,13 +1084,45 @@ const App = () => {
             </div>
           )}
 
+          {/* Thanh xóa hàng loạt — hiện khi có dòng được chọn */}
+          {selectedIds.length > 0 && (
+            <div className="flex items-center justify-between gap-3 mb-3 px-4 py-2.5 bg-red-50 border border-red-200 rounded-xl">
+              <span className="text-sm font-medium text-red-700">Đã chọn {selectedIds.length} công nợ</span>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setSelectedIds([])}
+                  className="px-3 py-1.5 rounded-lg bg-white border text-gray-600 hover:bg-gray-50 text-xs sm:text-sm font-semibold"
+                >
+                  Bỏ chọn
+                </button>
+                <button
+                  onClick={handleBulkDelete}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-600 text-white hover:bg-red-700 text-xs sm:text-sm font-semibold"
+                >
+                  <Trash2 size={15} /> Xóa đã chọn ({selectedIds.length})
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Data Table */}
           <div className="bg-white rounded-xl sm:rounded-2xl shadow-lg overflow-hidden mb-6 sm:mb-8">
             <div className="overflow-auto max-h-[70vh]">
               <table className="w-full min-w-max lg:min-w-0">
                 <thead className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white sticky top-0 z-10 [&_th]:bg-blue-600">
                   <tr className="text-xs sm:text-sm font-semibold">
-                    <th onClick={() => toggleSort('customer_name')} className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap sticky left-0 z-20 cursor-pointer select-none hover:bg-blue-700">Khách hàng{sortArrow('customer_name')}</th>
+                    <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap sticky left-0 z-20 hover:bg-blue-700">
+                      <span className="inline-flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={allSelected}
+                          onChange={toggleSelectAll}
+                          title="Chọn tất cả"
+                          className="w-4 h-4 rounded cursor-pointer accent-white"
+                        />
+                        <span onClick={() => toggleSort('customer_name')} className="cursor-pointer select-none">Khách hàng{sortArrow('customer_name')}</span>
+                      </span>
+                    </th>
                     <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap">Mã vé</th>
                     <th className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap hidden lg:table-cell">Hành trình</th>
                     <th onClick={() => toggleSort('flight_date')} className="px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 text-left whitespace-nowrap hidden xl:table-cell cursor-pointer select-none hover:bg-blue-700">Ngày bay{sortArrow('flight_date')}</th>
@@ -1077,6 +1162,14 @@ const App = () => {
                         <tr key={debt.id} className={`hover:bg-gray-50 transition ${idx % 2 === 0 ? 'bg-gray-50' : ''}`}>
                           <td className={`px-2 sm:px-4 md:px-6 py-2 sm:py-3 md:py-4 font-semibold text-xs sm:text-sm whitespace-nowrap sticky left-0 z-10 ${idx % 2 === 0 ? 'bg-gray-50' : 'bg-white'}`}>
                             <span className="inline-flex items-center gap-2">
+                              {owned && (
+                                <input
+                                  type="checkbox"
+                                  checked={selectedIds.includes(debt.id)}
+                                  onChange={() => toggleSelect(debt.id)}
+                                  className="w-4 h-4 rounded cursor-pointer shrink-0"
+                                />
+                              )}
                               <span className={`inline-block w-2.5 h-2.5 rounded-full shrink-0 ${dotColor}`} title={dotTitle}></span>
                               <span
                                 onClick={owned ? () => handleEditDebt(debt) : undefined}
@@ -1144,7 +1237,7 @@ const App = () => {
                                   <Edit2 size={14} className="sm:w-4 sm:h-4" />
                                 </button>
                                 <button
-                                  onClick={() => handleDeleteDebt(debt.id)}
+                                  onClick={() => handleDeleteDebt(debt)}
                                   className="p-1.5 sm:p-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition text-xs"
                                   title="Xóa"
                                 >
@@ -1320,7 +1413,7 @@ const App = () => {
                           <Edit2 size={14} className="sm:w-4 sm:h-4" />
                         </button>
                         <button
-                          onClick={() => handleDeleteCompany(c.id)}
+                          onClick={() => handleDeleteCompany(c)}
                           className="p-1.5 sm:p-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition"
                           title="Xóa"
                         >
@@ -1369,8 +1462,28 @@ const App = () => {
               onChanged={() => loadAllData(token)}
             />
           )}
+
+          {/* Hộp thoại xác nhận (thay window.confirm) */}
+          <ConfirmDialog
+            open={!!confirmState}
+            message={confirmState?.message}
+            confirmText={confirmState?.confirmText}
+            title={confirmState?.title}
+            danger={confirmState?.danger ?? true}
+            onCancel={() => setConfirmState(null)}
+            onConfirm={() => { confirmState?.onConfirm?.(); setConfirmState(null); }}
+          />
         </div>
       </div>
+
+      {/* Toast thông báo (thay alert) */}
+      {toast && (
+        <div
+          className={`fixed bottom-5 right-5 z-[70] px-4 py-3 rounded-lg shadow-lg text-white text-sm font-medium ${toast.type === 'error' ? 'bg-red-600' : 'bg-green-600'}`}
+        >
+          {toast.type === 'error' ? '❌ ' : '✅ '}{toast.message}
+        </div>
+      )}
     </div>
   );
 };

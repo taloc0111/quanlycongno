@@ -143,6 +143,24 @@ const deleteDebt = async (req, res) => {
   }
 };
 
+// Xóa nhiều bản ghi cùng lúc (chỉ xóa của chính mình). payments tự xóa theo (ON DELETE CASCADE).
+const bulkDeleteDebts = async (req, res) => {
+  try {
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: 'Không có bản ghi nào để xóa' });
+    }
+    const result = await pool.query(
+      'DELETE FROM debts WHERE id = ANY($1) AND user_id = $2 RETURNING id',
+      [ids.map(Number).filter(Number.isFinite), req.user.id]
+    );
+    res.json({ deleted: result.rows.length });
+  } catch (error) {
+    logger.error('Bulk delete debts error:', error.message);
+    res.status(500).json({ error: 'Failed to delete debts' });
+  }
+};
+
 // Bulk import debts
 const bulkCreateDebts = async (req, res) => {
   try {
@@ -279,6 +297,7 @@ module.exports = {
   createDebt,
   updateDebt,
   deleteDebt,
+  bulkDeleteDebts,
   bulkCreateDebts,
   importDebts,
 };
