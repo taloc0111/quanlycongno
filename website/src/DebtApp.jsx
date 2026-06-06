@@ -5,7 +5,7 @@ import PaymentModal from './components/PaymentModal';
 import AgencyFilter from './components/AgencyFilter';
 import VnDatePicker from './components/VnDatePicker';
 import MoneyInput from './components/MoneyInput';
-import { exportToExcel } from './utils/excel';
+import { exportWorkbook } from './utils/excel';
 import { useAuth } from './auth/AuthContext';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
@@ -425,6 +425,16 @@ const App = () => {
     }
   };
 
+  // Nhãn "Thanh toán vào": phân biệt tiền khách trả vào TK cá nhân hay nộp quỹ cấp trên.
+  const paymentTargetLabel = (debt) => {
+    const paid = Number(debt.paid) || 0;
+    const agency = Number(debt.agency_paid) || 0;
+    if (paid <= 0) return '';
+    if (agency <= 0) return 'Cá nhân';
+    if (agency >= paid) return 'Nộp quỹ (cấp trên)';
+    return 'Hỗn hợp';
+  };
+
   const exportToCSV = () => {
     const headers = [
       'Tên khách hàng',
@@ -436,25 +446,36 @@ const App = () => {
       'Ngày bay',
       'Ngày xuất vé',
       'Tiền vé',
+      'Giá gốc',
+      'Lợi nhuận',
       'Đã thanh toán',
+      'Thanh toán vào',
       'Còn nợ',
       'Ghi chú'
     ];
 
-    const rows = filteredDebts.map(debt => [
-      debt.customer_name,
-      getCompanyById(debt.company_id)?.name || 'Khách lẻ',
-      debt.phone_number,
-      debt.ticket_code,
-      debt.airline,
-      debt.route,
-      formatDateDisplay(debt.flight_date),
-      formatDateDisplay(debt.issue_date),
-      debt.ticket_amount,
-      debt.paid,
-      debt.ticket_amount - debt.paid,
-      debt.notes
-    ]);
+    const rows = filteredDebts.map(debt => {
+      const ticket = Number(debt.ticket_amount) || 0;
+      const cost = Number(debt.cost_amount) || 0;
+      const paid = Number(debt.paid) || 0;
+      return [
+        debt.customer_name,
+        getCompanyById(debt.company_id)?.name || 'Khách lẻ',
+        debt.phone_number,
+        debt.ticket_code,
+        debt.airline,
+        debt.route,
+        formatDateDisplay(debt.flight_date),
+        formatDateDisplay(debt.issue_date),
+        ticket,
+        cost,
+        ticket - cost,
+        paid,
+        paymentTargetLabel(debt),
+        ticket - paid,
+        debt.notes,
+      ];
+    });
 
     const esc = (cell) => `"${String(cell ?? '').replace(/"/g, '""')}"`;
     const csv = [headers, ...rows].map(row => row.map(esc).join(',')).join('\r\n');
@@ -467,10 +488,12 @@ const App = () => {
   };
 
   // Xuất file Excel (.xlsx) — số tiền có định dạng ngăn cách nghìn, Excel tính/sum được.
+  // Gồm 2 sheet: chi tiết công nợ + tổng kết lợi nhuận theo tháng.
   const exportToXLSX = async () => {
+    // --- Sheet 1: chi tiết ---
     const headers = [
-      'Khách hàng', 'Công ty', 'SĐT', 'Mã vé', 'Hãng', 'Hành trình', 'Ngày bay',
-      'Ngày xuất vé', 'Tiền vé', 'Giá gốc', 'Lợi nhuận', 'Đã thanh toán', 'Còn nợ', 'Ghi chú',
+      'Khách hàng', 'Công ty', 'SĐT', 'Mã vé', 'Hãng', 'Hành trình', 'Ngày bay', 'Ngày xuất vé',
+      'Tiền vé', 'Giá gốc', 'Lợi nhuận', 'Đã thanh toán', 'Thanh toán vào', 'Còn nợ', 'Ghi chú',
     ];
     const rows = filteredDebts.map((debt) => {
       const ticket = Number(debt.ticket_amount) || 0;
@@ -485,20 +508,49 @@ const App = () => {
         debt.route || '',
         formatDateDisplay(debt.flight_date),
         formatDateDisplay(debt.issue_date),
-        ticket, cost, ticket - cost, paid, ticket - paid,
+        ticket, cost, ticket - cost, paid, paymentTargetLabel(debt), ticket - paid,
         debt.notes || '',
       ];
     });
+
+    // --- Sheet 2: tổng kết theo tháng (nhóm theo tháng xuất vé) ---
+    const byMonth = {};
+    filteredDebts.forEach((d) => {
+      const m = (d.issue_date || '').slice(0, 7) || 'Không rõ';
+      if (!byMonth[m]) byMonth[m] = { count: 0, ticket: 0, cost: 0, paid: 0 };
+      byMonth[m].count += 1;
+      byMonth[m].ticket += Number(d.ticket_amount) || 0;
+      byMonth[m].cost += Number(d.cost_amount) || 0;
+      byMonth[m].paid += Number(d.paid) || 0;
+    });
+    const months = Object.keys(byMonth).sort();
+    const sumHeaders = ['Tháng', 'Số vé', 'Doanh số', 'Giá gốc', 'Lợi nhuận', 'Đã thu', 'Còn nợ'];
+    const sumRows = months.map((m) => {
+      const x = byMonth[m];
+      return [m, x.count, x.ticket, x.cost, x.ticket - x.cost, x.paid, x.ticket - x.paid];
+    });
+    const tot = months.reduce((a, m) => {
+      const x = byMonth[m];
+      a.count += x.count; a.ticket += x.ticket; a.cost += x.cost; a.paid += x.paid;
+      return a;
+    }, { count: 0, ticket: 0, cost: 0, paid: 0 });
+    sumRows.push(['TỔNG CỘNG', tot.count, tot.ticket, tot.cost, tot.ticket - tot.cost, tot.paid, tot.ticket - tot.paid]);
+
     try {
-      await exportToExcel(
-        `cong-no-ve-may-bay-${new Date().toISOString().split('T')[0]}.xlsx`,
-        [headers, ...rows],
+      await exportWorkbook(`cong-no-ve-may-bay-${new Date().toISOString().split('T')[0]}.xlsx`, [
         {
-          sheetName: 'Công nợ vé',
-          colWidths: [22, 18, 13, 12, 14, 14, 12, 12, 13, 13, 13, 14, 13, 22],
-          moneyCols: [8, 9, 10, 11, 12], // Tiền vé, Giá gốc, Lợi nhuận, Đã thanh toán, Còn nợ
-        }
-      );
+          name: 'Công nợ vé',
+          aoa: [headers, ...rows],
+          colWidths: [22, 18, 13, 12, 14, 14, 12, 12, 13, 13, 13, 14, 16, 13, 22],
+          moneyCols: [8, 9, 10, 11, 13], // Tiền vé, Giá gốc, Lợi nhuận, Đã thanh toán, Còn nợ
+        },
+        {
+          name: 'Tổng kết tháng',
+          aoa: [sumHeaders, ...sumRows],
+          colWidths: [12, 8, 16, 16, 16, 16, 16],
+          moneyCols: [2, 3, 4, 5, 6], // Doanh số, Giá gốc, Lợi nhuận, Đã thu, Còn nợ
+        },
+      ]);
     } catch {
       alert('❌ Lỗi khi xuất Excel');
     }

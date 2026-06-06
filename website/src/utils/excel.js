@@ -51,23 +51,32 @@ export function autoMapColumns(fields, headers) {
  *   - moneyCols: number[] index cột áp định dạng số có ngăn cách nghìn (#,##0)
  */
 export async function exportToExcel(filename, aoa, opts = {}) {
-  const XLSX = await import('xlsx');
   const { sheetName = 'Sheet1', colWidths, moneyCols = [] } = opts;
-  const ws = XLSX.utils.aoa_to_sheet(aoa);
-  if (colWidths) ws['!cols'] = colWidths.map((wch) => ({ wch }));
-  // Định dạng tiền cho các cột chỉ định (bỏ dòng header). '#,##0' hiển thị theo
-  // locale của Excel — máy tiếng Việt sẽ ra dấu chấm ngăn cách (3.000.000).
-  if (moneyCols.length && ws['!ref']) {
-    const range = XLSX.utils.decode_range(ws['!ref']);
-    for (let r = range.s.r + 1; r <= range.e.r; r++) {
-      for (const c of moneyCols) {
-        const cell = ws[XLSX.utils.encode_cell({ r, c })];
-        if (cell && typeof cell.v === 'number') cell.z = '#,##0';
+  return exportWorkbook(filename, [{ name: sheetName, aoa, colWidths, moneyCols }]);
+}
+
+/**
+ * Xuất file .xlsx nhiều sheet. Mỗi sheet: { name, aoa, colWidths?, moneyCols? }.
+ * moneyCols: index cột áp định dạng số ngăn cách nghìn (#,##0) — hiển thị theo
+ * locale Excel (máy tiếng Việt ra dấu chấm: 3.000.000) và vẫn tính/sum được.
+ */
+export async function exportWorkbook(filename, sheets) {
+  const XLSX = await import('xlsx');
+  const wb = XLSX.utils.book_new();
+  for (const s of sheets) {
+    const ws = XLSX.utils.aoa_to_sheet(s.aoa);
+    if (s.colWidths) ws['!cols'] = s.colWidths.map((wch) => ({ wch }));
+    if (s.moneyCols?.length && ws['!ref']) {
+      const range = XLSX.utils.decode_range(ws['!ref']);
+      for (let r = range.s.r + 1; r <= range.e.r; r++) {
+        for (const c of s.moneyCols) {
+          const cell = ws[XLSX.utils.encode_cell({ r, c })];
+          if (cell && typeof cell.v === 'number') cell.z = '#,##0';
+        }
       }
     }
+    XLSX.utils.book_append_sheet(wb, ws, s.name);
   }
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, sheetName);
   XLSX.writeFile(wb, filename);
 }
 
