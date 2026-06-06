@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { X, Trash2, Plus, Landmark, User } from 'lucide-react';
 import VnDatePicker from './VnDatePicker';
+import MoneyInput from './MoneyInput';
 import { apiGet, apiSend } from '../services/client';
 import { formatCurrency, formatDate } from '../utils/format';
 
@@ -95,7 +96,7 @@ export default function PaymentModal({ target, onClose, onChanged }) {
           <div className="flex flex-wrap gap-2 items-end border rounded-lg p-3 bg-gray-50">
             <div className="flex-1 min-w-[120px]">
               <label className="block text-xs text-gray-500 mb-1">Số tiền</label>
-              <input type="number" value={amount} onChange={(e) => setAmount(e.target.value)} className="w-full border rounded-lg px-2 py-1.5 text-sm" />
+              <MoneyInput value={amount} onChange={setAmount} className="w-full border rounded-lg px-2 py-1.5 text-sm" />
             </div>
             <div>
               <label className="block text-xs text-gray-500 mb-1">Ngày</label>

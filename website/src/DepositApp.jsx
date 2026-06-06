@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Plus, Trash2, X, Landmark, Edit2, TrendingUp, TrendingDown, Users } from 'lucide-react';
 import AgencyFilter from './components/AgencyFilter';
 import VnDatePicker from './components/VnDatePicker';
+import MoneyInput from './components/MoneyInput';
 import { apiGet, apiSend } from './services/client';
 import { formatCurrency, formatDate } from './utils/format';
 import { useAuth } from './auth/AuthContext';
@@ -191,7 +192,7 @@ export default function DepositApp() {
             <div className="px-6 py-4 space-y-3">
               <div>
                 <label className="block text-sm text-gray-600 mb-1">Số tiền * <span className="text-xs text-gray-400">(âm nếu nợ kỳ trước)</span></label>
-                <input type="number" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} className="w-full border rounded-lg px-3 py-2" placeholder="VD: -60000000 (nợ) hoặc 5000000 (nộp)" />
+                <MoneyInput value={form.amount} onChange={(v) => setForm({ ...form, amount: v })} allowNegative className="w-full border rounded-lg px-3 py-2" placeholder="VD: -60.000.000 (nợ) hoặc 5.000.000 (nộp)" />
               </div>
               <div>
                 <label className="block text-sm text-gray-600 mb-1">Ngày nộp</label>
