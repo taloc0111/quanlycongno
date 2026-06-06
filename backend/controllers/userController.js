@@ -11,7 +11,7 @@ const getUsers = async (req, res) => {
     const ids = req.scope.userIds.filter((id) => id !== req.user.id);
     if (ids.length === 0) return res.json([]);
     const result = await pool.query(
-      `SELECT u.id, u.username, u.full_name, u.email, u.role, u.parent_id, u.created_at,
+      `SELECT u.id, u.username, u.full_name, u.email, u.role, u.parent_id, u.created_at, u.trial_ends_at,
               COALESCE(d.out, 0) + COALESCE(p.out, 0) AS outstanding
        FROM users u
        LEFT JOIN (SELECT user_id, SUM(ticket_amount - paid) out FROM debts GROUP BY user_id) d ON d.user_id = u.id
@@ -89,6 +89,43 @@ const updateUser = async (req, res) => {
   }
 };
 
+// Quản lý hạn dùng thử của 1 tài khoản con (gia hạn / không giới hạn / thu hồi).
+// action: 'extend' (kèm days) | 'unlimited' | 'revoke'.
+const setTrial = async (req, res) => {
+  try {
+    if (!canManage(req.scope.role)) return res.status(403).json({ error: 'Không có quyền' });
+    const id = parseInt(req.params.id, 10);
+    if (id === req.user.id) return res.status(400).json({ error: 'Không thể tự đặt hạn dùng thử cho chính mình' });
+    if (!req.scope.userIds.includes(id)) return res.status(404).json({ error: 'User not found' });
+
+    const { action, days } = req.body;
+    let sql;
+    let params = [id];
+    if (action === 'unlimited') {
+      sql = 'UPDATE users SET trial_ends_at = NULL WHERE id = $1 RETURNING id, username, trial_ends_at';
+    } else if (action === 'revoke') {
+      sql = 'UPDATE users SET trial_ends_at = CURRENT_TIMESTAMP WHERE id = $1 RETURNING id, username, trial_ends_at';
+    } else if (action === 'extend') {
+      const d = parseInt(days, 10);
+      if (!Number.isInteger(d) || d <= 0 || d > 3650) {
+        return res.status(400).json({ error: 'Số ngày gia hạn không hợp lệ' });
+      }
+      // Cộng dồn từ mốc xa hơn giữa "bây giờ" và hạn hiện tại (gia hạn không mất ngày còn lại).
+      sql = `UPDATE users SET trial_ends_at =
+               GREATEST(CURRENT_TIMESTAMP, COALESCE(trial_ends_at, CURRENT_TIMESTAMP)) + make_interval(days => $2)
+             WHERE id = $1 RETURNING id, username, trial_ends_at`;
+      params = [id, d];
+    } else {
+      return res.status(400).json({ error: 'action không hợp lệ' });
+    }
+    const result = await pool.query(sql, params);
+    res.json(result.rows[0]);
+  } catch (error) {
+    logger.error('Set trial error:', error.message);
+    res.status(500).json({ error: 'Failed to update trial' });
+  }
+};
+
 // Xóa đại lý con (xóa luôn dữ liệu của họ — ON DELETE CASCADE).
 const deleteUser = async (req, res) => {
   try {
@@ -105,4 +142,4 @@ const deleteUser = async (req, res) => {
   }
 };
 
-module.exports = { getUsers, createUser, updateUser, deleteUser };
+module.exports = { getUsers, createUser, updateUser, setTrial, deleteUser };

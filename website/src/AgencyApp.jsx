@@ -1,11 +1,22 @@
 import React, { useEffect, useState } from 'react';
-import { Plus, Trash2, X, Network, Edit2 } from 'lucide-react';
+import { Plus, Trash2, X, Network, Edit2, CalendarClock } from 'lucide-react';
 import { apiGet, apiSend } from './services/client';
 import { formatCurrency } from './utils/format';
 import { useAuth } from './auth/AuthContext';
+import ConfirmDialog from './components/ConfirmDialog';
+import Toast from './components/Toast';
+import { useToast, useConfirm } from './hooks/useFeedback';
 
 const ROLE_LABEL = { admin: 'Quản trị', agency: 'Đại lý cấp 1', user: 'Đại lý cấp 2' };
 const EMPTY = { username: '', password: '', fullName: '', email: '', role: 'user' };
+
+// Trạng thái dùng thử hiển thị từ trial_ends_at.
+const trialInfo = (u) => {
+  if (!u.trial_ends_at) return { text: 'Không giới hạn', cls: 'bg-green-100 text-green-700' };
+  const days = Math.ceil((new Date(u.trial_ends_at).getTime() - Date.now()) / 86400000);
+  if (days <= 0) return { text: 'Hết hạn', cls: 'bg-red-100 text-red-700' };
+  return { text: `Còn ${days} ngày`, cls: days <= 3 ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700' };
+};
 
 export default function AgencyApp() {
   const { user } = useAuth();
@@ -16,6 +27,9 @@ export default function AgencyApp() {
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(EMPTY);
+  const [trialUser, setTrialUser] = useState(null); // user đang mở modal quản lý dùng thử
+  const { toast, showToast } = useToast();
+  const { confirmState, askConfirm, closeConfirm } = useConfirm();
 
   const load = async () => {
     setLoading(true); setError('');
@@ -33,21 +47,34 @@ export default function AgencyApp() {
   };
 
   const save = async () => {
-    if (!editingId && (!form.username.trim() || !form.password)) { alert('⚠️ Cần tên đăng nhập và mật khẩu'); return; }
+    if (!editingId && (!form.username.trim() || !form.password)) { showToast('Cần tên đăng nhập và mật khẩu', 'error'); return; }
     try {
       if (editingId) {
         await apiSend('PUT', `/users/${editingId}`, { fullName: form.fullName, email: form.email, role: isAdmin ? form.role : undefined });
       } else {
         await apiSend('POST', '/users', form);
       }
-      setShowForm(false); load();
-    } catch (err) { alert('Lỗi: ' + err.message); }
+      setShowForm(false);
+      showToast(editingId ? 'Cập nhật tài khoản thành công' : 'Đã thêm đại lý');
+      load();
+    } catch (err) { showToast('Lỗi: ' + err.message, 'error'); }
   };
 
-  const remove = async (u) => {
-    if (!confirm(`Xóa đại lý "${u.username}"? Toàn bộ dữ liệu (công nợ, hộ chiếu...) của họ cũng bị xóa.`)) return;
-    try { await apiSend('DELETE', `/users/${u.id}`); load(); }
-    catch (err) { alert('Lỗi: ' + err.message); }
+  const remove = (u) => {
+    askConfirm(`Xóa đại lý "${u.username}"? Toàn bộ dữ liệu (công nợ, hộ chiếu...) của họ cũng bị xóa.`, async () => {
+      try { await apiSend('DELETE', `/users/${u.id}`); showToast('Đã xóa tài khoản'); load(); }
+      catch (err) { showToast('Lỗi: ' + err.message, 'error'); }
+    });
+  };
+
+  // Gia hạn / mở khoá / thu hồi dùng thử cho 1 tài khoản.
+  const applyTrial = async (action, days) => {
+    try {
+      await apiSend('PUT', `/users/${trialUser.id}/trial`, { action, days });
+      setTrialUser(null);
+      showToast('Đã cập nhật hạn dùng thử');
+      load();
+    } catch (err) { showToast('Lỗi: ' + err.message, 'error'); }
   };
 
   return (
@@ -74,25 +101,34 @@ export default function AgencyApp() {
                   <th className="px-4 py-3 text-left font-semibold text-gray-600">Tên đăng nhập</th>
                   <th className="px-4 py-3 text-left font-semibold text-gray-600">Họ tên</th>
                   <th className="px-4 py-3 text-left font-semibold text-gray-600">Vai trò</th>
+                  <th className="px-4 py-3 text-left font-semibold text-gray-600">Dùng thử</th>
                   <th className="px-4 py-3 text-right font-semibold text-gray-600">Công nợ</th>
                   <th className="px-4 py-3"></th>
                 </tr>
               </thead>
               <tbody>
                 {users.length === 0 ? (
-                  <tr><td colSpan={5} className="px-4 py-8 text-center text-gray-400">Chưa có đại lý cấp dưới nào.</td></tr>
-                ) : users.map((u) => (
+                  <tr><td colSpan={6} className="px-4 py-8 text-center text-gray-400">Chưa có đại lý cấp dưới nào.</td></tr>
+                ) : users.map((u) => {
+                  const t = trialInfo(u);
+                  return (
                   <tr key={u.id} className="border-t hover:bg-gray-50">
                     <td className="px-4 py-3 font-medium text-gray-800">{u.username}</td>
                     <td className="px-4 py-3 text-gray-600">{u.full_name || '—'}</td>
                     <td className="px-4 py-3"><span className="text-xs px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 font-semibold">{ROLE_LABEL[u.role] || u.role}</span></td>
+                    <td className="px-4 py-3">
+                      <button onClick={() => setTrialUser(u)} className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-semibold hover:opacity-80 ${t.cls}`} title="Quản lý dùng thử">
+                        <CalendarClock size={12} /> {t.text}
+                      </button>
+                    </td>
                     <td className="px-4 py-3 text-right font-semibold text-red-600">{formatCurrency(u.outstanding)}</td>
                     <td className="px-4 py-3 text-right whitespace-nowrap">
                       <button onClick={() => openEdit(u)} className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg"><Edit2 size={16} /></button>
                       <button onClick={() => remove(u)} className="p-2 text-red-600 hover:bg-red-50 rounded-lg"><Trash2 size={16} /></button>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -143,6 +179,50 @@ export default function AgencyApp() {
           </div>
         </div>
       )}
+
+      {/* Modal quản lý dùng thử */}
+      {trialUser && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md my-8">
+            <div className="flex items-center justify-between border-b px-6 py-4">
+              <h3 className="text-lg font-bold flex items-center gap-2"><CalendarClock size={20} /> Dùng thử — {trialUser.username}</h3>
+              <button onClick={() => setTrialUser(null)} className="text-gray-400 hover:text-gray-700"><X size={22} /></button>
+            </div>
+            <div className="px-6 py-4 space-y-4">
+              <p className="text-sm">
+                Trạng thái hiện tại:{' '}
+                <span className={`inline-block text-xs px-2 py-0.5 rounded-full font-semibold ${trialInfo(trialUser).cls}`}>{trialInfo(trialUser).text}</span>
+                {trialUser.trial_ends_at && (
+                  <span className="text-gray-400 text-xs"> · đến {new Date(trialUser.trial_ends_at).toLocaleDateString('vi-VN')}</span>
+                )}
+              </p>
+              <div className="grid grid-cols-2 gap-2">
+                <button onClick={() => applyTrial('extend', 30)} className="px-3 py-2 rounded-lg bg-blue-50 text-blue-700 font-semibold text-sm hover:bg-blue-100">+ 1 tháng</button>
+                <button onClick={() => applyTrial('extend', 365)} className="px-3 py-2 rounded-lg bg-blue-50 text-blue-700 font-semibold text-sm hover:bg-blue-100">+ 1 năm</button>
+                <button onClick={() => applyTrial('unlimited')} className="px-3 py-2 rounded-lg bg-green-600 text-white font-semibold text-sm hover:bg-green-700">Không giới hạn</button>
+                <button
+                  onClick={() => askConfirm(`Thu hồi quyền dùng thử của "${trialUser.username}" ngay bây giờ?`, () => applyTrial('revoke'), { confirmText: 'Thu hồi' })}
+                  className="px-3 py-2 rounded-lg bg-red-50 text-red-700 font-semibold text-sm hover:bg-red-100"
+                >
+                  Thu hồi (khoá ngay)
+                </button>
+              </div>
+              <p className="text-xs text-gray-400">
+                Gia hạn cộng dồn vào số ngày còn lại. Người dùng cần <b>đăng nhập lại</b> để áp dụng hạn mới (token làm mới mỗi lần đăng nhập).
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <ConfirmDialog
+        open={!!confirmState}
+        message={confirmState?.message}
+        confirmText={confirmState?.confirmText}
+        onCancel={closeConfirm}
+        onConfirm={() => { confirmState?.onConfirm?.(); closeConfirm(); }}
+      />
+      <Toast toast={toast} />
     </div>
   );
 }
