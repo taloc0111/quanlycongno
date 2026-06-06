@@ -43,6 +43,34 @@ export function autoMapColumns(fields, headers) {
   return mapping;
 }
 
+/**
+ * Xuất một mảng-các-dòng (aoa, dòng đầu là header) ra file .xlsx.
+ * opts:
+ *   - sheetName: tên sheet
+ *   - colWidths: number[] độ rộng từng cột (ký tự)
+ *   - moneyCols: number[] index cột áp định dạng số có ngăn cách nghìn (#,##0)
+ */
+export async function exportToExcel(filename, aoa, opts = {}) {
+  const XLSX = await import('xlsx');
+  const { sheetName = 'Sheet1', colWidths, moneyCols = [] } = opts;
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  if (colWidths) ws['!cols'] = colWidths.map((wch) => ({ wch }));
+  // Định dạng tiền cho các cột chỉ định (bỏ dòng header). '#,##0' hiển thị theo
+  // locale của Excel — máy tiếng Việt sẽ ra dấu chấm ngăn cách (3.000.000).
+  if (moneyCols.length && ws['!ref']) {
+    const range = XLSX.utils.decode_range(ws['!ref']);
+    for (let r = range.s.r + 1; r <= range.e.r; r++) {
+      for (const c of moneyCols) {
+        const cell = ws[XLSX.utils.encode_cell({ r, c })];
+        if (cell && typeof cell.v === 'number') cell.z = '#,##0';
+      }
+    }
+  }
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, sheetName);
+  XLSX.writeFile(wb, filename);
+}
+
 /** Tải file .xlsx template gồm dòng header + 1 dòng ví dụ. */
 export async function downloadTemplate(filename, fields, sampleRow = {}) {
   const XLSX = await import('xlsx');

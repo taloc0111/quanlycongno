@@ -5,6 +5,7 @@ import PaymentModal from './components/PaymentModal';
 import AgencyFilter from './components/AgencyFilter';
 import VnDatePicker from './components/VnDatePicker';
 import MoneyInput from './components/MoneyInput';
+import { exportToExcel } from './utils/excel';
 import { useAuth } from './auth/AuthContext';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
@@ -465,6 +466,44 @@ const App = () => {
     link.click();
   };
 
+  // Xuất file Excel (.xlsx) — số tiền có định dạng ngăn cách nghìn, Excel tính/sum được.
+  const exportToXLSX = async () => {
+    const headers = [
+      'Khách hàng', 'Công ty', 'SĐT', 'Mã vé', 'Hãng', 'Hành trình', 'Ngày bay',
+      'Ngày xuất vé', 'Tiền vé', 'Giá gốc', 'Lợi nhuận', 'Đã thanh toán', 'Còn nợ', 'Ghi chú',
+    ];
+    const rows = filteredDebts.map((debt) => {
+      const ticket = Number(debt.ticket_amount) || 0;
+      const cost = Number(debt.cost_amount) || 0;
+      const paid = Number(debt.paid) || 0;
+      return [
+        debt.customer_name,
+        getCompanyById(debt.company_id)?.name || 'Khách lẻ',
+        debt.phone_number || '',
+        debt.ticket_code || '',
+        debt.airline || '',
+        debt.route || '',
+        formatDateDisplay(debt.flight_date),
+        formatDateDisplay(debt.issue_date),
+        ticket, cost, ticket - cost, paid, ticket - paid,
+        debt.notes || '',
+      ];
+    });
+    try {
+      await exportToExcel(
+        `cong-no-ve-may-bay-${new Date().toISOString().split('T')[0]}.xlsx`,
+        [headers, ...rows],
+        {
+          sheetName: 'Công nợ vé',
+          colWidths: [22, 18, 13, 12, 14, 14, 12, 12, 13, 13, 13, 14, 13, 22],
+          moneyCols: [8, 9, 10, 11, 12], // Tiền vé, Giá gốc, Lợi nhuận, Đã thanh toán, Còn nợ
+        }
+      );
+    } catch {
+      alert('❌ Lỗi khi xuất Excel');
+    }
+  };
+
   const filteredDebts = debts.filter(debt => {
     const matchesSearch =
       debt.customer_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -683,10 +722,16 @@ const App = () => {
                 <Upload size={16} className="sm:w-5 sm:h-5" /> <span className="hidden sm:inline">Import</span>
               </button>
               <button
+                onClick={exportToXLSX}
+                className="flex items-center gap-1 sm:gap-2 px-3 sm:px-4 py-1.5 sm:py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition font-semibold text-xs sm:text-sm"
+              >
+                <Download size={16} className="sm:w-5 sm:h-5" /> <span className="hidden sm:inline">Excel</span>
+              </button>
+              <button
                 onClick={exportToCSV}
                 className="flex items-center gap-1 sm:gap-2 px-3 sm:px-4 py-1.5 sm:py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition font-semibold text-xs sm:text-sm"
               >
-                <Download size={16} className="sm:w-5 sm:h-5" /> <span className="hidden sm:inline">Export</span>
+                <Download size={16} className="sm:w-5 sm:h-5" /> <span className="hidden sm:inline">CSV</span>
               </button>
             </div>
 
