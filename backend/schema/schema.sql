@@ -112,7 +112,8 @@ CREATE TABLE IF NOT EXISTS passports (
   address         VARCHAR(255),
   service_date    DATE NOT NULL,
   due_date        DATE,
-  total_amount    NUMERIC(15,2) NOT NULL,
+  total_amount    NUMERIC(15,2) NOT NULL,                 -- giá bán cho khách
+  cost_amount     NUMERIC(15,2) NOT NULL DEFAULT 0,        -- giá gốc/giá vốn
   paid_amount     NUMERIC(15,2) DEFAULT 0,
   notes           TEXT,
   company_id      INTEGER REFERENCES companies(id) ON DELETE SET NULL,
@@ -265,6 +266,7 @@ ALTER TABLE debts     ADD COLUMN IF NOT EXISTS checked_in BOOLEAN NOT NULL DEFAU
 ALTER TABLE customers DROP CONSTRAINT IF EXISTS customers_user_id_phone_key;
 ALTER TABLE passports ADD COLUMN IF NOT EXISTS customer_id INTEGER REFERENCES customers(id) ON DELETE SET NULL;
 ALTER TABLE passports ADD COLUMN IF NOT EXISTS due_date DATE;
+ALTER TABLE passports ADD COLUMN IF NOT EXISTS cost_amount NUMERIC(15,2) NOT NULL DEFAULT 0;
 ALTER TABLE customers ADD COLUMN IF NOT EXISTS birthday DATE;
 
 -- Theo dõi thanh toán vào tài khoản nào: 'self' = TK cá nhân, 'agency' = TK đại lý cấp trên.

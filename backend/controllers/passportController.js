@@ -28,7 +28,7 @@ const getPassports = async (req, res) => {
 const createPassport = async (req, res) => {
   const {
     passportNumber, customerName, phoneNumber, address, serviceDate, dueDate,
-    totalAmount, paidAmount, notes, companyId
+    totalAmount, costAmount, paidAmount, notes, companyId
   } = req.body;
 
   const client = await pool.connect();
@@ -40,13 +40,13 @@ const createPassport = async (req, res) => {
     const result = await client.query(
       `INSERT INTO passports (
         user_id, customer_id, passport_number, customer_name, phone_number, address, service_date, due_date,
-        total_amount, paid_amount, notes, company_id
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        total_amount, cost_amount, paid_amount, notes, company_id
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
       RETURNING *`,
       [
         req.user.id, customerId,
         passportNumber || '', customerName, phoneNumber, address || '', serviceDate, dueDate || null,
-        totalAmount, paidAmount || 0, notes || '', companyId || null,
+        totalAmount, parseFloat(costAmount) || 0, paidAmount || 0, notes || '', companyId || null,
       ]
     );
     await client.query('COMMIT');
@@ -65,7 +65,7 @@ const updatePassport = async (req, res) => {
   const { id } = req.params;
   const {
     passportNumber, customerName, phoneNumber, address, serviceDate, dueDate,
-    totalAmount, paidAmount, notes, companyId
+    totalAmount, costAmount, paidAmount, notes, companyId
   } = req.body;
 
   const client = await pool.connect();
@@ -77,14 +77,14 @@ const updatePassport = async (req, res) => {
     const result = await client.query(
       `UPDATE passports SET
         customer_id = $2, passport_number = $3, customer_name = $4, phone_number = $5, address = $6,
-        service_date = $7, due_date = $8, total_amount = $9, paid_amount = $10,
-        notes = $11, company_id = $12, updated_at = CURRENT_TIMESTAMP
-      WHERE id = $1 AND user_id = $13
+        service_date = $7, due_date = $8, total_amount = $9, cost_amount = $10, paid_amount = $11,
+        notes = $12, company_id = $13, updated_at = CURRENT_TIMESTAMP
+      WHERE id = $1 AND user_id = $14
       RETURNING *`,
       [
         id, customerId,
         passportNumber || '', customerName, phoneNumber, address || '', serviceDate, dueDate || null,
-        totalAmount, paidAmount || 0, notes || '', companyId || null, req.user.id,
+        totalAmount, parseFloat(costAmount) || 0, paidAmount || 0, notes || '', companyId || null, req.user.id,
       ]
     );
     if (result.rows.length === 0) {

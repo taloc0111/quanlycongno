@@ -76,6 +76,7 @@ export default function PassportApp() {
     serviceDate: '',
     dueDate: '',
     totalAmount: '',
+    costAmount: '',
     paidAmount: '',
     notes: ''
   });
@@ -153,6 +154,7 @@ export default function PassportApp() {
           serviceDate: formData.serviceDate,
           dueDate: formData.dueDate || null,
           totalAmount: parseFloat(formData.totalAmount),
+          costAmount: parseFloat(formData.costAmount) || 0,
           paidAmount: parseFloat(formData.paidAmount) || 0,
           notes: formData.notes
         })
@@ -182,6 +184,7 @@ export default function PassportApp() {
       serviceDate: passport.service_date,
       dueDate: (passport.due_date || '').slice(0, 10),
       totalAmount: passport.total_amount,
+      costAmount: passport.cost_amount,
       paidAmount: passport.paid_amount,
       notes: passport.notes
     });
@@ -235,6 +238,7 @@ export default function PassportApp() {
       serviceDate: '',
       dueDate: '',
       totalAmount: '',
+      costAmount: '',
       paidAmount: '',
       notes: ''
     });
@@ -370,6 +374,7 @@ export default function PassportApp() {
                   serviceDate: '',
                   dueDate: '',
                   totalAmount: '',
+                  costAmount: '',
                   paidAmount: '',
                   notes: ''
                 });
@@ -488,13 +493,23 @@ export default function PassportApp() {
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-semibold text-gray-700 mb-2">Số Tiền *</label>
-                    <input 
-                      type="number" 
-                      placeholder="Nhập số tiền" 
-                      value={formData.totalAmount} 
-                      onChange={(e) => setFormData({...formData, totalAmount: e.target.value})} 
-                      className="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none transition" 
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">Số Tiền / giá bán *</label>
+                    <input
+                      type="number"
+                      placeholder="Giá bán cho khách"
+                      value={formData.totalAmount}
+                      onChange={(e) => setFormData({...formData, totalAmount: e.target.value})}
+                      className="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none transition"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-2">Giá gốc / giá vốn</label>
+                    <input
+                      type="number"
+                      placeholder="Giá nhập"
+                      value={formData.costAmount}
+                      onChange={(e) => setFormData({...formData, costAmount: e.target.value})}
+                      className="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none transition"
                     />
                   </div>
                   <div>
@@ -569,6 +584,8 @@ export default function PassportApp() {
                   <th className="px-6 py-4 text-left font-semibold hidden lg:table-cell">Địa Chỉ</th>
                   <th onClick={() => sorter.toggle('service_date')} className="px-6 py-4 text-left font-semibold cursor-pointer select-none hover:bg-blue-700">Ngày Làm{sorter.arrow('service_date')}</th>
                   <th onClick={() => sorter.toggle('total_amount')} className="px-6 py-4 text-right font-semibold cursor-pointer select-none hover:bg-blue-700">Số Tiền{sorter.arrow('total_amount')}</th>
+                  <th className="px-6 py-4 text-right font-semibold hidden lg:table-cell">Giá gốc</th>
+                  <th className="px-6 py-4 text-right font-semibold">Lợi nhuận</th>
                   <th onClick={() => sorter.toggle('remaining')} className="px-6 py-4 text-right font-semibold hidden md:table-cell cursor-pointer select-none hover:bg-blue-700">Còn Nợ{sorter.arrow('remaining')}</th>
                   <th className="px-6 py-4 text-center font-semibold">Trạng Thái</th>
                   <th className="px-6 py-4 text-center font-semibold">Thao Tác</th>
@@ -576,10 +593,11 @@ export default function PassportApp() {
               </thead>
               <tbody className="divide-y divide-gray-200">
                 {sortedData.length === 0 ? (
-                  <tr><td colSpan="9" className="px-6 py-12 text-center text-gray-500 font-medium">📊 Chưa có bản ghi</td></tr>
+                  <tr><td colSpan="11" className="px-6 py-12 text-center text-gray-500 font-medium">📊 Chưa có bản ghi</td></tr>
                 ) : (
                   sortedData.map((p, idx) => {
                     const debt = p.total_amount - p.paid_amount;
+                    const profit = (Number(p.total_amount) || 0) - (Number(p.cost_amount) || 0);
                     const status = getDebtStatus(debt);
                     // Chấm trạng thái: đã đủ (xanh) / trả một phần (cam) / chưa trả (đỏ)
                     const payStatus = debt <= 0 ? 'paid' : ((parseFloat(p.paid_amount) || 0) > 0 ? 'partial' : 'unpaid');
@@ -615,6 +633,8 @@ export default function PassportApp() {
                         <td className="px-6 py-4 text-gray-600 hidden lg:table-cell text-sm">{p.address || 'N/A'}</td>
                         <td className="px-6 py-4 text-gray-600">{formatDateDisplay(p.service_date)}</td>
                         <td className="px-6 py-4 text-right font-semibold text-gray-900">{formatCurrency(p.total_amount)}</td>
+                        <td className="px-6 py-4 text-right text-gray-500 hidden lg:table-cell">{formatCurrency(p.cost_amount)}</td>
+                        <td className={`px-6 py-4 text-right font-semibold ${profit >= 0 ? 'text-green-600' : 'text-red-600'}`}>{formatCurrency(profit)}</td>
                         <td className="px-6 py-4 text-right hidden md:table-cell font-bold" style={{color: debt > 0 ? '#ef4444' : '#10b981'}}>
                           {formatCurrency(debt)}
                         </td>
