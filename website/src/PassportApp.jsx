@@ -285,6 +285,7 @@ export default function PassportApp() {
     customers: new Set(filteredData.map(p => p.customer_name)).size,
     revenue: filteredData.reduce((sum, p) => sum + p.total_amount, 0),
     paid: filteredData.reduce((sum, p) => sum + p.paid_amount, 0),
+    profit: filteredData.reduce((sum, p) => sum + ((Number(p.total_amount) || 0) - (Number(p.cost_amount) || 0)), 0),
   };
   stats.debt = stats.revenue - stats.paid;
 
@@ -334,7 +335,7 @@ export default function PassportApp() {
         </div>
 
         {/* Statistics */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-6 mb-8">
           <StatCard
             icon={Users}
             label="Tổng Khách Hàng"
@@ -358,6 +359,12 @@ export default function PassportApp() {
             label="Còn Nợ"
             value={formatCurrency(stats.debt).split(',')[0]}
             color="from-orange-500 to-red-600"
+          />
+          <StatCard
+            icon={TrendingUp}
+            label="Lợi nhuận"
+            value={formatCurrency(stats.profit).split(',')[0]}
+            color="from-amber-500 to-orange-600"
           />
         </div>
 

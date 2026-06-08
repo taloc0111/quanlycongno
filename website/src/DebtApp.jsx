@@ -115,7 +115,6 @@ const App = () => {
   const [loading, setLoading] = useState(false);
 
   const [debts, setDebts] = useState([]);
-  const [stats, setStats] = useState(null); // số liệu tổng hợp (gồm vé máy bay + hộ chiếu + vé tàu)
   const [routes, setRoutes] = useState([]);
   const [companies, setCompanies] = useState([]);
   const [customers, setCustomers] = useState([]);
@@ -211,19 +210,17 @@ const App = () => {
 
   const loadAllData = async (authToken) => {
     try {
-      const [debtsRes, routesRes, companiesRes, customersRes, statsRes] = await Promise.all([
+      const [debtsRes, routesRes, companiesRes, customersRes] = await Promise.all([
         fetch(`${API_URL}/debts${agencyId ? `?agencyId=${agencyId}` : ''}`, { headers: { 'Authorization': `Bearer ${authToken}` } }),
         fetch(`${API_URL}/routes`, { headers: { 'Authorization': `Bearer ${authToken}` } }),
         fetch(`${API_URL}/companies`, { headers: { 'Authorization': `Bearer ${authToken}` } }),
-        fetch(`${API_URL}/customers`, { headers: { 'Authorization': `Bearer ${authToken}` } }),
-        fetch(`${API_URL}/stats${agencyId ? `?agencyId=${agencyId}` : ''}`, { headers: { 'Authorization': `Bearer ${authToken}` } })
+        fetch(`${API_URL}/customers`, { headers: { 'Authorization': `Bearer ${authToken}` } })
       ]);
 
       if (debtsRes.ok) setDebts(await debtsRes.json());
       if (routesRes.ok) setRoutes(await routesRes.json());
       if (companiesRes.ok) setCompanies(await companiesRes.json());
       if (customersRes.ok) setCustomers(await customersRes.json());
-      if (statsRes.ok) setStats(await statsRes.json());
     } catch (error) {
       console.error('Load data error:', error);
     }
@@ -712,6 +709,8 @@ const App = () => {
   const totalAmount = filteredDebts.reduce((sum, d) => sum + (parseFloat(d.ticket_amount) || 0), 0);
   const totalPaid = filteredDebts.reduce((sum, d) => sum + (parseFloat(d.paid) || 0), 0);
   const totalDebt = totalAmount - totalPaid;
+  // Lợi nhuận vé máy bay theo đúng bộ lọc đang chọn (tháng/trạng thái/tìm kiếm).
+  const totalProfit = filteredDebts.reduce((sum, d) => sum + ((parseFloat(d.ticket_amount) || 0) - (parseFloat(d.cost_amount) || 0)), 0);
   const paidPercentage = totalAmount > 0 ? Math.round((totalPaid / totalAmount) * 100) : 0;
 
   const getAvailableMonths = () => {
@@ -832,8 +831,8 @@ const App = () => {
             />
             <StatCard
               icon={TrendingUp}
-              label="Lợi nhuận (tất cả)"
-              value={formatCurrency(stats?.totalProfit || 0).split(',')[0]}
+              label="Lợi nhuận"
+              value={formatCurrency(totalProfit).split(',')[0]}
               color="from-amber-500 to-orange-600"
             />
           </div>

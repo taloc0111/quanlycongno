@@ -48,6 +48,7 @@ export default function TrainApp() {
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
+  const [filterMonth, setFilterMonth] = useState('');
   const [agencyId, setAgencyId] = useState('');
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
@@ -96,9 +97,10 @@ export default function TrainApp() {
         || t.train_no?.toLowerCase().includes(q) || t.route?.toLowerCase().includes(q);
       const rem = remainingOf(t);
       const matchStatus = filterStatus === 'all' || (filterStatus === 'paid' ? rem <= 0 : rem > 0);
-      return matchText && matchStatus;
+      const matchMonth = !filterMonth || (t.issue_date || '').slice(0, 7) === filterMonth;
+      return matchText && matchStatus && matchMonth;
     });
-  }, [tickets, search, filterStatus]);
+  }, [tickets, search, filterStatus, filterMonth]);
 
   const sortValue = (t) => {
     switch (sortBy) {
@@ -129,7 +131,12 @@ export default function TrainApp() {
   const totalPages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
   const curPage = Math.min(page, totalPages);
   const paged = sorted.slice((curPage - 1) * PAGE_SIZE, curPage * PAGE_SIZE);
-  useEffect(() => { setPage(1); }, [search, filterStatus, agencyId]);
+  useEffect(() => { setPage(1); }, [search, filterStatus, filterMonth, agencyId]);
+
+  // Tổng hợp theo bộ lọc đang chọn (gồm cả lọc tháng).
+  const sumSell = filtered.reduce((s, t) => s + (Number(t.ticket_amount) || 0), 0);
+  const sumPaid = filtered.reduce((s, t) => s + (Number(t.paid) || 0), 0);
+  const sumProfit = filtered.reduce((s, t) => s + ((Number(t.ticket_amount) || 0) - (Number(t.cost_amount) || 0)), 0);
 
   const selectableIds = sorted.filter((t) => !currentUserId || t.user_id === currentUserId).map((t) => t.id);
   const allSelected = selectableIds.length > 0 && selectableIds.every((id) => selectedIds.includes(id));
@@ -247,12 +254,33 @@ export default function TrainApp() {
             <Search className="absolute left-3 top-2.5 text-gray-400" size={18} />
             <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Tìm khách, SĐT, số tàu, hành trình…" className="w-full pl-10 pr-4 py-2 border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none" />
           </div>
+          <input type="month" value={filterMonth} onChange={(e) => setFilterMonth(e.target.value)} className="px-4 py-2 border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm bg-white" title="Lọc theo tháng xuất vé" />
           <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className="px-4 py-2 border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm bg-white">
             <option value="all">Tất cả</option>
             <option value="unpaid">Còn nợ</option>
             <option value="paid">Đã trả đủ</option>
           </select>
           <AgencyFilter value={agencyId} onChange={setAgencyId} />
+        </div>
+
+        {/* Tổng hợp theo bộ lọc (gồm lọc tháng) */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+          <div className="bg-gradient-to-br from-green-500 to-emerald-600 text-white rounded-2xl p-4 shadow">
+            <p className="text-xs opacity-90">Doanh số</p>
+            <p className="text-lg sm:text-xl font-bold mt-1">{formatCurrency(sumSell)}</p>
+          </div>
+          <div className="bg-gradient-to-br from-purple-500 to-purple-600 text-white rounded-2xl p-4 shadow">
+            <p className="text-xs opacity-90">Đã thu</p>
+            <p className="text-lg sm:text-xl font-bold mt-1">{formatCurrency(sumPaid)}</p>
+          </div>
+          <div className="bg-gradient-to-br from-red-500 to-rose-600 text-white rounded-2xl p-4 shadow">
+            <p className="text-xs opacity-90">Còn nợ</p>
+            <p className="text-lg sm:text-xl font-bold mt-1">{formatCurrency(sumSell - sumPaid)}</p>
+          </div>
+          <div className="bg-gradient-to-br from-amber-500 to-orange-600 text-white rounded-2xl p-4 shadow">
+            <p className="text-xs opacity-90">Lợi nhuận</p>
+            <p className="text-lg sm:text-xl font-bold mt-1">{formatCurrency(sumProfit)}</p>
+          </div>
         </div>
 
         {selectedIds.length > 0 && (
