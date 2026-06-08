@@ -6,12 +6,12 @@ import { formatCurrency } from './utils/format';
 function StatCard({ icon: Icon, label, value, gradient }) {
   return (
     <div className={`rounded-2xl p-5 text-white shadow-lg bg-gradient-to-br ${gradient}`}>
-      <div className="flex items-center justify-between">
-        <div>
+      <div className="flex items-center justify-between gap-2">
+        <div className="min-w-0">
           <p className="text-sm/relaxed opacity-90">{label}</p>
-          <p className="text-xl sm:text-2xl font-bold mt-1">{value}</p>
+          <p className="text-lg sm:text-2xl font-bold mt-1 truncate">{value}</p>
         </div>
-        <Icon size={32} className="opacity-80" />
+        <Icon size={28} className="opacity-80 shrink-0" />
       </div>
     </div>
   );

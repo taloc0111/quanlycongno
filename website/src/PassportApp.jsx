@@ -301,7 +301,7 @@ export default function PassportApp() {
         {subtext && <span className="text-xs bg-white/20 px-2 py-1 rounded-full">{subtext}</span>}
       </div>
       <p className="text-sm font-medium text-white/80 mb-1">{label}</p>
-      <p className="text-3xl font-bold">{value}</p>
+      <p className="text-xl sm:text-2xl font-bold truncate">{value}</p>
     </div>
   );
 

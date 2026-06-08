@@ -65,13 +65,13 @@ const calculateRemaining = (ticketAmount, paid) => {
 
 const StatCard = ({ icon: Icon, label, value, color, trend }) => (
   <div className={`bg-gradient-to-br ${color} rounded-xl sm:rounded-2xl p-4 sm:p-6 text-white shadow-lg hover:shadow-xl transition-all`}>
-    <div className="flex items-start justify-between">
-      <div>
+    <div className="flex items-start justify-between gap-2">
+      <div className="min-w-0">
         <p className="text-xs sm:text-sm opacity-90 font-medium">{label}</p>
-        <p className="text-2xl sm:text-3xl font-bold mt-1 sm:mt-2 truncate">{value}</p>
+        <p className="text-lg sm:text-2xl font-bold mt-1 sm:mt-2 truncate">{value}</p>
       </div>
       <div className="p-2 sm:p-3 bg-white/20 rounded-lg sm:rounded-xl flex-shrink-0">
-        <Icon size={20} className="sm:w-6 sm:h-6" />
+        <Icon size={18} className="sm:w-6 sm:h-6" />
       </div>
     </div>
     {trend && (
