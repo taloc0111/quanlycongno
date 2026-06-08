@@ -115,6 +115,7 @@ const App = () => {
   const [loading, setLoading] = useState(false);
 
   const [debts, setDebts] = useState([]);
+  const [stats, setStats] = useState(null); // số liệu tổng hợp (gồm vé máy bay + hộ chiếu + vé tàu)
   const [routes, setRoutes] = useState([]);
   const [companies, setCompanies] = useState([]);
   const [customers, setCustomers] = useState([]);
@@ -210,17 +211,19 @@ const App = () => {
 
   const loadAllData = async (authToken) => {
     try {
-      const [debtsRes, routesRes, companiesRes, customersRes] = await Promise.all([
+      const [debtsRes, routesRes, companiesRes, customersRes, statsRes] = await Promise.all([
         fetch(`${API_URL}/debts${agencyId ? `?agencyId=${agencyId}` : ''}`, { headers: { 'Authorization': `Bearer ${authToken}` } }),
         fetch(`${API_URL}/routes`, { headers: { 'Authorization': `Bearer ${authToken}` } }),
         fetch(`${API_URL}/companies`, { headers: { 'Authorization': `Bearer ${authToken}` } }),
-        fetch(`${API_URL}/customers`, { headers: { 'Authorization': `Bearer ${authToken}` } })
+        fetch(`${API_URL}/customers`, { headers: { 'Authorization': `Bearer ${authToken}` } }),
+        fetch(`${API_URL}/stats${agencyId ? `?agencyId=${agencyId}` : ''}`, { headers: { 'Authorization': `Bearer ${authToken}` } })
       ]);
 
       if (debtsRes.ok) setDebts(await debtsRes.json());
       if (routesRes.ok) setRoutes(await routesRes.json());
       if (companiesRes.ok) setCompanies(await companiesRes.json());
       if (customersRes.ok) setCustomers(await customersRes.json());
+      if (statsRes.ok) setStats(await statsRes.json());
     } catch (error) {
       console.error('Load data error:', error);
     }
@@ -801,7 +804,7 @@ const App = () => {
           </div>
 
           {/* Stats */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-6 mb-6 sm:mb-8">
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-6 mb-6 sm:mb-8">
             <StatCard
               icon={Users2}
               label="Tổng Khách Hàng"
@@ -826,6 +829,12 @@ const App = () => {
               label="Còn Nợ"
               value={formatCurrency(totalDebt).split(',')[0]}
               color="from-red-500 to-red-600"
+            />
+            <StatCard
+              icon={TrendingUp}
+              label="Lợi nhuận (tất cả)"
+              value={formatCurrency(stats?.totalProfit || 0).split(',')[0]}
+              color="from-amber-500 to-orange-600"
             />
           </div>
 
