@@ -68,7 +68,7 @@ const StatCard = ({ icon: Icon, label, value, color, trend }) => (
     <div className="flex items-start justify-between gap-2">
       <div className="min-w-0">
         <p className="text-xs sm:text-sm opacity-90 font-medium">{label}</p>
-        <p className="text-lg sm:text-2xl font-bold mt-1 sm:mt-2 truncate">{value}</p>
+        <p className="text-base sm:text-lg font-bold mt-1 sm:mt-2 truncate">{value}</p>
       </div>
       <div className="p-2 sm:p-3 bg-white/20 rounded-lg sm:rounded-xl flex-shrink-0">
         <Icon size={18} className="sm:w-6 sm:h-6" />

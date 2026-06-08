@@ -9,7 +9,7 @@ function StatCard({ icon: Icon, label, value, gradient }) {
       <div className="flex items-center justify-between gap-2">
         <div className="min-w-0">
           <p className="text-sm/relaxed opacity-90">{label}</p>
-          <p className="text-lg sm:text-2xl font-bold mt-1 truncate">{value}</p>
+          <p className="text-base sm:text-lg font-bold mt-1 truncate">{value}</p>
         </div>
         <Icon size={28} className="opacity-80 shrink-0" />
       </div>
