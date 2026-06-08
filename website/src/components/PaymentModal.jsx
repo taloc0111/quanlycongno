@@ -22,7 +22,9 @@ export default function PaymentModal({ target, onClose, onChanged }) {
   const [paymentTarget, setPaymentTarget] = useState('self');
   const [saving, setSaving] = useState(false);
 
-  const query = target.type === 'debt' ? `debtId=${target.id}` : `passportId=${target.id}`;
+  const PARAM = { debt: 'debtId', passport: 'passportId', train: 'trainTicketId' };
+  const paramKey = PARAM[target.type] || 'debtId';
+  const query = `${paramKey}=${target.id}`;
   const paidSum = payments.reduce((s, p) => s + Number(p.amount), 0);
   const remaining = Number(target.total) - paidSum;
 
@@ -45,7 +47,7 @@ export default function PaymentModal({ target, onClose, onChanged }) {
     setSaving(true);
     try {
       await apiSend('POST', '/payments', {
-        [target.type === 'debt' ? 'debtId' : 'passportId']: target.id,
+        [paramKey]: target.id,
         amount: amt, paymentDate: date || undefined, method,
         paymentTarget,
       });

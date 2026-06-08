@@ -16,18 +16,25 @@ const getStats = async (req, res) => {
          (SELECT COALESCE(SUM(cost_amount),0)   FROM debts WHERE user_id=ANY($1))      AS ticket_cost,
          (SELECT COALESCE(SUM(paid),0)          FROM debts WHERE user_id=ANY($1))      AS ticket_paid,
          (SELECT COALESCE(SUM(total_amount),0)  FROM passports WHERE user_id=ANY($1))  AS passport_total,
+         (SELECT COALESCE(SUM(cost_amount),0)   FROM passports WHERE user_id=ANY($1))  AS passport_cost,
          (SELECT COALESCE(SUM(paid_amount),0)   FROM passports WHERE user_id=ANY($1))  AS passport_paid,
+         (SELECT COALESCE(SUM(ticket_amount),0) FROM train_tickets WHERE user_id=ANY($1)) AS train_total,
+         (SELECT COALESCE(SUM(cost_amount),0)   FROM train_tickets WHERE user_id=ANY($1)) AS train_cost,
+         (SELECT COALESCE(SUM(paid),0)          FROM train_tickets WHERE user_id=ANY($1)) AS train_paid,
          (SELECT COUNT(*) FROM debts WHERE user_id=ANY($1))                            AS debt_count,
          (SELECT COUNT(*) FROM passports WHERE user_id=ANY($1))                        AS passport_count,
          (SELECT COUNT(*) FROM customers WHERE user_id=ANY($1))                        AS customer_count`,
       [ids]
     );
     const t = totals.rows[0];
-    const totalAmount = Number(t.ticket_total) + Number(t.passport_total);
-    const totalPaid = Number(t.ticket_paid) + Number(t.passport_paid);
+    const totalAmount = Number(t.ticket_total) + Number(t.passport_total) + Number(t.train_total);
+    const totalPaid = Number(t.ticket_paid) + Number(t.passport_paid) + Number(t.train_paid);
     const outstanding = totalAmount - totalPaid;
-    // Lợi nhuận vé = giá bán − giá gốc (chỉ tính trên vé, hộ chiếu chưa có giá gốc).
-    const totalProfit = Number(t.ticket_total) - Number(t.ticket_cost);
+    // Lợi nhuận = (giá bán − giá gốc) của vé máy bay + hộ chiếu + vé tàu.
+    const totalProfit =
+      (Number(t.ticket_total) - Number(t.ticket_cost)) +
+      (Number(t.passport_total) - Number(t.passport_cost)) +
+      (Number(t.train_total) - Number(t.train_cost));
 
     // Nợ quá hạn (due_date < hôm nay và còn nợ).
     const overdue = await pool.query(
