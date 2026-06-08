@@ -86,7 +86,7 @@ export default function DashboardApp() {
 
               {/* Monthly */}
               <div className="bg-white rounded-2xl shadow p-5">
-                <h3 className="font-bold text-gray-800 mb-1">Doanh số & lợi nhuận vé 6 tháng gần nhất</h3>
+                <h3 className="font-bold text-gray-800 mb-1">Doanh số & lợi nhuận 6 tháng gần nhất</h3>
                 <p className="text-xs text-gray-400 mb-4">Thanh xanh = doanh số · số bên dưới = lợi nhuận (giá bán − giá gốc)</p>
                 {stats.monthly.length === 0 ? (
                   <p className="text-gray-400 text-sm">Chưa có dữ liệu.</p>

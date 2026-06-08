@@ -36,35 +36,52 @@ const getStats = async (req, res) => {
       (Number(t.passport_total) - Number(t.passport_cost)) +
       (Number(t.train_total) - Number(t.train_cost));
 
-    // Nợ quá hạn (due_date < hôm nay và còn nợ).
+    // Nợ quá hạn (due_date < hôm nay và còn nợ) — gộp vé máy bay + hộ chiếu + vé tàu.
     const overdue = await pool.query(
-      `SELECT COALESCE(SUM(ticket_amount - paid),0) AS amount
-       FROM debts
-       WHERE user_id=ANY($1) AND due_date IS NOT NULL AND due_date < CURRENT_DATE AND ticket_amount > paid`,
+      `SELECT COALESCE(SUM(out),0) AS amount FROM (
+         SELECT ticket_amount - paid AS out FROM debts
+           WHERE user_id=ANY($1) AND due_date IS NOT NULL AND due_date < CURRENT_DATE AND ticket_amount > paid
+         UNION ALL
+         SELECT total_amount - paid_amount FROM passports
+           WHERE user_id=ANY($1) AND due_date IS NOT NULL AND due_date < CURRENT_DATE AND total_amount > paid_amount
+         UNION ALL
+         SELECT ticket_amount - paid FROM train_tickets
+           WHERE user_id=ANY($1) AND due_date IS NOT NULL AND due_date < CURRENT_DATE AND ticket_amount > paid
+       ) x`,
       [ids]
     );
 
-    // Top 10 khách còn nợ nhiều nhất (gộp theo tên khách).
+    // Top 10 khách còn nợ nhiều nhất (gộp theo tên khách, cả 3 nguồn).
     const topDebtors = await pool.query(
-      `SELECT customer_name, SUM(ticket_amount - paid) AS outstanding
-       FROM debts
-       WHERE user_id=ANY($1) AND ticket_amount > paid
+      `SELECT customer_name, SUM(out) AS outstanding FROM (
+         SELECT customer_name, ticket_amount - paid AS out FROM debts WHERE user_id=ANY($1) AND ticket_amount > paid
+         UNION ALL
+         SELECT customer_name, total_amount - paid_amount FROM passports WHERE user_id=ANY($1) AND total_amount > paid_amount
+         UNION ALL
+         SELECT customer_name, ticket_amount - paid FROM train_tickets WHERE user_id=ANY($1) AND ticket_amount > paid
+       ) x
        GROUP BY customer_name
        ORDER BY outstanding DESC
        LIMIT 10`,
       [ids]
     );
 
-    // Công nợ vé theo 6 tháng gần nhất (theo ngày xuất vé).
+    // Doanh số & lợi nhuận 6 tháng gần nhất — gộp cả 3 nguồn (debts/train theo issue_date, passport theo service_date).
     const monthly = await pool.query(
-      `SELECT to_char(date_trunc('month', issue_date), 'YYYY-MM') AS month,
-              SUM(ticket_amount) AS amount,
-              SUM(cost_amount) AS cost,
-              SUM(ticket_amount - cost_amount) AS profit,
-              SUM(paid) AS paid
-       FROM debts
-       WHERE user_id=ANY($1) AND issue_date >= (CURRENT_DATE - INTERVAL '6 months')
-       GROUP BY 1 ORDER BY 1`,
+      `SELECT month, SUM(amount) AS amount, SUM(cost) AS cost,
+              SUM(amount - cost) AS profit, SUM(paid) AS paid
+       FROM (
+         SELECT to_char(date_trunc('month', issue_date), 'YYYY-MM') AS month, ticket_amount AS amount, cost_amount AS cost, paid AS paid
+           FROM debts WHERE user_id=ANY($1) AND issue_date >= (CURRENT_DATE - INTERVAL '6 months')
+         UNION ALL
+         SELECT to_char(date_trunc('month', service_date), 'YYYY-MM'), total_amount, cost_amount, paid_amount
+           FROM passports WHERE user_id=ANY($1) AND service_date >= (CURRENT_DATE - INTERVAL '6 months')
+         UNION ALL
+         SELECT to_char(date_trunc('month', issue_date), 'YYYY-MM'), ticket_amount, cost_amount, paid
+           FROM train_tickets WHERE user_id=ANY($1) AND issue_date >= (CURRENT_DATE - INTERVAL '6 months')
+       ) x
+       WHERE month IS NOT NULL
+       GROUP BY month ORDER BY month`,
       [ids]
     );
 
