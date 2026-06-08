@@ -3,7 +3,7 @@ const pool = require('../config/database');
 const logger = require('../config/logger');
 
 // Tính lại cột paid/paid_amount = tổng các payment, để UI cũ vẫn dùng được.
-async function recomputePaid(client, userId, { debtId, passportId, trainTicketId }) {
+async function recomputePaid(client, userId, { debtId, passportId, trainTicketId, tourId }) {
   if (debtId) {
     await client.query(
       `UPDATE debts SET paid = COALESCE(
@@ -25,13 +25,20 @@ async function recomputePaid(client, userId, { debtId, passportId, trainTicketId
        WHERE id = $1 AND user_id = $2`,
       [trainTicketId, userId]
     );
+  } else if (tourId) {
+    await client.query(
+      `UPDATE tours SET paid = COALESCE(
+         (SELECT SUM(amount) FROM payments WHERE tour_id = $1), 0)
+       WHERE id = $1 AND user_id = $2`,
+      [tourId, userId]
+    );
   }
 }
 
 // GET /api/payments?debtId=  hoặc  ?passportId=
 const getPayments = async (req, res) => {
   try {
-    const { debtId, passportId, trainTicketId } = req.query;
+    const { debtId, passportId, trainTicketId, tourId } = req.query;
     // Xem được trong phạm vi (mình + đại lý con); ghi nhận thì giới hạn ở chính mình.
     const ids = req.scope.userIds;
     let result;
@@ -50,6 +57,11 @@ const getPayments = async (req, res) => {
         'SELECT * FROM payments WHERE user_id = ANY($1) AND train_ticket_id = $2 ORDER BY payment_date DESC, id DESC',
         [ids, trainTicketId]
       );
+    } else if (tourId) {
+      result = await pool.query(
+        'SELECT * FROM payments WHERE user_id = ANY($1) AND tour_id = $2 ORDER BY payment_date DESC, id DESC',
+        [ids, tourId]
+      );
     } else {
       result = await pool.query(
         'SELECT * FROM payments WHERE user_id = ANY($1) ORDER BY payment_date DESC, id DESC LIMIT 200',
@@ -64,11 +76,11 @@ const getPayments = async (req, res) => {
 };
 
 const createPayment = async (req, res) => {
-  const { debtId, passportId, trainTicketId, amount, paymentDate, method, notes, paymentTarget } = req.body;
+  const { debtId, passportId, trainTicketId, tourId, amount, paymentDate, method, notes, paymentTarget } = req.body;
 
-  const targets = [debtId, passportId, trainTicketId].filter(Boolean);
+  const targets = [debtId, passportId, trainTicketId, tourId].filter(Boolean);
   if (targets.length !== 1) {
-    return res.status(400).json({ error: 'Phải gắn với đúng 1 vé/hộ chiếu' });
+    return res.status(400).json({ error: 'Phải gắn với đúng 1 vé/hộ chiếu/tour' });
   }
   const amt = parseFloat(amount);
   if (!Number.isFinite(amt) || amt <= 0) {
@@ -84,7 +96,9 @@ const createPayment = async (req, res) => {
       ? ['SELECT 1 FROM debts WHERE id = $1 AND user_id = $2', debtId]
       : passportId
         ? ['SELECT 1 FROM passports WHERE id = $1 AND user_id = $2', passportId]
-        : ['SELECT 1 FROM train_tickets WHERE id = $1 AND user_id = $2', trainTicketId];
+        : trainTicketId
+          ? ['SELECT 1 FROM train_tickets WHERE id = $1 AND user_id = $2', trainTicketId]
+          : ['SELECT 1 FROM tours WHERE id = $1 AND user_id = $2', tourId];
     const owns = await client.query(ownsSql[0], [ownsSql[1], req.user.id]);
     if (owns.rows.length === 0) {
       await client.query('ROLLBACK');
@@ -93,12 +107,12 @@ const createPayment = async (req, res) => {
 
     const target = ['self', 'agency'].includes(paymentTarget) ? paymentTarget : 'self';
     const inserted = await client.query(
-      `INSERT INTO payments (user_id, debt_id, passport_id, train_ticket_id, amount, payment_date, method, notes, payment_target)
-       VALUES ($1, $2, $3, $4, $5, COALESCE($6, CURRENT_DATE), $7, $8, $9)
+      `INSERT INTO payments (user_id, debt_id, passport_id, train_ticket_id, tour_id, amount, payment_date, method, notes, payment_target)
+       VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, CURRENT_DATE), $8, $9, $10)
        RETURNING *`,
-      [req.user.id, debtId || null, passportId || null, trainTicketId || null, amt, paymentDate || null, method || null, notes || null, target]
+      [req.user.id, debtId || null, passportId || null, trainTicketId || null, tourId || null, amt, paymentDate || null, method || null, notes || null, target]
     );
-    await recomputePaid(client, req.user.id, { debtId, passportId, trainTicketId });
+    await recomputePaid(client, req.user.id, { debtId, passportId, trainTicketId, tourId });
     await client.query('COMMIT');
     res.status(201).json(inserted.rows[0]);
   } catch (error) {
@@ -116,15 +130,15 @@ const deletePayment = async (req, res) => {
   try {
     await client.query('BEGIN');
     const found = await client.query(
-      'DELETE FROM payments WHERE id = $1 AND user_id = $2 RETURNING debt_id, passport_id, train_ticket_id',
+      'DELETE FROM payments WHERE id = $1 AND user_id = $2 RETURNING debt_id, passport_id, train_ticket_id, tour_id',
       [id, req.user.id]
     );
     if (found.rows.length === 0) {
       await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Payment not found' });
     }
-    const { debt_id, passport_id, train_ticket_id } = found.rows[0];
-    await recomputePaid(client, req.user.id, { debtId: debt_id, passportId: passport_id, trainTicketId: train_ticket_id });
+    const { debt_id, passport_id, train_ticket_id, tour_id } = found.rows[0];
+    await recomputePaid(client, req.user.id, { debtId: debt_id, passportId: passport_id, trainTicketId: train_ticket_id, tourId: tour_id });
     await client.query('COMMIT');
     res.json({ message: 'Payment deleted' });
   } catch (error) {

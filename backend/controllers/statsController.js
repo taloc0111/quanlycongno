@@ -21,20 +21,24 @@ const getStats = async (req, res) => {
          (SELECT COALESCE(SUM(ticket_amount),0) FROM train_tickets WHERE user_id=ANY($1)) AS train_total,
          (SELECT COALESCE(SUM(cost_amount),0)   FROM train_tickets WHERE user_id=ANY($1)) AS train_cost,
          (SELECT COALESCE(SUM(paid),0)          FROM train_tickets WHERE user_id=ANY($1)) AS train_paid,
+         (SELECT COALESCE(SUM(sell_amount),0)   FROM tours WHERE user_id=ANY($1))         AS tour_total,
+         (SELECT COALESCE(SUM(cost_amount),0)   FROM tours WHERE user_id=ANY($1))         AS tour_cost,
+         (SELECT COALESCE(SUM(paid),0)          FROM tours WHERE user_id=ANY($1))         AS tour_paid,
          (SELECT COUNT(*) FROM debts WHERE user_id=ANY($1))                            AS debt_count,
          (SELECT COUNT(*) FROM passports WHERE user_id=ANY($1))                        AS passport_count,
          (SELECT COUNT(*) FROM customers WHERE user_id=ANY($1))                        AS customer_count`,
       [ids]
     );
     const t = totals.rows[0];
-    const totalAmount = Number(t.ticket_total) + Number(t.passport_total) + Number(t.train_total);
-    const totalPaid = Number(t.ticket_paid) + Number(t.passport_paid) + Number(t.train_paid);
+    const totalAmount = Number(t.ticket_total) + Number(t.passport_total) + Number(t.train_total) + Number(t.tour_total);
+    const totalPaid = Number(t.ticket_paid) + Number(t.passport_paid) + Number(t.train_paid) + Number(t.tour_paid);
     const outstanding = totalAmount - totalPaid;
-    // Lợi nhuận = (giá bán − giá gốc) của vé máy bay + hộ chiếu + vé tàu.
+    // Lợi nhuận = (giá bán − giá gốc) của vé máy bay + hộ chiếu + vé tàu + tour.
     const totalProfit =
       (Number(t.ticket_total) - Number(t.ticket_cost)) +
       (Number(t.passport_total) - Number(t.passport_cost)) +
-      (Number(t.train_total) - Number(t.train_cost));
+      (Number(t.train_total) - Number(t.train_cost)) +
+      (Number(t.tour_total) - Number(t.tour_cost));
 
     // Nợ quá hạn (due_date < hôm nay và còn nợ) — gộp vé máy bay + hộ chiếu + vé tàu.
     const overdue = await pool.query(
@@ -47,6 +51,9 @@ const getStats = async (req, res) => {
          UNION ALL
          SELECT ticket_amount - paid FROM train_tickets
            WHERE user_id=ANY($1) AND due_date IS NOT NULL AND due_date < CURRENT_DATE AND ticket_amount > paid
+         UNION ALL
+         SELECT sell_amount - paid FROM tours
+           WHERE user_id=ANY($1) AND due_date IS NOT NULL AND due_date < CURRENT_DATE AND sell_amount > paid
        ) x`,
       [ids]
     );
@@ -59,6 +66,8 @@ const getStats = async (req, res) => {
          SELECT customer_name, total_amount - paid_amount FROM passports WHERE user_id=ANY($1) AND total_amount > paid_amount
          UNION ALL
          SELECT customer_name, ticket_amount - paid FROM train_tickets WHERE user_id=ANY($1) AND ticket_amount > paid
+         UNION ALL
+         SELECT customer_name, sell_amount - paid FROM tours WHERE user_id=ANY($1) AND sell_amount > paid
        ) x
        GROUP BY customer_name
        ORDER BY outstanding DESC
@@ -79,6 +88,9 @@ const getStats = async (req, res) => {
          UNION ALL
          SELECT to_char(date_trunc('month', issue_date), 'YYYY-MM'), ticket_amount, cost_amount, paid
            FROM train_tickets WHERE user_id=ANY($1) AND issue_date >= (CURRENT_DATE - INTERVAL '6 months')
+         UNION ALL
+         SELECT to_char(date_trunc('month', issue_date), 'YYYY-MM'), sell_amount, cost_amount, paid
+           FROM tours WHERE user_id=ANY($1) AND issue_date >= (CURRENT_DATE - INTERVAL '6 months')
        ) x
        WHERE month IS NOT NULL
        GROUP BY month ORDER BY month`,

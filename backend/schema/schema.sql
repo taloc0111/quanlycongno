@@ -212,6 +212,32 @@ CREATE TABLE IF NOT EXISTS train_tickets (
 );
 
 -- ---------------------------------------------------------------------------
+-- TOURS — nghiệp vụ Du lịch (bán tour, công nợ + lợi nhuận).
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS tours (
+  id            SERIAL PRIMARY KEY,
+  user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  customer_id   INTEGER REFERENCES customers(id) ON DELETE SET NULL,
+  customer_name VARCHAR(255) NOT NULL,
+  phone_number  VARCHAR(20),
+  tour_name     VARCHAR(255),                          -- tên tour / điểm đến
+  depart_date   DATE,                                  -- ngày đi
+  return_date   DATE,                                  -- ngày về
+  pax           INTEGER DEFAULT 1,                     -- số khách
+  issue_date    DATE,
+  due_date      DATE,
+  source        VARCHAR(100),                          -- nguồn/đối tác điều hành
+  sell_amount   DECIMAL(15,2) NOT NULL DEFAULT 0,       -- giá bán (tổng)
+  cost_amount   DECIMAL(15,2) NOT NULL DEFAULT 0,       -- giá gốc (tổng)
+  paid          DECIMAL(15,2) NOT NULL DEFAULT 0,       -- đã trả (suy ra từ payments)
+  status        VARCHAR(20) NOT NULL DEFAULT 'deposited', -- consulting|deposited|completed|cancelled
+  notes         TEXT,
+  company_id    INTEGER REFERENCES companies(id) ON DELETE SET NULL,
+  created_at    TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+  updated_at    TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ---------------------------------------------------------------------------
 -- STICKY_NOTES — ghi chú nhanh dạng sticky, riêng tư theo từng user.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS sticky_notes (
@@ -297,11 +323,12 @@ ALTER TABLE customers ADD COLUMN IF NOT EXISTS birthday DATE;
 -- Theo dõi thanh toán vào tài khoản nào: 'self' = TK cá nhân, 'agency' = TK đại lý cấp trên.
 ALTER TABLE payments ADD COLUMN IF NOT EXISTS payment_target VARCHAR(20) NOT NULL DEFAULT 'self';
 
--- Payments hỗ trợ thêm vé tàu: mỗi payment gắn đúng 1 trong (debt / passport / train_ticket).
+-- Payments hỗ trợ thêm vé tàu + tour: mỗi payment gắn đúng 1 đối tượng.
 ALTER TABLE payments ADD COLUMN IF NOT EXISTS train_ticket_id INTEGER REFERENCES train_tickets(id) ON DELETE CASCADE;
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS tour_id INTEGER REFERENCES tours(id) ON DELETE CASCADE;
 ALTER TABLE payments DROP CONSTRAINT IF EXISTS chk_payment_target;
 ALTER TABLE payments ADD CONSTRAINT chk_payment_target CHECK (
-  (debt_id IS NOT NULL)::int + (passport_id IS NOT NULL)::int + (train_ticket_id IS NOT NULL)::int = 1
+  (debt_id IS NOT NULL)::int + (passport_id IS NOT NULL)::int + (train_ticket_id IS NOT NULL)::int + (tour_id IS NOT NULL)::int = 1
 );
 
 -- ============================================================================
@@ -335,6 +362,9 @@ CREATE INDEX IF NOT EXISTS idx_airlines_user_id       ON airlines(user_id);
 CREATE INDEX IF NOT EXISTS idx_train_tickets_user_id  ON train_tickets(user_id);
 CREATE INDEX IF NOT EXISTS idx_train_tickets_depart   ON train_tickets(depart_date);
 CREATE INDEX IF NOT EXISTS idx_payments_train_ticket  ON payments(train_ticket_id);
+CREATE INDEX IF NOT EXISTS idx_tours_user_id          ON tours(user_id);
+CREATE INDEX IF NOT EXISTS idx_tours_depart           ON tours(depart_date);
+CREATE INDEX IF NOT EXISTS idx_payments_tour          ON payments(tour_id);
 CREATE INDEX IF NOT EXISTS idx_invoices_user_id       ON invoices(user_id);
 CREATE INDEX IF NOT EXISTS idx_invoices_customer_id   ON invoices(customer_id);
 CREATE INDEX IF NOT EXISTS idx_invoice_items_invoice  ON invoice_items(invoice_id);
@@ -354,7 +384,7 @@ DO $$
 DECLARE
   t TEXT;
 BEGIN
-  FOREACH t IN ARRAY ARRAY['users','companies','customers','debts','passports','invoices','sticky_notes','ticket_watches','airlines','train_tickets']
+  FOREACH t IN ARRAY ARRAY['users','companies','customers','debts','passports','invoices','sticky_notes','ticket_watches','airlines','train_tickets','tours']
   LOOP
     EXECUTE format('DROP TRIGGER IF EXISTS trg_%I_updated_at ON %I;', t, t);
     EXECUTE format(

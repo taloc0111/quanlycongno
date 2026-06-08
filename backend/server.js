@@ -29,6 +29,7 @@ const noteRoutes = require('./routes/notes');
 const ticketWatchRoutes = require('./routes/ticketWatches');
 const airlineRoutes = require('./routes/airlines');
 const trainTicketRoutes = require('./routes/trainTickets');
+const tourRoutes = require('./routes/tours');
 
 // Import middleware
 const { authenticateToken } = require('./middleware/auth');
@@ -73,6 +74,7 @@ app.use('/api/notes', authenticateToken, noteRoutes);
 app.use('/api/ticket-watches', authenticateToken, ticketWatchRoutes);
 app.use('/api/airlines', authenticateToken, airlineRoutes);
 app.use('/api/train-tickets', authenticateToken, attachScope, trainTicketRoutes);
+app.use('/api/tours', authenticateToken, attachScope, tourRoutes);
 
 // Health check (cho Render/uptime monitor)
 app.get('/api/health', (req, res) => {
