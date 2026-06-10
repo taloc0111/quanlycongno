@@ -22,7 +22,7 @@ export default function PaymentModal({ target, onClose, onChanged }) {
   const [paymentTarget, setPaymentTarget] = useState('self');
   const [saving, setSaving] = useState(false);
 
-  const PARAM = { debt: 'debtId', passport: 'passportId', train: 'trainTicketId' };
+  const PARAM = { debt: 'debtId', passport: 'passportId', train: 'trainTicketId', tour: 'tourId' };
   const paramKey = PARAM[target.type] || 'debtId';
   const query = `${paramKey}=${target.id}`;
   const paidSum = payments.reduce((s, p) => s + Number(p.amount), 0);

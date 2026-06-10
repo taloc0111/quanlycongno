@@ -640,10 +640,11 @@ const App = () => {
   };
 
   const filteredDebts = debts.filter(debt => {
+    const q = (searchTerm || '').toLowerCase();
     const matchesSearch =
-      debt.customer_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (debt.customer_name || '').toLowerCase().includes(q) ||
       (debt.phone_number && debt.phone_number.includes(searchTerm)) ||
-      (debt.ticket_code && debt.ticket_code.toLowerCase().includes(searchTerm.toLowerCase()));
+      (debt.ticket_code && debt.ticket_code.toLowerCase().includes(q));
 
     const matchesStatus =
       filterStatus === 'all' ||

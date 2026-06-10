@@ -253,9 +253,10 @@ export default function PassportApp() {
   };
 
   const filteredData = passports.filter(p => {
-    const matchesSearch = p.customer_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    const q = (searchTerm || '').toLowerCase();
+    const matchesSearch = (p.customer_name || '').toLowerCase().includes(q) ||
       (p.phone_number && p.phone_number.includes(searchTerm)) ||
-      (p.passport_number && p.passport_number.toLowerCase().includes(searchTerm.toLowerCase()));
+      (p.passport_number && p.passport_number.toLowerCase().includes(q));
     
     const debt = p.total_amount - p.paid_amount;
     const status = getDebtStatus(debt);
