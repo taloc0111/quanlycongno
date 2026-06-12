@@ -24,6 +24,9 @@ const serpapi = require('./lib/serpapi');
 
 const INTERVAL_MIN = parseInt(process.env.FARE_WATCH_INTERVAL_MIN || '60', 10);
 const ALERT_COOLDOWN_H = parseInt(process.env.FARE_ALERT_COOLDOWN_H || '12', 10);
+// Công tắc gửi email cảnh báo (FARE_ALERT_EMAIL=false để tắt — badge "đạt giá"
+// trên UI vẫn hiện bình thường vì FE tự so last_price ≤ giá mong muốn).
+const ALERT_EMAIL = String(process.env.FARE_ALERT_EMAIL ?? 'true').toLowerCase() !== 'false';
 
 // Ghi 1 dòng lịch sử giá.
 async function insertSnapshot(watchId, result) {
@@ -54,7 +57,7 @@ async function updateWatchState(watchId, result) {
        last_check_ok   = $2,
        last_error      = $5
      WHERE id = $1
-     RETURNING id, user_id, customer_name, route, depart_date, target_price, last_price, alerted_at, airline`,
+     RETURNING id, user_id, customer_name, route, depart_date, return_date, target_price, last_price, alerted_at, airline`,
     [watchId, result.ok, result.ok ? result.price : null, result.currency || 'VND', result.ok ? null : (result.error || 'unknown')]
   );
   return rows[0] || null;
@@ -64,6 +67,9 @@ async function updateWatchState(watchId, result) {
 async function maybeAlert(watch, price) {
   const target = Number(watch.target_price) || 0;
   if (!(target > 0) || !(price <= target)) return false;
+
+  // Tắt email qua env — không đánh dấu alerted_at, để khi bật lại email vẫn bắn.
+  if (!ALERT_EMAIL) return false;
 
   if (watch.alerted_at) {
     const ageH = (Date.now() - new Date(watch.alerted_at).getTime()) / 3600000;
@@ -79,18 +85,20 @@ async function maybeAlert(watch, price) {
 
   const fmt = (n) => new Intl.NumberFormat('vi-VN').format(n) + ' ₫';
   const dep = watch.depart_date ? new Date(watch.depart_date).toLocaleDateString('vi-VN') : '—';
+  const ret = watch.return_date ? new Date(watch.return_date).toLocaleDateString('vi-VN') : null;
+  const kind = ret ? 'khứ hồi' : 'một chiều';
   try {
     await sendMail({
       to,
-      subject: `✈️ Vé ${watch.route || ''} đã đạt giá mong muốn (${fmt(price)})`,
+      subject: `✈️ Vé ${watch.route || ''} ${ret ? '(khứ hồi) ' : ''}đã đạt giá mong muốn (${fmt(price)})`,
       html: `<p>Yêu cầu canh vé cho khách <b>${watch.customer_name}</b> đã đạt giá:</p>
              <ul>
-               <li>Hành trình: <b>${watch.route || '—'}</b> (${watch.airline || ''})</li>
-               <li>Ngày đi: <b>${dep}</b></li>
-               <li>Giá hiện tại: <b>${fmt(price)}</b> · Giá mong muốn: ${fmt(target)}</li>
+               <li>Hành trình: <b>${watch.route || '—'}</b> (${watch.airline || ''}) — ${kind}</li>
+               <li>Ngày đi: <b>${dep}</b>${ret ? ` · Ngày về: <b>${ret}</b>` : ''}</li>
+               <li>Giá hiện tại${ret ? ' (TỔNG đi + về)' : ''}: <b>${fmt(price)}</b> · Giá mong muốn: ${fmt(target)}</li>
              </ul>
              <p>Mở app Canh vé để chốt đặt.</p>`,
-      text: `Vé ${watch.route || ''} đạt giá ${fmt(price)} (mong muốn ${fmt(target)}) cho khách ${watch.customer_name}.`,
+      text: `Vé ${watch.route || ''} (${kind}) đạt giá ${fmt(price)} (mong muốn ${fmt(target)}) cho khách ${watch.customer_name}.`,
     });
   } catch (e) {
     logger.error('Gửi email cảnh báo canh vé lỗi:', e.message);
@@ -98,51 +106,84 @@ async function maybeAlert(watch, price) {
   return true;
 }
 
-// Lấy giá 1 watch (SerpApi trước, adapter HTTP sau), lưu snapshot + cập nhật trạng
-// thái + alert. Dùng cho cả worker loop lẫn nút "Lấy giá ngay". Không ném ra ngoài.
-// `serpCache` (Map, tuỳ chọn): các watch trùng chặng+ngày trong 1 vòng chỉ tốn 1 search.
-async function checkAndStore(watch, { log = () => {}, serpCache = null } = {}) {
-  let result = null;
-
-  // Nguồn 1: SerpApi — phủ cả hãng chưa có adapter; watch không ghi hãng thì lấy
+// Lấy giá MỘT CHIỀU cho 1 chặng+ngày+hãng (SerpApi trước, adapter HTTP sau).
+// Không đụng DB, không ném ra ngoài — luôn trả { ok, ... } hoặc { ok:false, error }.
+async function getLegFare({ route, date, pax = 1, airline = null }, { log = () => {}, serpCache = null } = {}) {
+  // Nguồn 1: SerpApi — phủ cả hãng chưa có adapter; không ghi hãng thì lấy
   // giá rẻ nhất toàn chặng (mọi hãng).
   if (serpapi.enabled()) {
     try {
-      const itins = await serpapi.searchRoute({
-        route: watch.route, date: watch.depart_date, pax: watch.pax || 1, cache: serpCache,
-      });
-      const best = serpapi.lowestForAirline(itins, watch.airline);
+      const itins = await serpapi.searchRoute({ route, date, pax, cache: serpCache });
+      const best = serpapi.lowestForAirline(itins, airline);
       if (best) {
-        result = {
+        return {
           ok: true, source: 'serpapi', airline: best.airline,
           price: best.price, currency: best.currency,
           flightNo: best.flightNo, departTime: best.departTime,
         };
-      } else {
-        log(`serpapi: không thấy hãng "${watch.airline}" trên ${watch.route} — thử adapter trực tiếp`);
       }
+      log(`serpapi: không thấy hãng "${airline}" trên ${route} — thử adapter trực tiếp`);
     } catch (e) {
       log(`serpapi lỗi: ${e.message} — thử adapter trực tiếp`);
     }
   }
 
   // Nguồn 2 (fallback): adapter HTTP của đúng hãng (nếu có).
-  if (!result) {
-    const adapter = resolveAdapter(watch.airline);
-    if (!adapter) {
+  const adapter = resolveAdapter(airline);
+  if (!adapter) {
+    return {
+      ok: false,
+      error: `Không lấy được giá cho hãng "${airline || '(trống)'}" (SerpApi không khả dụng và hãng chưa có adapter trực tiếp)`,
+    };
+  }
+  try {
+    const fare = await adapter.getLowestFare({ route, date, pax, log });
+    return { ok: true, ...fare, airline: adapter.label };
+  } catch (e) {
+    return { ok: false, source: adapter.key, airline: adapter.label, error: e.message };
+  }
+}
+
+// Lấy giá 1 watch, lưu snapshot + cập nhật trạng thái + alert. Dùng cho cả worker
+// loop lẫn nút "Lấy giá ngay". Không ném ra ngoài.
+// - Watch CÓ ngày về = canh KHỨ HỒI: tra cả 2 chiều (chiều về đảo chặng), giá so
+//   với mong muốn là TỔNG đi + về → tốn 2 lượt SerpApi/lần canh thay vì 1.
+// - `serpCache` (Map, tuỳ chọn): các watch trùng chặng+ngày trong 1 vòng dùng chung search.
+async function checkAndStore(watch, { log = () => {}, serpCache = null } = {}) {
+  const common = { pax: watch.pax || 1, airline: watch.airline };
+  let result;
+
+  const out = await getLegFare({ route: watch.route, date: watch.depart_date, ...common }, { log, serpCache });
+
+  const r = watch.return_date ? parseRoute(watch.route) : null;
+  if (!r) {
+    // một chiều (hoặc route không đảo được — coi như một chiều)
+    result = out;
+  } else {
+    const back = await getLegFare(
+      { route: `${r.dest}-${r.origin}`, date: watch.return_date, ...common },
+      { log, serpCache }
+    );
+    if (out.ok && back.ok) {
+      result = {
+        ok: true,
+        roundTrip: true,
+        source: out.source === back.source ? out.source : `${out.source}+${back.source}`.slice(0, 20),
+        airline: out.airline === back.airline ? out.airline : `${out.airline} / ${back.airline}`.slice(0, 50),
+        price: out.price + back.price, // TỔNG đi + về — đúng nghĩa giá mong muốn khứ hồi
+        currency: out.currency,
+        flightNo: [out.flightNo, back.flightNo].filter(Boolean).join('|').slice(0, 20) || null,
+        departTime: out.departTime,
+      };
+      log(`khứ hồi #${watch.id}: đi ${out.price?.toLocaleString('vi-VN')} + về ${back.price?.toLocaleString('vi-VN')} = ${result.price.toLocaleString('vi-VN')}₫`);
+    } else {
+      const misses = [!out.ok && 'chiều đi', !back.ok && 'chiều về'].filter(Boolean).join(' + ');
       result = {
         ok: false,
-        error: `Không lấy được giá cho hãng "${watch.airline || '(trống)'}" (SerpApi không khả dụng và hãng chưa có adapter trực tiếp)`,
+        source: out.source || back.source || null,
+        airline: watch.airline || null,
+        error: `Khứ hồi thiếu giá ${misses}: ${out.error || back.error}`,
       };
-    } else {
-      try {
-        const fare = await adapter.getLowestFare({
-          route: watch.route, date: watch.depart_date, pax: watch.pax || 1, log,
-        });
-        result = { ok: true, ...fare, airline: adapter.label };
-      } catch (e) {
-        result = { ok: false, source: adapter.key, airline: adapter.label, error: e.message };
-      }
     }
   }
 
@@ -158,7 +199,7 @@ async function checkAndStore(watch, { log = () => {}, serpCache = null } = {}) {
 // Chạy 1 vòng cho tất cả watch auto_track còn theo dõi.
 async function runOnce({ log = (m) => logger.info(m) } = {}) {
   const { rows: watches } = await pool.query(
-    `SELECT id, user_id, customer_name, route, depart_date, airline, pax, target_price, alerted_at
+    `SELECT id, user_id, customer_name, route, depart_date, return_date, airline, pax, target_price, alerted_at
        FROM ticket_watches
       WHERE auto_track = TRUE
         AND status IN ('watching', 'quoted')
@@ -186,12 +227,12 @@ async function runOnce({ log = (m) => logger.info(m) } = {}) {
 async function checkWatchById(watchId, { userId = null, log = (m) => logger.info(m) } = {}) {
   const { rows } = userId
     ? await pool.query(
-        `SELECT id, user_id, customer_name, route, depart_date, airline, pax, target_price, alerted_at
+        `SELECT id, user_id, customer_name, route, depart_date, return_date, airline, pax, target_price, alerted_at
            FROM ticket_watches WHERE id = $1 AND user_id = $2`,
         [watchId, userId]
       )
     : await pool.query(
-        `SELECT id, user_id, customer_name, route, depart_date, airline, pax, target_price, alerted_at
+        `SELECT id, user_id, customer_name, route, depart_date, return_date, airline, pax, target_price, alerted_at
            FROM ticket_watches WHERE id = $1`,
         [watchId]
       );

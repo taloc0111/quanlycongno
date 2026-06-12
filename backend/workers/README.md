@@ -48,10 +48,23 @@ node workers/test-adapter.js vn SGN-HAN 2026-07-15
 | `SERPAPI_KEY` | _(trống)_ | Bật nguồn SerpApi — trống = chỉ còn adapter trực tiếp (VNA) |
 | `SERPAPI_MONTHLY_LIMIT` | `250` | Hạn mức search/tháng theo gói SerpApi; chạm hạn → tự về fallback |
 | `FARE_WATCHER` | `false` | Bật loop trong tiến trình app |
-| `FARE_WATCH_INTERVAL_MIN` | `60` | Phút giữa các vòng canh |
+| `FARE_WATCH_INTERVAL_MIN` | `60` | Phút giữa các vòng canh (chỉnh chu kỳ "cron" qua .env) |
+| `FARE_ALERT_EMAIL` | `true` | `false` = tắt email cảnh báo (badge "đạt giá" trên UI vẫn hiện) |
 | `FARE_ALERT_COOLDOWN_H` | `12` | Giờ tối thiểu giữa 2 lần email cảnh báo cùng 1 watch |
 
 Cảnh báo gửi qua email (dùng `config/email.js` — Resend/SMTP đã có sẵn).
+
+### Canh vé một chiều vs khứ hồi
+
+- Vòng canh **chỉ quét watch đã bật "Tự động canh giá"** (`auto_track = TRUE`,
+  còn theo dõi, chưa qua ngày bay) — watch không bật thì không tốn request nào;
+  nút "Lấy giá ngay" luôn dùng được bất kể bật hay không.
+- Watch **không có Ngày về** = canh giá **một chiều** (chiều đi, 1 khách) — 1 search/lần.
+- Watch **có Ngày về** = canh **khứ hồi**: tra cả 2 chiều (chiều về tự đảo chặng),
+  giá so với mong muốn là **TỔNG đi + về** — tốn **2 search/lần canh**. Snapshot lưu
+  giá tổng, `flight_no` dạng `VJ168|VJ121`; nếu 2 chiều rẻ nhất thuộc 2 hãng khác
+  nhau (khi không ghi hãng) thì cột airline ghi `Hãng A / Hãng B`.
+- Không ghi **Hãng** = canh giá rẻ nhất của mọi hãng trên chặng.
 
 ## Triển khai
 

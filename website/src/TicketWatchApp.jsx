@@ -310,7 +310,7 @@ export default function TicketWatchApp() {
                   {!active && (
                     <button onClick={() => setStatus(w, 'watching')} className="px-2 py-1 rounded-md bg-blue-100 text-blue-700 text-xs font-semibold hover:bg-blue-200">Canh lại</button>
                   )}
-                  {active && supportsAuto(w.airline) && (
+                  {active && w.route && w.depart_date && (
                     <button
                       onClick={() => checkNow(w)}
                       disabled={checkingId === w.id}
@@ -379,6 +379,11 @@ export default function TicketWatchApp() {
               <div>
                 <label className="block text-sm text-gray-600 mb-1">Giá mong muốn</label>
                 <MoneyInput value={form.targetPrice} onChange={(v) => setForm({ ...form, targetPrice: v })} className="w-full border rounded-lg px-3 py-2" placeholder="VD: 2.000.000" />
+                <p className="text-[11px] text-gray-400 mt-1">
+                  {form.returnDate
+                    ? 'Có Ngày về → so với TỔNG giá khứ hồi (đi + về), tính cho 1 khách.'
+                    : 'Một chiều → so với giá chiều đi, tính cho 1 khách.'}
+                </p>
               </div>
               <div className="sm:col-span-2">
                 <label className="block text-sm text-gray-600 mb-1">Trạng thái</label>
@@ -403,13 +408,16 @@ export default function TicketWatchApp() {
                   <span>
                     <span className="flex items-center gap-1.5 text-sm font-semibold text-gray-800"><Radar size={15} className="text-blue-600" /> Tự động canh giá</span>
                     <span className="block text-xs text-gray-500 mt-0.5">
-                      Hệ thống tự lấy giá định kỳ và báo khi ≤ giá mong muốn. Cần khai <b>Hãng</b>, <b>Hành trình</b> và <b>Ngày đi</b>.
+                      Hệ thống tự lấy giá định kỳ và báo khi ≤ giá mong muốn. Cần <b>Hành trình</b> + <b>Ngày đi</b>;
+                      không ghi <b>Hãng</b> = canh giá rẻ nhất của mọi hãng. Có <b>Ngày về</b> = canh TỔNG khứ hồi
+                      (tốn 2 lượt tra giá mỗi lần canh thay vì 1).
                     </span>
                   </span>
                 </label>
-                {form.autoTrack && !supportsAuto(form.airline) && (
+                {form.autoTrack && form.airline && !supportsAuto(form.airline) && (
                   <p className="text-xs text-amber-600 mt-2">
-                    ⚠️ Hãng auto canh giá hỗ trợ: {AUTO_AIRLINES.join(', ')}. Nhập đúng tên hãng để worker nhận diện.
+                    ⚠️ Hãng lạ — hệ thống khớp theo tên hãng trên Google Flights (quen: {AUTO_AIRLINES.join(', ')}).
+                    Để trống ô Hãng nếu muốn canh giá rẻ nhất của mọi hãng.
                   </p>
                 )}
               </div>
