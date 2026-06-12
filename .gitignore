@@ -31,3 +31,6 @@ dist-ssr
 DEPLOY.md
 *.xlsx
 convert-sheet.cjs
+
+# Kết quả recon adapter canh giá (sinh ra khi dò selector — không commit)
+backend/workers/recon-out/

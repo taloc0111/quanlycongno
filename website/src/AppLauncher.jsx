@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { LayoutDashboard, FileText, BookOpen, Users, Receipt, Network, UserCircle, Landmark, StickyNote, PlaneTakeoff, PlaneLanding, Train, Palmtree } from 'lucide-react';
+import { LayoutDashboard, FileText, BookOpen, Users, Receipt, Network, UserCircle, Landmark, StickyNote, PlaneTakeoff, PlaneLanding, Train, Palmtree, Search } from 'lucide-react';
 import { useAuth } from './auth/AuthContext.jsx';
 import { apiGet } from './services/client';
 import LoginPage from './auth/LoginPage.jsx';
@@ -16,6 +16,7 @@ import AgencyApp from './AgencyApp.jsx';
 import ProfileApp from './ProfileApp.jsx';
 import NotesApp from './NotesApp.jsx';
 import TicketWatchApp from './TicketWatchApp.jsx';
+import FareCheckApp from './FareCheckApp.jsx';
 import UpcomingFlightsApp from './UpcomingFlightsApp.jsx';
 import AirlinesApp from './AirlinesApp.jsx';
 import TrainApp from './TrainApp.jsx';
@@ -29,6 +30,7 @@ const NAV = [
   { key: 'train', label: 'Vé tàu hỏa', icon: Train, group: 'Nghiệp vụ', Component: TrainApp },
   { key: 'tour', label: 'Du lịch', icon: Palmtree, group: 'Nghiệp vụ', Component: TourApp },
   { key: 'ticketWatch', label: 'Canh vé', icon: PlaneTakeoff, group: 'Nghiệp vụ', Component: TicketWatchApp },
+  { key: 'fareCheck', label: 'Check vé', icon: Search, group: 'Nghiệp vụ', Component: FareCheckApp },
   { key: 'upcoming', label: 'Sắp bay', icon: PlaneLanding, group: 'Nghiệp vụ', Component: UpcomingFlightsApp },
   { key: 'passport', label: 'Hộ chiếu', icon: BookOpen, group: 'Nghiệp vụ', Component: PassportApp },
   { key: 'customer', label: 'Khách hàng', icon: Users, group: 'Danh mục', Component: CustomerApp },

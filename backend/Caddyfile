@@ -1,0 +1,7 @@
+# Caddy tự xin & gia hạn SSL (Let's Encrypt) cho domain của worker.
+# Đổi worker.your-domain.com thành domain thật, đã trỏ DNS A record về IP server.
+# → WORKER_URL trên API = https://worker.your-domain.com
+
+worker.your-domain.com {
+    reverse_proxy worker:6000
+}

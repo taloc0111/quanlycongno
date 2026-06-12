@@ -267,8 +267,52 @@ CREATE TABLE IF NOT EXISTS ticket_watches (
   target_price  DECIMAL(15,2) DEFAULT 0,               -- giá mong muốn
   status        VARCHAR(20) NOT NULL DEFAULT 'watching', -- watching | quoted | booked | cancelled
   notes         TEXT,
+  -- Auto canh giá (worker fareWatcher lấy giá định kỳ rồi cảnh báo khi ≤ target_price):
+  auto_track      BOOLEAN     NOT NULL DEFAULT FALSE,     -- bật/tắt tự động lấy giá cho yêu cầu này
+  last_price      DECIMAL(15,2),                          -- giá thấp nhất lấy được lần gần nhất
+  last_currency   VARCHAR(8)  DEFAULT 'VND',
+  last_checked_at TIMESTAMPTZ,                            -- lần worker chạy gần nhất (kể cả lỗi)
+  last_check_ok   BOOLEAN,                                -- lần gần nhất có lấy được giá không
+  last_error      TEXT,                                   -- thông báo lỗi lần gần nhất (nếu có)
+  alerted_at      TIMESTAMPTZ,                            -- lần gần nhất đã cảnh báo đạt giá (chống spam)
   created_at    TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
   updated_at    TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Bổ sung cột cho DB đã tạo từ trước (idempotent — chạy lại không sao).
+ALTER TABLE ticket_watches ADD COLUMN IF NOT EXISTS auto_track      BOOLEAN     NOT NULL DEFAULT FALSE;
+ALTER TABLE ticket_watches ADD COLUMN IF NOT EXISTS last_price      DECIMAL(15,2);
+ALTER TABLE ticket_watches ADD COLUMN IF NOT EXISTS last_currency   VARCHAR(8)  DEFAULT 'VND';
+ALTER TABLE ticket_watches ADD COLUMN IF NOT EXISTS last_checked_at TIMESTAMPTZ;
+ALTER TABLE ticket_watches ADD COLUMN IF NOT EXISTS last_check_ok   BOOLEAN;
+ALTER TABLE ticket_watches ADD COLUMN IF NOT EXISTS last_error      TEXT;
+ALTER TABLE ticket_watches ADD COLUMN IF NOT EXISTS alerted_at      TIMESTAMPTZ;
+
+-- ---------------------------------------------------------------------------
+-- FARE_SNAPSHOTS — lịch sử giá mỗi lần worker lấy được (vẽ biểu đồ + audit).
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS fare_snapshots (
+  id          SERIAL PRIMARY KEY,
+  watch_id    INTEGER NOT NULL REFERENCES ticket_watches(id) ON DELETE CASCADE,
+  source      VARCHAR(20),                 -- nguồn giá: serpapi | vj | vn | qh | 9g | vu
+  airline     VARCHAR(50),                 -- hãng khớp được (nếu phân biệt)
+  price       DECIMAL(15,2),               -- giá thấp nhất (1 khách, 1 chiều); NULL nếu lỗi
+  currency    VARCHAR(8) DEFAULT 'VND',
+  flight_no   VARCHAR(20),
+  depart_time VARCHAR(40),
+  ok          BOOLEAN NOT NULL DEFAULT TRUE,
+  error       TEXT,
+  created_at  TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Đếm lượt gọi API ngoài theo tháng (vd SerpApi free 250 search/tháng — xem
+-- workers/lib/serpapi.js). Web service và worker cùng trỏ 1 DB nên hạn mức là
+-- TỔNG chung, không vượt dù chạy nhiều tiến trình.
+CREATE TABLE IF NOT EXISTS api_usage (
+  provider VARCHAR(32) NOT NULL,           -- 'serpapi', ...
+  period   CHAR(7)     NOT NULL,           -- tháng dạng 'YYYY-MM'
+  used     INTEGER     NOT NULL DEFAULT 0,
+  PRIMARY KEY (provider, period)
 );
 
 -- ---------------------------------------------------------------------------
@@ -358,6 +402,8 @@ CREATE INDEX IF NOT EXISTS idx_fund_deposits_user_id  ON fund_deposits(user_id);
 CREATE INDEX IF NOT EXISTS idx_sticky_notes_user_id   ON sticky_notes(user_id);
 CREATE INDEX IF NOT EXISTS idx_ticket_watches_user_id ON ticket_watches(user_id);
 CREATE INDEX IF NOT EXISTS idx_ticket_watches_depart  ON ticket_watches(depart_date);
+CREATE INDEX IF NOT EXISTS idx_ticket_watches_auto    ON ticket_watches(auto_track) WHERE auto_track = TRUE;
+CREATE INDEX IF NOT EXISTS idx_fare_snapshots_watch   ON fare_snapshots(watch_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_airlines_user_id       ON airlines(user_id);
 CREATE INDEX IF NOT EXISTS idx_train_tickets_user_id  ON train_tickets(user_id);
 CREATE INDEX IF NOT EXISTS idx_train_tickets_depart   ON train_tickets(depart_date);

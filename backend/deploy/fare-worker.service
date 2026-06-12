@@ -1,0 +1,34 @@
+# systemd unit cho worker canh giá vé (chạy thường trực trên VPS).
+# Cài: copy file này vào /etc/systemd/system/fare-worker.service rồi:
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now fare-worker
+#   sudo systemctl status fare-worker      # xem trạng thái
+#   journalctl -u fare-worker -f           # xem log realtime
+#
+# Sửa: User, WorkingDirectory, đường dẫn node, và các Environment cho khớp máy bạn.
+# Bí mật (DATABASE_URL, WORKER_SECRET, RESEND_API_KEY) NÊN để trong EnvironmentFile
+# (/etc/fare-worker.env, chmod 600) thay vì ghi thẳng vào đây.
+
+[Unit]
+Description=Fare watcher worker (canh gia + check ve)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=worker
+WorkingDirectory=/opt/quanlycongno/backend
+# Nạp biến môi trường từ file riêng (chmod 600), không commit:
+EnvironmentFile=/etc/fare-worker.env
+# Có thể đặt thêm vài biến không nhạy cảm ngay tại đây:
+Environment=NODE_ENV=production
+Environment=AUTO_MIGRATE=false
+Environment=WORKER_PORT=6000
+Environment=FARE_WATCH_INTERVAL_MIN=60
+ExecStart=/usr/bin/node workers/serve.js
+Restart=always
+RestartSec=10
+# Chromium cần /dev/shm đủ lớn; nếu VPS nhỏ, thêm cờ --disable-dev-shm-usage (đã có trong code).
+
+[Install]
+WantedBy=multi-user.target

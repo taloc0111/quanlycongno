@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Plus, Edit2, Trash2, X, PlaneTakeoff, Search, Ticket } from 'lucide-react';
+import { Plus, Edit2, Trash2, X, PlaneTakeoff, Search, Ticket, RefreshCw, TrendingDown, Radar, BellRing } from 'lucide-react';
 import VnDatePicker from './components/VnDatePicker';
 import MoneyInput from './components/MoneyInput';
 import ConfirmDialog from './components/ConfirmDialog';
@@ -16,10 +16,26 @@ const STATUS = {
 };
 const EMPTY = {
   customerName: '', phoneNumber: '', route: '', departDate: '', returnDate: '',
-  airline: '', pax: '1', targetPrice: '', status: 'watching', notes: '',
+  airline: '', pax: '1', targetPrice: '', status: 'watching', notes: '', autoTrack: false,
+};
+
+// Hãng hỗ trợ auto canh giá (khớp với resolveAdapter ở backend).
+const AUTO_AIRLINES = ['Vietjet', 'Vietnam Airlines', 'Bamboo', 'Sun PhuQuoc', 'Vietravel'];
+const supportsAuto = (airline) => {
+  const a = (airline || '').toLowerCase();
+  return /vietjet|vietnam air|vna|bamboo|sun ?ph|vietravel/.test(a);
 };
 
 const fmtDate = (s) => (s ? s.slice(0, 10).split('-').reverse().join('/') : '');
+// "vừa xong" / "5 phút trước" / "2 giờ trước" / "3 ngày trước" từ timestamp.
+const fmtAgo = (s) => {
+  if (!s) return '';
+  const sec = Math.round((Date.now() - new Date(s).getTime()) / 1000);
+  if (sec < 60) return 'vừa xong';
+  if (sec < 3600) return `${Math.floor(sec / 60)} phút trước`;
+  if (sec < 86400) return `${Math.floor(sec / 3600)} giờ trước`;
+  return `${Math.floor(sec / 86400)} ngày trước`;
+};
 // Số ngày từ hôm nay tới ngày đi (âm = đã qua).
 const daysUntil = (s) => {
   if (!s) return null;
@@ -40,6 +56,8 @@ export default function TicketWatchApp() {
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(EMPTY);
   const [booking, setBooking] = useState(null); // { watch, ticketAmount, costAmount }
+  const [checkingId, setCheckingId] = useState(null); // watch đang "lấy giá ngay"
+  const [history, setHistory] = useState(null); // { watch, rows, loading }
   const { toast, showToast } = useToast();
   const { confirmState, askConfirm, closeConfirm } = useConfirm();
 
@@ -78,10 +96,36 @@ export default function TicketWatchApp() {
       customerName: w.customer_name || '', phoneNumber: w.phone_number || '', route: w.route || '',
       departDate: (w.depart_date || '').slice(0, 10), returnDate: (w.return_date || '').slice(0, 10),
       airline: w.airline || '', pax: String(w.pax || 1), targetPrice: w.target_price || '',
-      status: w.status || 'watching', notes: w.notes || '',
+      status: w.status || 'watching', notes: w.notes || '', autoTrack: !!w.auto_track,
     });
     setEditingId(w.id);
     setShowForm(true);
+  };
+
+  // Lấy giá ngay cho 1 yêu cầu (gọi worker — mất vài chục giây).
+  const checkNow = async (w) => {
+    setCheckingId(w.id);
+    try {
+      const r = await apiSend('POST', `/ticket-watches/${w.id}/check-now`);
+      if (r.ok) showToast(`Giá hiện tại: ${formatCurrency(r.price)}${r.alerted ? ' — đạt giá mong muốn!' : ''}`);
+      else showToast('Chưa lấy được giá: ' + (r.error || 'không rõ'), 'error');
+      load();
+    } catch (err) {
+      showToast('Lỗi: ' + err.message, 'error');
+    } finally {
+      setCheckingId(null);
+    }
+  };
+
+  const openHistory = async (w) => {
+    setHistory({ watch: w, rows: [], loading: true });
+    try {
+      const rows = await apiGet(`/ticket-watches/${w.id}/snapshots`);
+      setHistory({ watch: w, rows, loading: false });
+    } catch (err) {
+      showToast('Lỗi tải lịch sử: ' + err.message, 'error');
+      setHistory(null);
+    }
   };
 
   // Khi gõ/chọn tên khách trùng danh bạ → tự điền SĐT nếu đang trống.
@@ -222,6 +266,35 @@ export default function TicketWatchApp() {
                   {active && urgencyText && <span className={`ml-2 font-semibold ${urgencyCls}`}>({urgencyText})</span>}
                 </p>
                 <p className="text-sm mt-1">Giá mong muốn: <span className="font-semibold text-gray-900">{Number(w.target_price) > 0 ? formatCurrency(w.target_price) : '—'}</span></p>
+
+                {/* Khối auto canh giá: giá lấy gần nhất + trạng thái */}
+                {w.auto_track && (() => {
+                  const hasPrice = w.last_price != null && Number(w.last_price) > 0;
+                  const target = Number(w.target_price) || 0;
+                  const hit = hasPrice && target > 0 && Number(w.last_price) <= target;
+                  return (
+                    <div className={`mt-2 rounded-lg px-2.5 py-1.5 text-sm ${hit ? 'bg-green-50 border border-green-300' : 'bg-gray-50 border border-gray-200'}`}>
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="flex items-center gap-1.5 text-gray-600">
+                          <Radar size={14} className="text-blue-500" /> Auto canh giá
+                        </span>
+                        {hasPrice ? (
+                          <span className={`font-bold ${hit ? 'text-green-700' : 'text-gray-900'}`}>{formatCurrency(w.last_price)}</span>
+                        ) : (
+                          <span className="text-xs text-gray-400">{w.last_check_ok === false ? 'chưa lấy được' : 'chưa có giá'}</span>
+                        )}
+                      </div>
+                      <div className="flex items-center justify-between gap-2 mt-0.5">
+                        {hit && <span className="flex items-center gap-1 text-xs font-semibold text-green-700"><BellRing size={12} /> Đã đạt giá mong muốn!</span>}
+                        {!hit && w.last_check_ok === false && w.last_error && (
+                          <span className="text-xs text-amber-600 truncate" title={w.last_error}>{w.last_error}</span>
+                        )}
+                        <span className="text-[11px] text-gray-400 ml-auto">{w.last_checked_at ? fmtAgo(w.last_checked_at) : 'chưa chạy'}</span>
+                      </div>
+                    </div>
+                  );
+                })()}
+
                 {w.notes && <p className="text-xs text-gray-500 mt-1 italic">{w.notes}</p>}
 
                 <div className="flex flex-wrap items-center gap-1.5 mt-3 pt-3 border-t">
@@ -236,6 +309,22 @@ export default function TicketWatchApp() {
                   )}
                   {!active && (
                     <button onClick={() => setStatus(w, 'watching')} className="px-2 py-1 rounded-md bg-blue-100 text-blue-700 text-xs font-semibold hover:bg-blue-200">Canh lại</button>
+                  )}
+                  {active && supportsAuto(w.airline) && (
+                    <button
+                      onClick={() => checkNow(w)}
+                      disabled={checkingId === w.id}
+                      className="flex items-center gap-1 px-2 py-1 rounded-md bg-indigo-100 text-indigo-700 text-xs font-semibold hover:bg-indigo-200 disabled:opacity-60"
+                      title="Lấy giá hiện tại ngay (mất vài chục giây)"
+                    >
+                      <RefreshCw size={12} className={checkingId === w.id ? 'animate-spin' : ''} />
+                      {checkingId === w.id ? 'Đang lấy…' : 'Lấy giá ngay'}
+                    </button>
+                  )}
+                  {(w.auto_track || w.last_checked_at) && (
+                    <button onClick={() => openHistory(w)} className="flex items-center gap-1 px-2 py-1 rounded-md bg-gray-100 text-gray-600 text-xs font-semibold hover:bg-gray-200" title="Lịch sử giá">
+                      <TrendingDown size={12} /> Lịch sử
+                    </button>
                   )}
                   <div className="ml-auto flex gap-1">
                     <button onClick={() => openEdit(w)} className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg" title="Sửa"><Edit2 size={15} /></button>
@@ -301,6 +390,29 @@ export default function TicketWatchApp() {
                 <label className="block text-sm text-gray-600 mb-1">Ghi chú</label>
                 <input value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="VD: khách muốn bay sáng, giá dưới 2tr" className="w-full border rounded-lg px-3 py-2" />
               </div>
+
+              {/* Bật auto canh giá — chỉ ý nghĩa khi đã khai hãng được hỗ trợ + có hành trình + ngày */}
+              <div className="sm:col-span-2 rounded-lg bg-blue-50 border border-blue-200 p-3">
+                <label className="flex items-start gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={form.autoTrack}
+                    onChange={(e) => setForm({ ...form, autoTrack: e.target.checked })}
+                    className="mt-0.5 h-4 w-4 accent-blue-600"
+                  />
+                  <span>
+                    <span className="flex items-center gap-1.5 text-sm font-semibold text-gray-800"><Radar size={15} className="text-blue-600" /> Tự động canh giá</span>
+                    <span className="block text-xs text-gray-500 mt-0.5">
+                      Hệ thống tự lấy giá định kỳ và báo khi ≤ giá mong muốn. Cần khai <b>Hãng</b>, <b>Hành trình</b> và <b>Ngày đi</b>.
+                    </span>
+                  </span>
+                </label>
+                {form.autoTrack && !supportsAuto(form.airline) && (
+                  <p className="text-xs text-amber-600 mt-2">
+                    ⚠️ Hãng auto canh giá hỗ trợ: {AUTO_AIRLINES.join(', ')}. Nhập đúng tên hãng để worker nhận diện.
+                  </p>
+                )}
+              </div>
             </div>
             <div className="flex justify-end gap-3 border-t px-6 py-4">
               <button onClick={() => setShowForm(false)} className="px-5 py-2 bg-gray-200 rounded-lg font-semibold text-sm">Huỷ</button>
@@ -335,6 +447,53 @@ export default function TicketWatchApp() {
             <div className="flex justify-end gap-3 border-t px-6 py-4">
               <button onClick={() => setBooking(null)} className="px-5 py-2 bg-gray-200 rounded-lg font-semibold text-sm">Huỷ</button>
               <button onClick={confirmBooking} className="px-5 py-2 bg-green-600 text-white rounded-lg font-semibold text-sm">Tạo công nợ</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Lịch sử giá */}
+      {history && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md my-8">
+            <div className="flex items-center justify-between border-b px-6 py-4">
+              <h3 className="text-lg font-bold flex items-center gap-2"><TrendingDown size={18} /> Lịch sử giá</h3>
+              <button onClick={() => setHistory(null)} className="text-gray-400 hover:text-gray-700"><X size={22} /></button>
+            </div>
+            <div className="px-6 py-4">
+              <p className="text-sm text-gray-600 mb-3">
+                <b>{history.watch.route || '—'}</b> · {history.watch.airline || ''} · {fmtDate(history.watch.depart_date) || '—'}
+              </p>
+              {history.loading && <p className="text-gray-500">Đang tải…</p>}
+              {!history.loading && history.rows.length === 0 && (
+                <p className="text-gray-400 text-sm">Chưa có lần lấy giá nào.</p>
+              )}
+              {!history.loading && history.rows.length > 0 && (
+                <div className="max-h-80 overflow-y-auto -mx-2">
+                  <table className="w-full text-sm">
+                    <thead className="text-gray-400 text-xs">
+                      <tr><th className="text-left px-2 py-1">Thời điểm</th><th className="text-right px-2 py-1">Giá</th></tr>
+                    </thead>
+                    <tbody>
+                      {history.rows.map((s) => {
+                        const target = Number(history.watch.target_price) || 0;
+                        const hit = s.ok && s.price != null && target > 0 && Number(s.price) <= target;
+                        return (
+                          <tr key={s.id} className="border-t">
+                            <td className="px-2 py-1.5 text-gray-600">{new Date(s.created_at).toLocaleString('vi-VN')}</td>
+                            <td className={`px-2 py-1.5 text-right font-semibold ${hit ? 'text-green-700' : s.ok ? 'text-gray-900' : 'text-amber-600'}`}>
+                              {s.ok && s.price != null ? formatCurrency(s.price) : <span className="text-xs font-normal" title={s.error || ''}>lỗi</span>}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+            <div className="flex justify-end border-t px-6 py-4">
+              <button onClick={() => setHistory(null)} className="px-5 py-2 bg-gray-200 rounded-lg font-semibold text-sm">Đóng</button>
             </div>
           </div>
         </div>

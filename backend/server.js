@@ -27,6 +27,7 @@ const userRoutes = require('./routes/users');
 const routeRoutes = require('./routes/routes');
 const noteRoutes = require('./routes/notes');
 const ticketWatchRoutes = require('./routes/ticketWatches');
+const fareRoutes = require('./routes/fares');
 const airlineRoutes = require('./routes/airlines');
 const trainTicketRoutes = require('./routes/trainTickets');
 const tourRoutes = require('./routes/tours');
@@ -72,6 +73,7 @@ app.use('/api/stats', authenticateToken, attachScope, statsRoutes);
 app.use('/api/routes', authenticateToken, routeRoutes);
 app.use('/api/notes', authenticateToken, noteRoutes);
 app.use('/api/ticket-watches', authenticateToken, ticketWatchRoutes);
+app.use('/api/fares', authenticateToken, fareRoutes);
 app.use('/api/airlines', authenticateToken, airlineRoutes);
 app.use('/api/train-tickets', authenticateToken, attachScope, trainTicketRoutes);
 app.use('/api/tours', authenticateToken, attachScope, tourRoutes);
@@ -110,8 +112,21 @@ async function ensureSchema() {
   }
 }
 
+// Bật worker canh giá tự động trong tiến trình app khi FARE_WATCHER=true.
+// Mặc định TẮT — vì cần Playwright + tốn RAM; trên Render free nên chạy worker
+// riêng hoặc cron ngoài. require trễ để app vẫn chạy khi chưa cài playwright.
+function maybeStartFareWatcher() {
+  if (String(process.env.FARE_WATCHER || 'false').toLowerCase() !== 'true') return;
+  try {
+    require('./workers/fareWatcher').startLoop();
+  } catch (err) {
+    logger.error('Không bật được fareWatcher (thiếu Playwright?):', err.message);
+  }
+}
+
 ensureSchema().finally(() => {
   app.listen(env.port, () => {
     logger.info(`🚀 Server running on port ${env.port} (${env.nodeEnv})`);
+    maybeStartFareWatcher();
   });
 });
