@@ -12,15 +12,20 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const quote = async (req, res) => {
   try {
     const { route, date } = req.body || {};
+    const returnDate = req.body?.returnDate || null; // có = tra khứ hồi (2 chiều, 2 lượt SerpApi)
     const pax = Math.min(Math.max(parseInt(req.body?.pax, 10) || 1, 1), 9);
     if (!route || !ROUTE_RE.test(route)) return res.status(400).json({ error: 'Hành trình không hợp lệ (vd: SGN-HAN)' });
     if (!date || !DATE_RE.test(date)) return res.status(400).json({ error: 'Ngày đi không hợp lệ (yyyy-mm-dd)' });
     if (new Date(date) < new Date(new Date().toISOString().slice(0, 10))) {
       return res.status(400).json({ error: 'Ngày đi đã qua' });
     }
+    if (returnDate) {
+      if (!DATE_RE.test(returnDate)) return res.status(400).json({ error: 'Ngày về không hợp lệ (yyyy-mm-dd)' });
+      if (returnDate < date) return res.status(400).json({ error: 'Ngày về phải từ ngày đi trở đi' });
+    }
 
-    const results = await quoteAllAirlines({ route, date, pax }, { log: (m) => logger.info(m) });
-    res.json({ route, date, pax, results });
+    const { legs } = await quoteAllAirlines({ route, date, returnDate, pax }, { log: (m) => logger.info(m) });
+    res.json({ route, date, returnDate, pax, legs });
   } catch (error) {
     logger.error('Fare quote error:', error.message);
     res.status(500).json({ error: 'Tra giá thất bại: ' + error.message });

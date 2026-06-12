@@ -85,6 +85,7 @@ async function searchRoute({ route, date, pax = 1, cache = null }) {
     .map((it) => {
       const legs = it.flights || [];
       const first = legs[0] || {};
+      const last = legs[legs.length - 1] || {};
       return {
         // chuyến nối chặng lấy hãng của chặng đầu; flightNo nối bằng '+'
         airline: first.airline || null,
@@ -92,7 +93,9 @@ async function searchRoute({ route, date, pax = 1, cache = null }) {
         currency: 'VND',
         flightNo:
           legs.map((l) => String(l.flight_number || '').replace(/\s+/g, '')).filter(Boolean).join('+').slice(0, 20) || null,
-        departTime: first.departure_airport?.time || null,
+        departTime: first.departure_airport?.time || null,   // 'yyyy-mm-dd HH:MM'
+        arriveTime: last.arrival_airport?.time || null,
+        durationMin: Number(it.total_duration) || null,
         stops: Math.max(legs.length - 1, 0),
       };
     })
@@ -125,26 +128,37 @@ function lowestForAirline(itins, airline) {
   return pick.reduce((min, i) => (i.price < min.price ? i : min));
 }
 
-// Gom theo hãng → giá rẻ nhất mỗi hãng, sắp tăng dần. Shape khớp kết quả
-// quoteAllAirlines (Check vé): { key, airline, ok, price, currency, ... }.
+// Gom theo hãng → mỗi hãng 1 dòng: giá rẻ nhất + DANH SÁCH CHUYẾN (khung giờ,
+// sắp theo giờ cất cánh). Mảng hãng sắp theo giá tăng dần. Shape khớp kết quả
+// quoteAllAirlines (Check vé): { key, airline, ok, price, currency, flights[] }.
 function quoteByAirline(itins) {
   const byAirline = new Map();
   for (const i of itins) {
-    const cur = byAirline.get(i.airline);
-    if (!cur || i.price < cur.price) byAirline.set(i.airline, i);
+    const list = byAirline.get(i.airline) || [];
+    list.push(i);
+    byAirline.set(i.airline, list);
   }
-  return [...byAirline.values()]
-    .sort((a, b) => a.price - b.price)
-    .map((i) => ({
-      key: keyOf(i.airline) || i.airline.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
-      airline: i.airline,
-      ok: true,
-      price: i.price,
-      currency: i.currency,
-      flightNo: i.flightNo,
-      departTime: i.departTime,
-      source: 'serpapi',
-    }));
+  return [...byAirline.entries()]
+    .map(([airline, list]) => {
+      const cheapest = list.reduce((min, i) => (i.price < min.price ? i : min));
+      const flights = [...list]
+        .sort((a, b) => String(a.departTime || '').localeCompare(String(b.departTime || '')))
+        .map(({ flightNo, departTime, arriveTime, durationMin, stops, price }) => ({
+          flightNo, departTime, arriveTime, durationMin, stops, price,
+        }));
+      return {
+        key: keyOf(airline) || airline.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+        airline,
+        ok: true,
+        price: cheapest.price,
+        currency: cheapest.currency,
+        flightNo: cheapest.flightNo,
+        departTime: cheapest.departTime,
+        source: 'serpapi',
+        flights,
+      };
+    })
+    .sort((a, b) => a.price - b.price);
 }
 
 module.exports = { enabled, searchRoute, lowestForAirline, quoteByAirline };

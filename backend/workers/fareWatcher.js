@@ -18,6 +18,7 @@
 const pool = require('../config/database');
 const logger = require('../config/logger');
 const { sendMail } = require('../config/email');
+const { parseRoute } = require('./lib/util');
 const { resolveAdapter, ADAPTERS } = require('./adapters');
 const serpapi = require('./lib/serpapi');
 
@@ -199,12 +200,9 @@ async function checkWatchById(watchId, { userId = null, log = (m) => logger.info
   return checkAndStore(watch, { log });
 }
 
-// Tra giá NGAY cho 1 chặng (tính năng "Check vé"). Không lưu DB.
-// SerpApi: 1 search trả mọi hãng trên chặng. Lỗi/hết hạn mức → chạy các adapter
-// HTTP trực tiếp (hiện chỉ VNA). Trả mảng kết quả đã sắp theo giá tăng dần.
-async function quoteAllAirlines({ route, date, pax = 1 }, { log = () => {} } = {}) {
-  if (!route || !date) throw new Error('Cần hành trình và ngày đi');
-
+// Tra giá MỘT CHIỀU cho 1 chặng: SerpApi (mọi hãng + danh sách khung giờ) →
+// fallback adapter HTTP trực tiếp (hiện chỉ VNA). Trả mảng kết quả sắp theo giá tăng.
+async function quoteOneLeg({ route, date, pax = 1 }, { log = () => {} } = {}) {
   if (serpapi.enabled()) {
     try {
       const itins = await serpapi.searchRoute({ route, date, pax });
@@ -233,6 +231,24 @@ async function quoteAllAirlines({ route, date, pax = 1 }, { log = () => {} } = {
   // hãng lấy được giá xếp trước (giá tăng dần); hãng lỗi đẩy xuống cuối
   results.sort((a, b) => (a.ok ? a.price : Infinity) - (b.ok ? b.price : Infinity));
   return results;
+}
+
+// Tra giá NGAY (tính năng "Check vé"). Không lưu DB. Mặc định 1 chiều = 1 leg;
+// truyền `returnDate` = thêm leg chiều về (đảo chặng). MỖI leg tốn 1 search SerpApi.
+// Trả { legs: [{ direction:'outbound'|'inbound', route, date, results[] }] }.
+async function quoteAllAirlines({ route, date, returnDate = null, pax = 1 }, { log = () => {} } = {}) {
+  if (!route || !date) throw new Error('Cần hành trình và ngày đi');
+  const r = parseRoute(route);
+  if (!r) throw new Error('Hành trình không hợp lệ (vd: SGN-HAN)');
+
+  const legs = [{ direction: 'outbound', route: `${r.origin}-${r.dest}`, date }];
+  if (returnDate) legs.push({ direction: 'inbound', route: `${r.dest}-${r.origin}`, date: returnDate });
+
+  for (const leg of legs) {
+    log(`Check vé ${leg.direction === 'outbound' ? 'chiều đi' : 'chiều về'}: ${leg.route} ${leg.date}`);
+    leg.results = await quoteOneLeg({ route: leg.route, date: leg.date, pax }, { log });
+  }
+  return { legs };
 }
 
 // Vòng lặp định kỳ (cho chế độ --loop hoặc startLoop trong app).
