@@ -294,7 +294,7 @@ ALTER TABLE ticket_watches ADD COLUMN IF NOT EXISTS alerted_at      TIMESTAMPTZ;
 CREATE TABLE IF NOT EXISTS fare_snapshots (
   id          SERIAL PRIMARY KEY,
   watch_id    INTEGER NOT NULL REFERENCES ticket_watches(id) ON DELETE CASCADE,
-  source      VARCHAR(20),                 -- nguồn giá: serpapi | vj | vn | qh | 9g | vu
+  source      VARCHAR(20),                 -- nguồn giá: serpapi | vn (adapter HTTP trực tiếp)
   airline     VARCHAR(50),                 -- hãng khớp được (nếu phân biệt)
   price       DECIMAL(15,2),               -- giá thấp nhất (1 khách, 1 chiều); NULL nếu lỗi
   currency    VARCHAR(8) DEFAULT 'VND',

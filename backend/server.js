@@ -112,15 +112,16 @@ async function ensureSchema() {
   }
 }
 
-// Bật worker canh giá tự động trong tiến trình app khi FARE_WATCHER=true.
-// Mặc định TẮT — vì cần Playwright + tốn RAM; trên Render free nên chạy worker
-// riêng hoặc cron ngoài. require trễ để app vẫn chạy khi chưa cài playwright.
+// Bật vòng canh giá tự động trong tiến trình app khi FARE_WATCHER=true.
+// Nguồn giá là SerpApi/adapter HTTP (không Chromium) nên nhẹ; lưu ý trên Render
+// free app ngủ sau 15 phút không có traffic → loop ngừng khi ngủ, canh đều thì
+// dùng cron ngoài gọi `npm run fare-watch`.
 function maybeStartFareWatcher() {
   if (String(process.env.FARE_WATCHER || 'false').toLowerCase() !== 'true') return;
   try {
     require('./workers/fareWatcher').startLoop();
   } catch (err) {
-    logger.error('Không bật được fareWatcher (thiếu Playwright?):', err.message);
+    logger.error('Không bật được fareWatcher:', err.message);
   }
 }
 

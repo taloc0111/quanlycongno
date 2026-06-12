@@ -13,9 +13,7 @@
     "seed": "node setup-admin.js",
     "backfill": "node scripts/backfill-customers.js",
     "fare-watch": "node workers/fareWatcher.js",
-    "fare-watch:loop": "node workers/fareWatcher.js --loop",
-    "fare-watch:serve": "node workers/serve.js",
-    "setup:chromium": "playwright install --with-deps chromium"
+    "fare-watch:loop": "node workers/fareWatcher.js --loop"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
@@ -26,8 +24,7 @@
     "helmet": "^8.0.0",
     "jsonwebtoken": "^9.0.2",
     "nodemailer": "^8.0.10",
-    "pg": "^8.11.3",
-    "playwright": "^1.60.0"
+    "pg": "^8.11.3"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"
