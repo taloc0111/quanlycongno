@@ -1,7 +1,7 @@
 // controllers/ticketWatchController.js — "canh vé" cho khách (theo dõi vé rẻ).
 const pool = require('../config/database');
 const logger = require('../config/logger');
-const { workerEnabled, callWorker } = require('../config/workerClient');
+const { checkWatchById } = require('../workers/fareWatcher');
 
 const STATUSES = ['watching', 'quoted', 'booked', 'cancelled'];
 
@@ -123,9 +123,8 @@ const getSnapshots = async (req, res) => {
   }
 };
 
-// Lấy giá NGAY cho 1 yêu cầu (nút bấm tay). Nặng (vài chục giây).
-// Ưu tiên uỷ thác sang worker (VPS) qua HTTP; nếu chưa cấu hình WORKER_URL thì thử
-// chạy in-process (chỉ chạy được khi máy chủ có Playwright + Chromium — vd máy dev).
+// Lấy giá NGAY cho 1 yêu cầu (nút bấm tay). Nguồn SerpApi/adapter HTTP — chạy
+// in-process, mất vài giây.
 const checkNow = async (req, res) => {
   try {
     const { id } = req.params;
@@ -139,19 +138,6 @@ const checkNow = async (req, res) => {
       return res.status(400).json({ error: 'Cần có hành trình và ngày đi để lấy giá' });
     }
 
-    // Đường chính (production): gọi worker. Gửi kèm userId để worker ràng buộc chủ sở hữu.
-    if (workerEnabled) {
-      const result = await callWorker('/internal/check-now', { watchId: watch.id, userId: req.user.id });
-      return res.json(result);
-    }
-
-    // Dự phòng (dev): chạy in-process nếu có Playwright.
-    let checkWatchById;
-    try {
-      ({ checkWatchById } = require('../workers/fareWatcher'));
-    } catch {
-      return res.status(503).json({ error: 'Tính năng lấy giá chưa sẵn sàng (chưa cấu hình WORKER_URL và máy chủ không có Playwright)' });
-    }
     const result = await checkWatchById(watch.id, { userId: req.user.id, log: (m) => logger.info(m) });
     res.json(result);
   } catch (error) {

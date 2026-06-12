@@ -98,8 +98,7 @@ function postBestPrice(body) {
 module.exports = {
   key: 'vn',
   label: 'Vietnam Airlines',
-  // ctx (Playwright) nhận nhưng KHÔNG dùng — adapter này đi đường HTTP thuần.
-  async getLowestFare({ route, date, ctx, log = () => {} }) {
+  async getLowestFare({ route, date, log = () => {} }) {
     const r = parseRoute(route);
     const d = parseDate(date);
     if (!r || !d) throw new Error(`Hành trình/ngày không hợp lệ: route=${route} date=${date}`);

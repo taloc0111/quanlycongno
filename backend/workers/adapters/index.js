@@ -1,20 +1,14 @@
 // workers/adapters/index.js — sổ đăng ký adapter + định tuyến theo tên hãng.
-// Thêm hãng mới: viết 1 file adapter rồi đăng ký vào ADAPTERS + bổ sung AIRLINE_MATCHERS.
-const { makeSabreAdapter } = require('./sabreEngine');
-
-// Bamboo (QH) và Sun PhuQuoc (9G) dùng chung engine → 2 instance cùng base.
-const bamboo = makeSabreAdapter({ key: 'qh', label: 'Bamboo Airways', baseUrl: 'https://digital.bambooairways.com' });
-const sunphuquoc = makeSabreAdapter({ key: '9g', label: 'Sun PhuQuoc Airways', baseUrl: 'https://fly.sunphuquocairways.com' });
-
+//
+// Nhánh SerpApi-only: registry chỉ còn adapter KHÔNG cần Chromium (đi HTTP thuần).
+// AIRLINE_MATCHERS vẫn giữ đủ 5 hãng VN — serpapi.js dùng resolveKey() để khớp
+// tên hãng Google Flights trả về (vd "Sun PhuQuoc Airways" → '9g') với ô "Hãng"
+// người dùng nhập tự do (vd "VJ", "Sun Phú Quốc").
 const ADAPTERS = {
-  qh: bamboo,
-  '9g': sunphuquoc,
-  vj: require('./vietjet'),
-  vn: require('./vietnamairlines'),
-  vu: require('./vietravel'),
+  vn: require('./vietnamairlines'), // API public VNA — HTTP thuần, không Chromium
 };
 
-// Khớp chuỗi "Hãng" do người dùng nhập (tự do) → key adapter.
+// Khớp chuỗi "Hãng" viết tự do → key chuẩn.
 // Mỗi mục: [key, danh sách từ khoá viết thường khớp được].
 const AIRLINE_MATCHERS = [
   ['vj', ['vietjet', 'viet jet', 'vj']],
@@ -24,15 +18,21 @@ const AIRLINE_MATCHERS = [
   ['vu', ['vietravel', 'viet travel', 'vu']],
 ];
 
-// Trả về adapter cho 1 yêu cầu canh vé; null nếu không nhận diện được hãng.
-// Quy ước: phải khai rõ hãng (ô "Hãng") thì mới auto canh — vì mỗi hãng 1 site.
-function resolveAdapter(airline) {
+// Tên hãng tự do → key chuẩn (vj/vn/qh/9g/vu); null nếu không nhận diện được.
+function resolveKey(airline) {
   if (!airline) return null;
   const a = String(airline).toLowerCase().trim();
   for (const [key, words] of AIRLINE_MATCHERS) {
-    if (words.some((w) => a.includes(w))) return ADAPTERS[key];
+    if (words.some((w) => a.includes(w))) return key;
   }
   return null;
 }
 
-module.exports = { ADAPTERS, resolveAdapter };
+// Adapter lấy giá TRỰC TIẾP từ hãng (fallback khi SerpApi lỗi/hết hạn mức);
+// null nếu hãng chưa có adapter HTTP.
+function resolveAdapter(airline) {
+  const key = resolveKey(airline);
+  return (key && ADAPTERS[key]) || null;
+}
+
+module.exports = { ADAPTERS, resolveAdapter, resolveKey };

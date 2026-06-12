@@ -1,7 +1,9 @@
-// controllers/fareController.js — "Check vé": tra giá NGAY 1 chặng trên cả 5 hãng.
-// Không lưu DB, không gắn khách — chỉ chạy 5 adapter rồi trả bảng so giá.
+// controllers/fareController.js — "Check vé": tra giá NGAY 1 chặng trên các hãng.
+// Không lưu DB, không gắn khách — chỉ trả bảng so giá. Nguồn: SerpApi (Google
+// Flights) ưu tiên, fallback adapter HTTP từng hãng — không cần Chromium nên
+// chạy thẳng in-process, không phải uỷ thác đi đâu.
 const logger = require('../config/logger');
-const { workerEnabled, callWorker } = require('../config/workerClient');
+const { quoteAllAirlines } = require('../workers/fareWatcher');
 
 // Chống lạm dụng: chỉ nhận chặng dạng "SGN-HAN" và ngày yyyy-mm-dd hợp lệ, pax 1..9.
 const ROUTE_RE = /^[A-Za-z]{3}\s*[-→\s]\s*[A-Za-z]{3}$/;
@@ -17,19 +19,6 @@ const quote = async (req, res) => {
       return res.status(400).json({ error: 'Ngày đi đã qua' });
     }
 
-    // Đường chính: uỷ thác sang worker (VPS).
-    if (workerEnabled) {
-      const data = await callWorker('/internal/quote', { route, date, pax });
-      return res.json(data);
-    }
-
-    // Dự phòng (dev): chạy in-process nếu có Playwright.
-    let quoteAllAirlines;
-    try {
-      ({ quoteAllAirlines } = require('../workers/fareWatcher'));
-    } catch {
-      return res.status(503).json({ error: 'Tính năng tra giá chưa sẵn sàng (chưa cấu hình WORKER_URL và máy chủ không có Playwright)' });
-    }
     const results = await quoteAllAirlines({ route, date, pax }, { log: (m) => logger.info(m) });
     res.json({ route, date, pax, results });
   } catch (error) {

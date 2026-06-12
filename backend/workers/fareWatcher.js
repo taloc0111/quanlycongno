@@ -1,61 +1,28 @@
 // workers/fareWatcher.js — worker tự động canh giá vé cho các yêu cầu auto_track.
 //
-// Nguồn giá (ưu tiên theo thứ tự):
+// Nhánh SerpApi-only — KHÔNG dùng Playwright/Chromium. Nguồn giá:
 //   1) SerpApi (Google Flights, lib/serpapi.js) — 1 search trả giá MỌI hãng trên
-//      chặng, không cần Chromium. Bật bằng SERPAPI_KEY; lỗi/hết hạn mức → rơi xuống (2).
-//   2) Adapter scrape từng hãng (Playwright + Chromium stealth) — như trước.
+//      chặng. Bật bằng SERPAPI_KEY; lỗi/hết hạn mức → rơi xuống (2).
+//   2) Adapter HTTP thuần theo hãng (adapters/) — hiện có Vietnam Airlines
+//      (API public, không tốn quota SerpApi).
 //
 // Luồng: lấy danh sách watch bật auto_track + còn theo dõi → lần lượt từng watch:
-// lấy giá (SerpApi trước, scrape sau) → lưu fare_snapshots → cập nhật
-// last_price/last_checked_at trên ticket_watches → nếu giá ≤ giá mong muốn
-// thì gửi email cảnh báo (có cooldown chống spam).
+// lấy giá → lưu fare_snapshots → cập nhật last_price/last_checked_at trên
+// ticket_watches → nếu giá ≤ giá mong muốn thì gửi email cảnh báo (có cooldown).
 //
 // Chạy:
-//   - Standalone:  node workers/fareWatcher.js            (chạy 1 vòng rồi thoát)
+//   - Standalone:  node workers/fareWatcher.js            (1 vòng rồi thoát — hợp cron job)
 //   - Loop:        node workers/fareWatcher.js --loop     (lặp theo FARE_WATCH_INTERVAL_MIN)
 //   - Trong app:   require + startLoop() khi FARE_WATCHER=true (xem server.js)
-//   - Thủ công 1 watch: dùng checkWatchById() (nút "Lấy giá ngay").
+//   - Thủ công 1 watch: checkWatchById() (nút "Lấy giá ngay").
 const pool = require('../config/database');
 const logger = require('../config/logger');
 const { sendMail } = require('../config/email');
-const { jitter } = require('./lib/util');
 const { resolveAdapter, ADAPTERS } = require('./adapters');
 const serpapi = require('./lib/serpapi');
 
 const INTERVAL_MIN = parseInt(process.env.FARE_WATCH_INTERVAL_MIN || '60', 10);
 const ALERT_COOLDOWN_H = parseInt(process.env.FARE_ALERT_COOLDOWN_H || '12', 10);
-
-// Playwright chỉ được require khi THẬT SỰ cần scrape — nhờ vậy host không cài
-// Chromium (vd web service Render) vẫn dùng được nguồn SerpApi bình thường.
-function loadBrowserLib() {
-  try {
-    return require('./lib/browser');
-  } catch {
-    throw new Error('Máy chủ không có Playwright/Chromium (nguồn scrape không khả dụng)');
-  }
-}
-
-// Trình duyệt + context mở LƯỜI: chỉ tốn RAM Chromium khi có ít nhất 1 lần phải scrape.
-function makeLazyCtx() {
-  let browser = null;
-  let ctx = null;
-  return {
-    async get() {
-      if (!ctx) {
-        const { launchBrowser, newStealthContext } = loadBrowserLib();
-        browser = await launchBrowser();
-        ctx = await newStealthContext(browser);
-      }
-      return ctx;
-    },
-    async close() {
-      if (ctx) await ctx.close().catch(() => {});
-      if (browser) await browser.close().catch(() => {});
-      ctx = null;
-      browser = null;
-    },
-  };
-}
 
 // Ghi 1 dòng lịch sử giá.
 async function insertSnapshot(watchId, result) {
@@ -130,11 +97,10 @@ async function maybeAlert(watch, price) {
   return true;
 }
 
-// Lấy giá 1 watch (SerpApi trước, scrape sau), lưu snapshot + cập nhật trạng thái
-// + alert. Dùng cho cả worker loop lẫn nút "Lấy giá ngay". Không bao giờ ném ra ngoài.
-// `lazyCtx` (makeLazyCtx) chỉ mở Chromium khi thật sự rơi vào nhánh scrape.
+// Lấy giá 1 watch (SerpApi trước, adapter HTTP sau), lưu snapshot + cập nhật trạng
+// thái + alert. Dùng cho cả worker loop lẫn nút "Lấy giá ngay". Không ném ra ngoài.
 // `serpCache` (Map, tuỳ chọn): các watch trùng chặng+ngày trong 1 vòng chỉ tốn 1 search.
-async function checkAndStore(watch, lazyCtx, { log = () => {}, serpCache = null } = {}) {
+async function checkAndStore(watch, { log = () => {}, serpCache = null } = {}) {
   let result = null;
 
   // Nguồn 1: SerpApi — phủ cả hãng chưa có adapter; watch không ghi hãng thì lấy
@@ -152,23 +118,25 @@ async function checkAndStore(watch, lazyCtx, { log = () => {}, serpCache = null 
           flightNo: best.flightNo, departTime: best.departTime,
         };
       } else {
-        log(`serpapi: không thấy hãng "${watch.airline}" trên ${watch.route} — thử scrape`);
+        log(`serpapi: không thấy hãng "${watch.airline}" trên ${watch.route} — thử adapter trực tiếp`);
       }
     } catch (e) {
-      log(`serpapi lỗi: ${e.message} — thử scrape`);
+      log(`serpapi lỗi: ${e.message} — thử adapter trực tiếp`);
     }
   }
 
-  // Nguồn 2 (fallback): adapter scrape của đúng hãng.
+  // Nguồn 2 (fallback): adapter HTTP của đúng hãng (nếu có).
   if (!result) {
     const adapter = resolveAdapter(watch.airline);
     if (!adapter) {
-      result = { ok: false, error: `Chưa hỗ trợ canh giá tự động cho hãng "${watch.airline || '(trống)'}"` };
+      result = {
+        ok: false,
+        error: `Không lấy được giá cho hãng "${watch.airline || '(trống)'}" (SerpApi không khả dụng và hãng chưa có adapter trực tiếp)`,
+      };
     } else {
       try {
-        const ctx = await lazyCtx.get();
         const fare = await adapter.getLowestFare({
-          route: watch.route, date: watch.depart_date, pax: watch.pax || 1, ctx, log,
+          route: watch.route, date: watch.depart_date, pax: watch.pax || 1, log,
         });
         result = { ok: true, ...fare, airline: adapter.label };
       } catch (e) {
@@ -200,30 +168,20 @@ async function runOnce({ log = (m) => logger.info(m) } = {}) {
   if (!watches.length) { log('fareWatcher: không có yêu cầu nào cần canh.'); return { checked: 0 }; }
 
   log(`fareWatcher: bắt đầu canh ${watches.length} yêu cầu…`);
-  const lazyCtx = makeLazyCtx();
   const serpCache = new Map(); // watch trùng chặng+ngày trong vòng này chỉ tốn 1 search SerpApi
   let ok = 0;
   let fail = 0;
-  try {
-    for (const w of watches) {
-      const r = await checkAndStore(w, lazyCtx, { log, serpCache });
-      if (r.ok) { ok++; log(`✔ #${w.id} ${w.route} ${w.airline || r.airline}: ${r.price?.toLocaleString('vi-VN')}₫${r.alerted ? ' (ĐÃ BÁO GIÁ)' : ''}`); }
-      else { fail++; log(`✖ #${w.id} ${w.route} ${w.airline}: ${r.error}`); }
-      // Nghỉ ngẫu nhiên giữa các lần SCRAPE để trông như người dùng, giảm nguy cơ
-      // bị chặn; lần lấy qua SerpApi thì không cần.
-      if (r.source !== 'serpapi') await new Promise((res) => setTimeout(res, jitter(4000, 6000)));
-    }
-  } finally {
-    await lazyCtx.close();
+  for (const w of watches) {
+    const r = await checkAndStore(w, { log, serpCache });
+    if (r.ok) { ok++; log(`✔ #${w.id} ${w.route} ${w.airline || r.airline}: ${r.price?.toLocaleString('vi-VN')}₫${r.alerted ? ' (ĐÃ BÁO GIÁ)' : ''}`); }
+    else { fail++; log(`✖ #${w.id} ${w.route} ${w.airline}: ${r.error}`); }
   }
   log(`fareWatcher: xong. OK=${ok}, lỗi=${fail}.`);
   return { checked: watches.length, ok, fail };
 }
 
-// Lấy giá 1 watch theo id: tự fetch DB + tự mở/đóng trình duyệt. Dùng cho HTTP
-// endpoint /internal/check-now (worker) và nút "Lấy giá ngay" chạy in-process.
-// `userId` (nếu truyền) ràng buộc watch phải thuộc user đó — phòng thủ chiều sâu
-// để dù secret bị lộ cũng không sửa được watch của người khác.
+// Lấy giá 1 watch theo id (nút "Lấy giá ngay"). `userId` (nếu truyền) ràng buộc
+// watch phải thuộc user đó — phòng thủ chiều sâu.
 async function checkWatchById(watchId, { userId = null, log = (m) => logger.info(m) } = {}) {
   const { rows } = userId
     ? await pool.query(
@@ -238,18 +196,12 @@ async function checkWatchById(watchId, { userId = null, log = (m) => logger.info
       );
   const watch = rows[0];
   if (!watch) throw new Error('Không tìm thấy yêu cầu canh vé');
-  const lazyCtx = makeLazyCtx();
-  try {
-    return await checkAndStore(watch, lazyCtx, { log });
-  } finally {
-    await lazyCtx.close();
-  }
+  return checkAndStore(watch, { log });
 }
 
 // Tra giá NGAY cho 1 chặng (tính năng "Check vé"). Không lưu DB.
-// Có SERPAPI_KEY: 1 search trả mọi hãng trên chặng (kể cả hãng chưa có adapter),
-// nhanh và không cần Chromium. Lỗi/hết hạn mức → rơi về chạy lần lượt 5 adapter
-// scrape như cũ. Trả mảng kết quả đã sắp theo giá tăng dần.
+// SerpApi: 1 search trả mọi hãng trên chặng. Lỗi/hết hạn mức → chạy các adapter
+// HTTP trực tiếp (hiện chỉ VNA). Trả mảng kết quả đã sắp theo giá tăng dần.
 async function quoteAllAirlines({ route, date, pax = 1 }, { log = () => {} } = {}) {
   if (!route || !date) throw new Error('Cần hành trình và ngày đi');
 
@@ -261,32 +213,22 @@ async function quoteAllAirlines({ route, date, pax = 1 }, { log = () => {} } = {
         results.forEach((r) => log(`✔ ${r.airline}: ${r.price.toLocaleString('vi-VN')}₫`));
         return results;
       }
-      log('serpapi: không có chuyến cho chặng/ngày này — thử scrape');
+      log('serpapi: không có chuyến cho chặng/ngày này — thử adapter trực tiếp');
     } catch (e) {
-      log(`serpapi lỗi: ${e.message} — thử scrape`);
+      log(`serpapi lỗi: ${e.message} — thử adapter trực tiếp`);
     }
   }
 
-  const { launchBrowser, newStealthContext } = loadBrowserLib();
-  const browser = await launchBrowser();
   const results = [];
-  try {
-    const ctx = await newStealthContext(browser);
-    for (const adapter of Object.values(ADAPTERS)) {
-      try {
-        const fare = await adapter.getLowestFare({ route, date, pax, ctx, log });
-        results.push({ key: adapter.key, airline: adapter.label, ok: true, price: fare.price, currency: fare.currency || 'VND' });
-        log(`✔ ${adapter.label}: ${fare.price?.toLocaleString('vi-VN')}₫`);
-      } catch (e) {
-        results.push({ key: adapter.key, airline: adapter.label, ok: false, error: e.message });
-        log(`✖ ${adapter.label}: ${e.message}`);
-      }
-      // nghỉ ngẫu nhiên giữa các hãng cho giống người dùng
-      await new Promise((res) => setTimeout(res, jitter(1500, 2500)));
+  for (const adapter of Object.values(ADAPTERS)) {
+    try {
+      const fare = await adapter.getLowestFare({ route, date, pax, log });
+      results.push({ key: adapter.key, airline: adapter.label, ok: true, price: fare.price, currency: fare.currency || 'VND', source: adapter.key });
+      log(`✔ ${adapter.label}: ${fare.price?.toLocaleString('vi-VN')}₫`);
+    } catch (e) {
+      results.push({ key: adapter.key, airline: adapter.label, ok: false, error: e.message });
+      log(`✖ ${adapter.label}: ${e.message}`);
     }
-    await ctx.close().catch(() => {});
-  } finally {
-    await browser.close().catch(() => {});
   }
   // hãng lấy được giá xếp trước (giá tăng dần); hãng lỗi đẩy xuống cuối
   results.sort((a, b) => (a.ok ? a.price : Infinity) - (b.ok ? b.price : Infinity));

@@ -1,15 +1,15 @@
 // workers/lib/serpapi.js — nguồn giá SerpApi (engine Google Flights).
 //
-// Khác cấp với adapter scrape: 1 search trả giá của MỌI hãng trên chặng (đã verify
-// 2026-06: đủ cả VJ/VN/QH/9G/VU trên SGN-HAN) và không cần Chromium — nên là nguồn
-// CHÍNH khi có SERPAPI_KEY; adapter Playwright từng hãng giữ làm fallback.
+// Nguồn giá CHÍNH: 1 search trả giá của MỌI hãng trên chặng (đã verify 2026-06:
+// đủ cả VJ/VN/QH/9G/VU trên SGN-HAN), không cần Chromium. Fallback khi lỗi/hết
+// hạn mức: adapter HTTP từng hãng (adapters/ — hiện có VNA).
 //
 // Hạn mức: gói free 250 search/tháng (50/giờ). Đếm bằng bảng api_usage trong
-// Postgres — web service + worker dùng chung DB nên tổng không vượt hạn mức.
-// Chạm hạn mức → ném lỗi, caller tự rơi về scrape.
+// Postgres — mọi tiến trình dùng chung DB nên tổng không vượt hạn mức.
+// Chạm hạn mức → ném lỗi, caller tự rơi về fallback.
 const pool = require('../../config/database');
 const { parseRoute, parseDate } = require('./util');
-const { resolveAdapter } = require('../adapters');
+const { resolveKey } = require('../adapters');
 
 const TIMEOUT_MS = parseInt(process.env.SERPAPI_TIMEOUT_MS || '30000', 10);
 
@@ -102,9 +102,9 @@ async function searchRoute({ route, date, pax = 1, cache = null }) {
   return itins;
 }
 
-// Tên hãng tự do → khoá adapter (vj/vn/qh/9g/vu); null nếu ngoài 5 hãng VN.
+// Tên hãng tự do → key chuẩn (vj/vn/qh/9g/vu); null nếu ngoài 5 hãng VN.
 function keyOf(name) {
-  return resolveAdapter(name)?.key || null;
+  return resolveKey(name);
 }
 
 // Hành trình rẻ nhất của 1 hãng (khớp theo khoá adapter, fallback so chuỗi 2 chiều).
