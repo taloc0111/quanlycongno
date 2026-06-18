@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Plus, Edit2, Trash2, X, PlaneTakeoff, Search, Ticket, RefreshCw, TrendingDown, Radar, BellRing } from 'lucide-react';
+import { Plus, Edit2, Trash2, X, PlaneTakeoff, Search, Ticket, RefreshCw, TrendingDown, TrendingUp, Radar, BellRing } from 'lucide-react';
 import VnDatePicker from './components/VnDatePicker';
 import MoneyInput from './components/MoneyInput';
 import ConfirmDialog from './components/ConfirmDialog';
@@ -35,6 +35,17 @@ const fmtAgo = (s) => {
   if (sec < 3600) return `${Math.floor(sec / 60)} phút trước`;
   if (sec < 86400) return `${Math.floor(sec / 3600)} giờ trước`;
   return `${Math.floor(sec / 86400)} ngày trước`;
+};
+// Giá xem như "cũ" nếu lấy đã quá 24h (worker canh thưa do hạn mức) → nhắc người dùng.
+const isStale = (s) => s && (Date.now() - new Date(s).getTime()) > 24 * 3600000;
+// 'yyyy-mm-dd HH:MM' → 'HH:MM' (giờ cất cánh chuyến rẻ nhất).
+const fmtHm = (s) => (s && s.length >= 16 ? s.slice(11, 16) : '');
+// Số tiền gọn cho nhãn nhỏ: 120000 → "120k", 1382600 → "1,4tr".
+const compactVnd = (n) => {
+  const a = Math.abs(Math.round(Number(n) || 0));
+  if (a >= 1e6) return (a / 1e6).toFixed(a % 1e6 === 0 ? 0 : 1).replace('.', ',') + 'tr';
+  if (a >= 1e3) return Math.round(a / 1e3) + 'k';
+  return String(a);
 };
 // Số ngày từ hôm nay tới ngày đi (âm = đã qua).
 const daysUntil = (s) => {
@@ -270,8 +281,14 @@ export default function TicketWatchApp() {
                 {/* Khối auto canh giá: giá lấy gần nhất + trạng thái */}
                 {w.auto_track && (() => {
                   const hasPrice = w.last_price != null && Number(w.last_price) > 0;
+                  const cur = Number(w.last_price) || 0;
                   const target = Number(w.target_price) || 0;
-                  const hit = hasPrice && target > 0 && Number(w.last_price) <= target;
+                  const hit = hasPrice && target > 0 && cur <= target;
+                  // Xu hướng so lần canh trước: âm = giảm (tốt), dương = tăng.
+                  const prev = Number(w.prev_price) || 0;
+                  const diff = hasPrice && prev > 0 ? cur - prev : null;
+                  // Còn cao hơn giá mong muốn bao nhiêu (khi chưa đạt).
+                  const overTarget = hasPrice && target > 0 && cur > target ? cur - target : null;
                   return (
                     <div className={`mt-2 rounded-lg px-2.5 py-1.5 text-sm ${hit ? 'bg-green-50 border border-green-300' : 'bg-gray-50 border border-gray-200'}`}>
                       <div className="flex items-center justify-between gap-2">
@@ -279,17 +296,46 @@ export default function TicketWatchApp() {
                           <Radar size={14} className="text-blue-500" /> Auto canh giá
                         </span>
                         {hasPrice ? (
-                          <span className={`font-bold ${hit ? 'text-green-700' : 'text-gray-900'}`}>{formatCurrency(w.last_price)}</span>
+                          <span className="flex items-center gap-1.5">
+                            {diff != null && diff !== 0 && (
+                              <span
+                                className={`flex items-center gap-0.5 text-[11px] font-semibold ${diff < 0 ? 'text-green-600' : 'text-red-500'}`}
+                                title={`${diff < 0 ? 'Giảm' : 'Tăng'} ${formatCurrency(Math.abs(diff))} so lần canh trước`}
+                              >
+                                {diff < 0 ? <TrendingDown size={12} /> : <TrendingUp size={12} />}{compactVnd(diff)}
+                              </span>
+                            )}
+                            <span className={`font-bold ${hit ? 'text-green-700' : 'text-gray-900'}`}>{formatCurrency(w.last_price)}</span>
+                          </span>
                         ) : (
                           <span className="text-xs text-gray-400">{w.last_check_ok === false ? 'chưa lấy được' : 'chưa có giá'}</span>
                         )}
                       </div>
+
+                      {/* Hãng + giờ bay + số hiệu chuyến rẻ nhất lấy được */}
+                      {hasPrice && (w.last_airline || w.last_depart_time) && (
+                        <div className="flex items-center gap-1.5 text-xs text-gray-600 mt-1">
+                          <PlaneTakeoff size={12} className="text-blue-500 shrink-0" />
+                          {w.last_airline && <span className="font-medium">{w.last_airline}</span>}
+                          {w.last_depart_time && <span className="text-gray-500">· {fmtHm(w.last_depart_time)}</span>}
+                          {w.last_flight_no && <span className="text-gray-400">· {w.last_flight_no}</span>}
+                        </div>
+                      )}
+
                       <div className="flex items-center justify-between gap-2 mt-0.5">
                         {hit && <span className="flex items-center gap-1 text-xs font-semibold text-green-700"><BellRing size={12} /> Đã đạt giá mong muốn!</span>}
                         {!hit && w.last_check_ok === false && w.last_error && (
                           <span className="text-xs text-amber-600 truncate" title={w.last_error}>{w.last_error}</span>
                         )}
-                        <span className="text-[11px] text-gray-400 ml-auto">{w.last_checked_at ? fmtAgo(w.last_checked_at) : 'chưa chạy'}</span>
+                        {!hit && overTarget != null && (
+                          <span className="text-xs text-gray-500" title={`Cao hơn giá mong muốn ${formatCurrency(overTarget)}`}>cao hơn {compactVnd(overTarget)}</span>
+                        )}
+                        <span
+                          className={`text-[11px] ml-auto ${isStale(w.last_checked_at) ? 'text-amber-600' : 'text-gray-400'}`}
+                          title={isStale(w.last_checked_at) ? 'Giá đã cũ (>24h) — worker canh thưa do hạn mức' : ''}
+                        >
+                          {w.last_checked_at ? fmtAgo(w.last_checked_at) : 'chưa chạy'}{isStale(w.last_checked_at) ? ' · cũ' : ''}
+                        </span>
                       </div>
                     </div>
                   );

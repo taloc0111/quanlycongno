@@ -270,10 +270,14 @@ CREATE TABLE IF NOT EXISTS ticket_watches (
   -- Auto canh giá (worker fareWatcher lấy giá định kỳ rồi cảnh báo khi ≤ target_price):
   auto_track      BOOLEAN     NOT NULL DEFAULT FALSE,     -- bật/tắt tự động lấy giá cho yêu cầu này
   last_price      DECIMAL(15,2),                          -- giá thấp nhất lấy được lần gần nhất
+  prev_price      DECIMAL(15,2),                          -- giá lần canh TRƯỚC (để tính xu hướng ↓/↑)
   last_currency   VARCHAR(8)  DEFAULT 'VND',
   last_checked_at TIMESTAMPTZ,                            -- lần worker chạy gần nhất (kể cả lỗi)
   last_check_ok   BOOLEAN,                                -- lần gần nhất có lấy được giá không
   last_error      TEXT,                                   -- thông báo lỗi lần gần nhất (nếu có)
+  last_airline      VARCHAR(60),                          -- hãng của giá lấy gần nhất (vd "VietJet")
+  last_flight_no    VARCHAR(30),                          -- số hiệu chuyến rẻ nhất (vd "VJ123")
+  last_depart_time  VARCHAR(40),                          -- giờ bay chuyến rẻ nhất ('yyyy-mm-dd HH:MM')
   alerted_at      TIMESTAMPTZ,                            -- lần gần nhất đã cảnh báo đạt giá (chống spam)
   created_at    TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
   updated_at    TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
@@ -282,10 +286,14 @@ CREATE TABLE IF NOT EXISTS ticket_watches (
 -- Bổ sung cột cho DB đã tạo từ trước (idempotent — chạy lại không sao).
 ALTER TABLE ticket_watches ADD COLUMN IF NOT EXISTS auto_track      BOOLEAN     NOT NULL DEFAULT FALSE;
 ALTER TABLE ticket_watches ADD COLUMN IF NOT EXISTS last_price      DECIMAL(15,2);
+ALTER TABLE ticket_watches ADD COLUMN IF NOT EXISTS prev_price      DECIMAL(15,2);
 ALTER TABLE ticket_watches ADD COLUMN IF NOT EXISTS last_currency   VARCHAR(8)  DEFAULT 'VND';
 ALTER TABLE ticket_watches ADD COLUMN IF NOT EXISTS last_checked_at TIMESTAMPTZ;
 ALTER TABLE ticket_watches ADD COLUMN IF NOT EXISTS last_check_ok   BOOLEAN;
 ALTER TABLE ticket_watches ADD COLUMN IF NOT EXISTS last_error      TEXT;
+ALTER TABLE ticket_watches ADD COLUMN IF NOT EXISTS last_airline      VARCHAR(60);
+ALTER TABLE ticket_watches ADD COLUMN IF NOT EXISTS last_flight_no    VARCHAR(30);
+ALTER TABLE ticket_watches ADD COLUMN IF NOT EXISTS last_depart_time  VARCHAR(40);
 ALTER TABLE ticket_watches ADD COLUMN IF NOT EXISTS alerted_at      TIMESTAMPTZ;
 
 -- ---------------------------------------------------------------------------

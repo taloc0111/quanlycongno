@@ -51,14 +51,24 @@ async function insertSnapshot(watchId, result) {
 async function updateWatchState(watchId, result) {
   const { rows } = await pool.query(
     `UPDATE ticket_watches SET
-       last_price      = CASE WHEN $2 THEN $3 ELSE last_price END,
-       last_currency   = COALESCE($4, last_currency),
-       last_checked_at = CURRENT_TIMESTAMP,
-       last_check_ok   = $2,
-       last_error      = $5
+       prev_price       = CASE WHEN $2 THEN last_price ELSE prev_price END,
+       last_price       = CASE WHEN $2 THEN $3 ELSE last_price END,
+       last_currency    = COALESCE($4, last_currency),
+       last_checked_at  = CURRENT_TIMESTAMP,
+       last_check_ok    = $2,
+       last_error       = $5,
+       last_airline     = CASE WHEN $2 THEN $6 ELSE last_airline END,
+       last_flight_no   = CASE WHEN $2 THEN $7 ELSE last_flight_no END,
+       last_depart_time = CASE WHEN $2 THEN $8 ELSE last_depart_time END
      WHERE id = $1
      RETURNING id, user_id, customer_name, route, depart_date, return_date, target_price, last_price, alerted_at, airline`,
-    [watchId, result.ok, result.ok ? result.price : null, result.currency || 'VND', result.ok ? null : (result.error || 'unknown')]
+    [
+      watchId, result.ok, result.ok ? result.price : null, result.currency || 'VND',
+      result.ok ? null : (result.error || 'unknown'),
+      result.ok ? (result.airline || null) : null,
+      result.ok ? (result.flightNo || null) : null,
+      result.ok ? (result.departTime || null) : null,
+    ]
   );
   return rows[0] || null;
 }
