@@ -526,15 +526,25 @@ export default function TicketWatchApp() {
                 <div className="max-h-80 overflow-y-auto -mx-2">
                   <table className="w-full text-sm">
                     <thead className="text-gray-400 text-xs">
-                      <tr><th className="text-left px-2 py-1">Thời điểm</th><th className="text-right px-2 py-1">Giá</th></tr>
+                      <tr><th className="text-left px-2 py-1">Thời điểm · chuyến</th><th className="text-right px-2 py-1">Giá</th></tr>
                     </thead>
                     <tbody>
                       {history.rows.map((s) => {
                         const target = Number(history.watch.target_price) || 0;
                         const hit = s.ok && s.price != null && target > 0 && Number(s.price) <= target;
                         return (
-                          <tr key={s.id} className="border-t">
-                            <td className="px-2 py-1.5 text-gray-600">{new Date(s.created_at).toLocaleString('vi-VN')}</td>
+                          <tr key={s.id} className="border-t align-top">
+                            <td className="px-2 py-1.5">
+                              <div className="text-gray-600">{new Date(s.created_at).toLocaleString('vi-VN')}</div>
+                              {s.ok && (s.airline || s.depart_time) && (
+                                <div className="text-xs text-gray-400 flex items-center gap-1 mt-0.5">
+                                  <PlaneTakeoff size={11} className="text-blue-400 shrink-0" />
+                                  {s.airline && <span>{s.airline}</span>}
+                                  {s.depart_time && <span>· {fmtHm(s.depart_time)}</span>}
+                                  {s.flight_no && <span className="text-gray-300">· {s.flight_no}</span>}
+                                </div>
+                              )}
+                            </td>
                             <td className={`px-2 py-1.5 text-right font-semibold ${hit ? 'text-green-700' : s.ok ? 'text-gray-900' : 'text-amber-600'}`}>
                               {s.ok && s.price != null ? formatCurrency(s.price) : <span className="text-xs font-normal" title={s.error || ''}>lỗi</span>}
                             </td>
