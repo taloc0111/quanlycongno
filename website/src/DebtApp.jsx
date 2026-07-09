@@ -641,10 +641,12 @@ const App = () => {
 
   const filteredDebts = debts.filter(debt => {
     const q = (searchTerm || '').toLowerCase();
+    const companyName = (getCompanyById(debt.company_id)?.name || '').toLowerCase();
     const matchesSearch =
       (debt.customer_name || '').toLowerCase().includes(q) ||
       (debt.phone_number && debt.phone_number.includes(searchTerm)) ||
-      (debt.ticket_code && debt.ticket_code.toLowerCase().includes(q));
+      (debt.ticket_code && debt.ticket_code.toLowerCase().includes(q)) ||
+      companyName.includes(q); // tìm theo tên công ty
 
     const matchesStatus =
       filterStatus === 'all' ||
@@ -713,6 +715,23 @@ const App = () => {
   // Lợi nhuận vé máy bay theo đúng bộ lọc đang chọn (tháng/trạng thái/tìm kiếm).
   const totalProfit = filteredDebts.reduce((sum, d) => sum + ((parseFloat(d.ticket_amount) || 0) - (parseFloat(d.cost_amount) || 0)), 0);
   const paidPercentage = totalAmount > 0 ? Math.round((totalPaid / totalAmount) * 100) : 0;
+
+  // "Ai còn nợ" — gộp theo từng khách trong bộ lọc hiện tại (chỉ người còn nợ > 0),
+  // sắp theo nợ nhiều nhất. Trả lời "trong công ty/bộ lọc này những ai còn nợ bao nhiêu".
+  const debtorsInView = (() => {
+    const m = new Map();
+    filteredDebts.forEach((d) => {
+      const rem = calculateRemaining(d.ticket_amount, d.paid);
+      if (rem <= 0) return;
+      const key = `${(d.customer_name || '—').trim().toLowerCase()}|${d.phone_number || ''}`;
+      const cur = m.get(key) || { name: d.customer_name || '—', phone: d.phone_number || '', outstanding: 0, count: 0 };
+      cur.outstanding += rem;
+      cur.count += 1;
+      m.set(key, cur);
+    });
+    return [...m.values()].sort((a, b) => b.outstanding - a.outstanding);
+  })();
+  const debtorsTotal = debtorsInView.reduce((s, x) => s + x.outstanding, 0);
 
   const getAvailableMonths = () => {
     const months = new Set();
@@ -933,7 +952,7 @@ const App = () => {
                 <Search className="absolute left-3 top-2 sm:top-2.5 text-gray-400" size={16} className="sm:w-5 sm:h-5" />
                 <input
                   type="text"
-                  placeholder="Tìm kiếm..."
+                  placeholder="Tìm khách, SĐT, mã vé, công ty…"
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                   className="w-full pl-9 sm:pl-10 pr-3 sm:pr-4 py-2 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none transition text-xs sm:text-sm"
@@ -963,6 +982,30 @@ const App = () => {
               </select>
             </div>
           </div>
+
+          {/* Ai còn nợ — gộp theo khách (hiện khi đang tìm kiếm, vd theo tên công ty) */}
+          {searchTerm.trim() && debtorsInView.length > 0 && (
+            <div className="bg-white border-2 border-amber-200 rounded-xl p-3 sm:p-4 mb-4">
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <h4 className="font-bold text-gray-800 flex items-center gap-2 text-sm sm:text-base">
+                  <Users2 size={16} className="text-amber-600" /> Ai còn nợ · {debtorsInView.length} khách
+                </h4>
+                <span className="text-xs sm:text-sm font-semibold text-red-600 shrink-0">Tổng còn nợ: {formatCurrency(debtorsTotal)}</span>
+              </div>
+              <div className="max-h-56 overflow-y-auto divide-y -mx-1">
+                {debtorsInView.map((p, i) => (
+                  <div key={i} className="flex items-center justify-between gap-2 px-1 py-1.5 text-xs sm:text-sm">
+                    <span className="min-w-0 truncate">
+                      <span className="font-medium text-gray-800">{p.name}</span>
+                      {p.phone && <span className="text-gray-400"> · {p.phone}</span>}
+                      <span className="text-gray-400"> · {p.count} vé</span>
+                    </span>
+                    <span className="font-semibold text-red-600 shrink-0">{formatCurrency(p.outstanding)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Add Form */}
           {showAddForm && (
