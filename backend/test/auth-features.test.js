@@ -11,7 +11,7 @@ before(async () => {
 after(() => h.stop());
 
 test('login trả features; profile đủ field + features resolve', async () => {
-  const r = await h.api().post('/api/auth/login', { username: 'child', password: 'secret123' });
+  const r = await h.api().post('/api/auth/login', { username: 'child', password: h.TEST_PASSWORD });
   assert.equal(r.status, 200);
   assert.ok(r.body.token);
   assert.deepEqual(r.body.features, { fareWatch: false });
@@ -47,9 +47,9 @@ test('trial hết hạn theo DB → 403 trialExpired', async () => {
 });
 
 test('register: validate username/password; response có features', async () => {
-  assert.equal((await h.api().post('/api/auth/register', { username: 'ab', password: 'secret123' })).status, 400);
+  assert.equal((await h.api().post('/api/auth/register', { username: 'ab', password: h.TEST_PASSWORD })).status, 400);
   assert.equal((await h.api().post('/api/auth/register', { username: 'newbie', password: '123' })).status, 400);
-  const ok = await h.api().post('/api/auth/register', { username: 'newbie', password: 'secret123' });
+  const ok = await h.api().post('/api/auth/register', { username: 'newbie', password: h.TEST_PASSWORD });
   assert.equal(ok.status, 201);
   assert.deepEqual(ok.body.features, { fareWatch: false });
   assert.ok(ok.body.trialEndsAt);
@@ -97,7 +97,7 @@ test('feature gate: child 403 trên /ticket-watches và /fares tới khi admin b
 });
 
 test('audit: login ghi dòng action=login', async () => {
-  await h.api().post('/api/auth/login', { username: 'other', password: 'secret123' });
+  await h.api().post('/api/auth/login', { username: 'other', password: h.TEST_PASSWORD });
   const rows = await h.waitFor(async () => {
     const r = await h.pool.query("SELECT * FROM audit_logs WHERE action = 'login' AND user_id = $1", [U.other.id]);
     return r.rows.length ? r.rows : null;

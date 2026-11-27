@@ -40,7 +40,7 @@ test('password reset: đại lý cha OK, user lạ 404/403, admin OK, tự mình
   assert.equal(r.status, 200);
   assert.ok(r.body.message);
   assert.equal((await h.api().post('/api/auth/login', { username: 'kid', password: 'newpass123' })).status, 200);
-  assert.equal((await h.api().post('/api/auth/login', { username: 'kid', password: 'secret123' })).status, 401);
+  assert.equal((await h.api().post('/api/auth/login', { username: 'kid', password: h.TEST_PASSWORD })).status, 401);
 
   r = await h.api(U.other.token).post(`/api/users/${kid.id}/password`, { newPassword: 'hacked123' });
   assert.ok([403, 404].includes(r.status));
@@ -56,17 +56,17 @@ test('password reset: đại lý cha OK, user lạ 404/403, admin OK, tự mình
 test('createUser validate + GET /api/users outstanding gộp 4 loại', async () => {
   const agency3 = await h.createUser({ username: 'agency3', role: 'agency' });
   const api = h.api(agency3.token);
-  assert.equal((await api.post('/api/users', { username: 'ab', password: 'secret123' })).status, 400);
-  assert.equal((await api.post('/api/users', { username: 'a'.repeat(51), password: 'secret123' })).status, 400);
+  assert.equal((await api.post('/api/users', { username: 'ab', password: h.TEST_PASSWORD })).status, 400);
+  assert.equal((await api.post('/api/users', { username: 'a'.repeat(51), password: h.TEST_PASSWORD })).status, 400);
   assert.equal((await api.post('/api/users', { username: 'okuser', password: '12345' })).status, 400);
-  const c = await api.post('/api/users', { username: 'okuser', password: 'secret123', role: 'admin' });
+  const c = await api.post('/api/users', { username: 'okuser', password: h.TEST_PASSWORD, role: 'admin' });
   assert.equal(c.status, 201);
   assert.equal(c.body.role, 'user', 'agency không gán role');
   assert.equal(c.body.parent_id, agency3.id);
   assert.deepEqual(c.body.features, { fareWatch: false });
-  assert.equal((await api.post('/api/users', { username: 'okuser', password: 'secret123' })).status, 409);
+  assert.equal((await api.post('/api/users', { username: 'okuser', password: h.TEST_PASSWORD })).status, 409);
 
-  const tok = (await h.api().post('/api/auth/login', { username: 'okuser', password: 'secret123' })).body.token;
+  const tok = (await h.api().post('/api/auth/login', { username: 'okuser', password: h.TEST_PASSWORD })).body.token;
   const kidApi = h.api(tok);
   await kidApi.post('/api/debts', { customerName: 'K', ticketAmount: 100, paid: 10 });
   await kidApi.post('/api/passports', { customerName: 'K', serviceDate: '2026-01-01', totalAmount: 200, paidAmount: 50 });

@@ -6,7 +6,10 @@
 
 // Đặt env TRƯỚC khi require bất cứ module nào của app (dotenv không ghi đè biến đã có).
 process.env.DATABASE_URL = process.env.DATABASE_URL || 'postgresql://postgres@127.0.0.1:5499/qlcn_test';
-process.env.JWT_SECRET = process.env.JWT_SECRET || 'testsecret_testsecret_testsecret_1234';
+// Secret + mật khẩu test sinh ngẫu nhiên mỗi lần chạy (không viết cứng chuỗi giống secret trong repo).
+const crypto = require('crypto');
+process.env.JWT_SECRET = process.env.JWT_SECRET || crypto.randomBytes(32).toString('hex');
+const TEST_PASSWORD = `t${crypto.randomBytes(9).toString('base64url')}`;
 process.env.AUTO_MIGRATE = 'true';
 process.env.NODE_ENV = 'test';
 process.env.LOG_LEVEL = process.env.LOG_LEVEL || 'error';
@@ -62,7 +65,7 @@ async function stop() {
 }
 
 /** Tạo user trực tiếp trong DB (bcrypt). Trả row + token. */
-async function createUser({ username, password = 'secret123', role = 'user', parentId = null, email = null, fullName = null, features = {}, trialEndsAt = null }) {
+async function createUser({ username, password = TEST_PASSWORD, role = 'user', parentId = null, email = null, fullName = null, features = {}, trialEndsAt = null }) {
   const hash = await bcrypt.hash(password, 4);
   const { rows } = await pool.query(
     `INSERT INTO users (username, password_hash, role, parent_id, email, full_name, features, trial_ends_at)
@@ -119,4 +122,4 @@ async function waitFor(fn, { timeoutMs = 2000, stepMs = 25 } = {}) {
   }
 }
 
-module.exports = { pool, app, resetDb, start, stop, createUser, seedUsers, api, waitFor, baseUrl: () => baseUrl };
+module.exports = { TEST_PASSWORD, pool, app, resetDb, start, stop, createUser, seedUsers, api, waitFor, baseUrl: () => baseUrl };
