@@ -1,15 +1,19 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { Plus, Search, Edit2, Trash2, Upload, X, Users } from 'lucide-react';
-import ImportModal from './components/ImportModal';
-import AgencyFilter from './components/AgencyFilter';
-import { apiGet, apiSend } from './services/client';
-import { formatCurrency } from './utils/format';
-import VnDatePicker from './components/VnDatePicker';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  Plus, Upload, Trash2, Pencil, Users, Landmark, UserX, Cake, Eye, RefreshCw, RotateCcw, Building2, FileText,
+} from 'lucide-react';
 import { useAuth } from './auth/AuthContext';
-import { useSort } from './hooks/useSort';
-import ConfirmDialog from './components/ConfirmDialog';
-import Toast from './components/Toast';
-import { useToast, useConfirm } from './hooks/useFeedback';
+import { useNavigation } from './hooks/useNavigation.jsx';
+import { useFeedback } from './ui/FeedbackContext';
+import { useTableState } from './hooks/useTableState';
+import { api, qs } from './services/client';
+import { formatCurrency, formatDate, num, today, monthOf } from './utils/format';
+import {
+  Button, IconButton, Select, SearchInput, Badge, PageHeader, StatCard, DataTable, ErrorBanner,
+} from './ui';
+import AgencyFilter from './components/AgencyFilter';
+import ImportModal from './components/ImportModal';
+import CustomerDetail, { CustomerFormModal } from './modules/CustomerDetail';
 
 const CUSTOMER_IMPORT_FIELDS = [
   { key: 'name', label: 'Tên khách hàng', required: true, aliases: ['khách hàng', 'ho ten', 'họ tên'] },
@@ -24,347 +28,282 @@ const CUSTOMER_IMPORT_SAMPLE = {
   address: 'Hà Nội', idNumber: '0010xxxxxxxx', type: 'individual',
 };
 
-const EMPTY = { name: '', phone: '', email: '', address: '', idNumber: '', type: 'individual', creditLimit: '', notes: '', birthday: '', companyId: '' };
+const FILTERS = [
+  { value: 'all', label: 'Tất cả' },
+  { value: 'debtor', label: 'Còn nợ' },
+  { value: 'company', label: 'Công ty' },
+  { value: 'individual', label: 'Cá nhân' },
+];
 
-export default function CustomerApp() {
+/** Sinh nhật trong tháng hiện tại (so sánh phần MM của 'YYYY-MM-DD'). */
+const birthdayThisMonth = (c) => !!c.birthday && monthOf(c.birthday).slice(5) === today().slice(5, 7);
+
+const COLUMNS = [
+  { key: 'name', label: 'Khách hàng', sortable: true, required: true },
+  { key: 'phone', label: 'SĐT', sortable: true },
+  { key: 'type', label: 'Loại', sortable: true, hideBelow: 'md' },
+  { key: 'owner', label: 'Đại lý', hideBelow: 'lg' },
+  { key: 'birthday', label: 'Sinh nhật', hideBelow: 'lg', sortable: true },
+  { key: 'outstanding', label: 'Còn nợ', align: 'right', sortable: true, required: true },
+];
+
+export default function CustomerApp({ param }) {
+  if (param) return <CustomerDetail key={param} id={param} />;
+  return <CustomerList />;
+}
+
+function CustomerList() {
   const { user } = useAuth();
+  const { navigate } = useNavigation();
+  const { toast, confirm } = useFeedback();
   const currentUserId = user?.id;
-  const [customers, setCustomers] = useState([]);
+
+  const [rows, setRows] = useState([]);
   const [companies, setCompanies] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
-  const [search, setSearch] = useState('');
-  const [companyFilter, setCompanyFilter] = useState('');
   const [agencyId, setAgencyId] = useState('');
-  const [showForm, setShowForm] = useState(false);
-  const [showImport, setShowImport] = useState(false);
-  const [editingId, setEditingId] = useState(null);
-  const [form, setForm] = useState(EMPTY);
-  const [selectedIds, setSelectedIds] = useState([]);
-  const [page, setPage] = useState(1);
-  const sorter = useSort();
-  const { toast, showToast } = useToast();
-  const { confirmState, askConfirm, closeConfirm } = useConfirm();
+  const [form, setForm] = useState(null);          // null = đóng; {} = thêm; row = sửa
+  const [importOpen, setImportOpen] = useState(false);
 
-  const load = async () => {
-    setLoading(true);
+  const t = useTableState({ storageKey: 'customers', columns: COLUMNS, pageSize: 50, defaultSort: { key: 'name', dir: 'asc' } });
+  const kind = t.filters.kind || 'all';
+
+  const load = useCallback(async ({ silent = false } = {}) => {
+    if (silent) setRefreshing(true); else setLoading(true);
     setError('');
     try {
-      setCustomers(await apiGet(`/customers${agencyId ? `?agencyId=${agencyId}` : ''}`));
+      setRows(await api.get(`/customers${qs({ agencyId })}`));
     } catch (err) {
       setError(err.message);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
-  };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { load(); }, [agencyId]);
+  }, [agencyId]);
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => { api.get('/companies').then(setCompanies).catch(() => {}); }, []);
 
-  // Danh sách công ty (để gắn cho khách loại "Công ty").
-  useEffect(() => { apiGet('/companies').then(setCompanies).catch(() => {}); }, []);
+  const companyName = useCallback((id) => companies.find((c) => String(c.id) === String(id))?.name, [companies]);
+  const owned = (row) => !currentUserId || row.user_id === currentUserId;
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return customers.filter((c) => {
-      const matchText = !q || c.name?.toLowerCase().includes(q) || c.phone?.includes(q);
-      const matchCompany = !companyFilter || String(c.company_id) === companyFilter;
-      return matchText && matchCompany;
-    });
-  }, [customers, search, companyFilter]);
+  const { filtered, sorted, paged, totalPages, page } = t.process(rows, {
+    searchText: (r) => `${r.name || ''} ${r.phone || ''} ${r.email || ''} ${r.id_number || ''} ${companyName(r.company_id) || ''}`,
+    filterFns: [
+      kind === 'debtor' ? (r) => num(r.outstanding) > 0 : null,
+      kind === 'company' ? (r) => r.type === 'company' : null,
+      kind === 'individual' ? (r) => r.type !== 'company' : null,
+    ],
+    sortValue: (r, key) => {
+      if (key === 'outstanding') return num(r.outstanding);
+      if (key === 'type') return r.type === 'company' ? `1${companyName(r.company_id) || ''}` : '0';
+      if (key === 'birthday') return monthOf(r.birthday).slice(5) + (r.birthday || '').slice(8, 10);
+      return String(r[key] || '').toLowerCase();
+    },
+  });
 
-  const sorted = sorter.sort(filtered, (c, k) =>
-    k === 'name' ? (c.name || '').toLowerCase() : k === 'outstanding' ? Number(c.outstanding) || 0 : '');
+  const stats = useMemo(() => ({
+    count: filtered.length,
+    outstanding: filtered.reduce((s, r) => s + Math.max(0, num(r.outstanding)), 0),
+    debtors: filtered.filter((r) => num(r.outstanding) > 0).length,
+    birthdays: filtered.filter(birthdayThisMonth).length,
+  }), [filtered]);
 
-  const selectableIds = sorted.filter(c => !currentUserId || c.user_id === currentUserId).map(c => c.id);
-  const allSelected = selectableIds.length > 0 && selectableIds.every(id => selectedIds.includes(id));
-  const toggleSelectAll = () => setSelectedIds(allSelected ? [] : selectableIds);
+  // ---------- Chọn nhiều / xoá ----------
+  const selectableIds = sorted.filter(owned).map((r) => r.id);
+  const allSelected = selectableIds.length > 0 && selectableIds.every((id) => t.selected.includes(id));
+  const toggleAll = () => t.setSelected(allSelected ? [] : selectableIds);
 
-  // Phân trang phía client.
-  const PAGE_SIZE = 50;
-  const totalPages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
-  const curPage = Math.min(page, totalPages);
-  const pagedCustomers = sorted.slice((curPage - 1) * PAGE_SIZE, curPage * PAGE_SIZE);
-  useEffect(() => { setPage(1); }, [search, companyFilter, agencyId]);
-
-  const openAdd = () => { setForm(EMPTY); setEditingId(null); setShowForm(true); };
-  const openEdit = (c) => {
-    setForm({
-      name: c.name || '', phone: c.phone || '', email: c.email || '', address: c.address || '',
-      idNumber: c.id_number || '', type: c.type || 'individual',
-      creditLimit: c.credit_limit || '', notes: c.notes || '',
-      birthday: (c.birthday || '').slice(0, 10),
-      companyId: c.company_id || '',
-    });
-    setEditingId(c.id);
-    setShowForm(true);
-  };
-
-  const save = async () => {
-    if (form.type === 'company' && !form.companyId) { showToast('Vui lòng chọn công ty', 'error'); return; }
-    if (!form.name.trim()) { showToast('Nhập tên khách hàng', 'error'); return; }
+  const remove = async (row) => {
+    if (!(await confirm({ title: 'Xoá khách hàng', message: `Xoá khách "${row.name}"? Không thể hoàn tác.` }))) return;
     try {
-      if (editingId) await apiSend('PUT', `/customers/${editingId}`, form);
-      else await apiSend('POST', '/customers', form);
-      setShowForm(false);
-      showToast(editingId ? 'Cập nhật khách hàng thành công' : 'Đã thêm khách hàng');
-      load();
+      await api.del(`/customers/${row.id}`);
+      setRows((rs) => rs.filter((r) => r.id !== row.id));
+      t.setSelected((s) => s.filter((x) => x !== row.id));
+      toast.success('Đã xoá khách hàng');
+    } catch (err) { toast.error(err.message); }
+  };
+
+  const bulkDelete = async () => {
+    const n = t.selected.length;
+    if (!(await confirm({ title: 'Xoá hàng loạt', message: `Xoá ${n} khách hàng đã chọn? Không thể hoàn tác.`, confirmText: `Xoá ${n} mục` }))) return;
+    try {
+      const data = await api.post('/customers/bulk-delete', { ids: t.selected });
+      const removed = new Set(t.selected);
+      setRows((rs) => rs.filter((r) => !removed.has(r.id)));
+      t.clearSelection();
+      toast.success(`Đã xoá ${data.deleted} khách hàng`);
+    } catch (err) { toast.error(err.message); }
+  };
+
+  const importCustomers = async (importRows) => {
+    try {
+      const data = await api.post('/customers/import', { rows: importRows });
+      return { inserted: data.inserted || 0, skipped: data.skipped || 0, failed: data.failed ?? (data.errors?.length || 0), errors: data.errors || [] };
     } catch (err) {
-      showToast('Lỗi: ' + err.message, 'error');
+      const d = err.data || {};
+      return { inserted: d.inserted || 0, skipped: d.skipped || 0, failed: d.failed ?? (d.errors?.length || 0), errors: d.errors || [{ row: '-', message: d.error || err.message }] };
     }
   };
 
-  const remove = (c) => {
-    askConfirm(`Xóa khách hàng "${c.name}"?`, async () => {
-      try {
-        await apiSend('DELETE', `/customers/${c.id}`);
-        setSelectedIds(prev => prev.filter(x => x !== c.id));
-        showToast('Đã xóa khách hàng');
-        load();
-      } catch (err) { showToast('Lỗi: ' + err.message, 'error'); }
-    });
+  // ---------- Cột ----------
+  const columns = [
+    ...COLUMNS.filter((c) => c.required || t.isVisible(c.key)).map((c) => ({
+      ...c,
+      render: {
+        name: (r) => (
+          <button type="button" onClick={() => navigate('customer', r.id)} className="flex items-center gap-2.5 text-left group/name">
+            <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-brand-50 text-brand-700 text-xs font-bold">{(r.name || '?').trim().charAt(0).toUpperCase()}</span>
+            <span className="min-w-0">
+              <span className="block font-semibold text-ink group-hover/name:text-brand-600 group-hover/name:underline truncate max-w-[220px]">{r.name}</span>
+              {r.email && <span className="block text-xs text-ink-faint truncate max-w-[220px]">{r.email}</span>}
+            </span>
+          </button>
+        ),
+        phone: (r) => r.phone ? <a href={`tel:${r.phone}`} className="hover:text-brand-600 tabular">{r.phone}</a> : <span className="text-ink-faint">—</span>,
+        type: (r) => r.type === 'company'
+          ? <Badge tone="purple" icon={Building2}>{companyName(r.company_id) || 'Công ty'}</Badge>
+          : <Badge tone="gray">Cá nhân</Badge>,
+        owner: (r) => <span className="text-xs text-ink-muted">{r.owner_name || r.owner_username || ''}</span>,
+        birthday: (r) => r.birthday ? (
+          <span className="inline-flex items-center gap-1.5">{formatDate(r.birthday)}{birthdayThisMonth(r) && <Badge tone="warning" icon={Cake}>Tháng này</Badge>}</span>
+        ) : <span className="text-ink-faint">—</span>,
+        outstanding: (r) => {
+          const o = num(r.outstanding);
+          const limit = num(r.credit_limit);
+          return (
+            <span className="inline-flex flex-col items-end">
+              <span className={`font-bold tabular ${o > 0 ? 'text-danger-600' : 'text-success-600'}`}>{formatCurrency(o)}</span>
+              {limit > 0 && o > limit && <span className="text-[11px] text-danger-600">vượt hạn mức {formatCurrency(limit)}</span>}
+            </span>
+          );
+        },
+      }[c.key],
+    })),
+    {
+      key: '__actions', label: '', align: 'right', width: 110,
+      render: (row) => owned(row) ? (
+        <div className="flex justify-end gap-0.5 opacity-70 group-hover:opacity-100 transition">
+          <IconButton icon={FileText} title="Chi tiết / bảng kê" variant="ghost" onClick={() => navigate('customer', row.id)} />
+          <IconButton icon={Pencil} title="Sửa" variant="primary" onClick={() => setForm(row)} />
+          <IconButton icon={Trash2} title="Xoá" variant="danger" onClick={() => remove(row)} />
+        </div>
+      ) : <Badge tone="outline" icon={Eye}>Chỉ xem</Badge>,
+    },
+  ];
+
+  const mobileCard = (r) => {
+    const o = num(r.outstanding);
+    return (
+      <div className="flex flex-col gap-1.5">
+        <div className="flex items-start justify-between gap-2">
+          <button type="button" onClick={() => navigate('customer', r.id)} className="min-w-0 text-left">
+            <p className="font-semibold text-ink truncate">{r.name}</p>
+            <p className="text-xs text-ink-muted truncate">{r.phone || 'không SĐT'}{r.type === 'company' ? ` · ${companyName(r.company_id) || 'Công ty'}` : ''}</p>
+          </button>
+          <span className={`font-bold tabular shrink-0 ${o > 0 ? 'text-danger-600' : 'text-success-600'}`}>{o > 0 ? `Nợ ${formatCurrency(o)}` : 'Không nợ'}</span>
+        </div>
+        <div className="flex items-center gap-2 pt-1">
+          <Button size="xs" variant="soft" icon={FileText} onClick={() => navigate('customer', r.id)}>Chi tiết</Button>
+          {owned(r) ? (
+            <>
+              <Button size="xs" variant="secondary" icon={Pencil} onClick={() => setForm(r)}>Sửa</Button>
+              <Button size="xs" variant="ghost" icon={Trash2} className="text-danger-600" onClick={() => remove(r)}>Xoá</Button>
+            </>
+          ) : <Badge tone="outline" icon={Eye}>Chỉ xem</Badge>}
+        </div>
+      </div>
+    );
   };
 
-  const toggleSelect = (id) =>
-    setSelectedIds(prev => (prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]));
-
-  const handleBulkDelete = () => {
-    if (selectedIds.length === 0) return;
-    askConfirm(`Xóa ${selectedIds.length} khách hàng đã chọn? Hành động này không thể hoàn tác.`, async () => {
-      try {
-        const data = await apiSend('POST', '/customers/bulk-delete', { ids: selectedIds });
-        setSelectedIds([]);
-        showToast(`Đã xóa ${data.deleted} khách hàng`);
-        load();
-      } catch (err) { showToast('Lỗi: ' + err.message, 'error'); }
-    }, { confirmText: `Xóa ${selectedIds.length} mục` });
-  };
-
-  const importCustomers = async (rows) => {
-    const data = await apiSend('POST', '/customers/import', { rows }).catch((e) => e.response?.data || { error: e.message });
-    return {
-      inserted: data.inserted || 0,
-      skipped: data.skipped || 0,
-      failed: data.failed ?? (data.errors?.length || 0),
-      errors: data.errors || (data.error ? [{ row: '-', message: data.error }] : []),
-    };
-  };
+  const hasFilter = t.search || kind !== 'all';
 
   return (
-    <div className="min-h-screen bg-gray-50 p-4 sm:p-6">
-      <div className="max-w-7xl mx-auto">
-        <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
-          <h2 className="flex items-center gap-2 text-2xl font-bold text-gray-900">
-            <Users /> Khách hàng
-          </h2>
-          <div className="flex gap-2">
-            <button onClick={openAdd} className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold text-sm">
-              <Plus size={18} /> Thêm
-            </button>
-            <button onClick={() => setShowImport(true)} className="flex items-center gap-2 px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 font-semibold text-sm">
-              <Upload size={18} /> Import
-            </button>
-          </div>
-        </div>
-
-        <div className="flex flex-col sm:flex-row gap-3 mb-4">
-          <div className="relative flex-1">
-            <Search className="absolute left-3 top-2.5 text-gray-400" size={18} />
-            <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Tìm theo tên hoặc SĐT…"
-              className="w-full pl-10 pr-4 py-2 border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none"
-            />
-          </div>
-          <select
-            value={companyFilter}
-            onChange={(e) => setCompanyFilter(e.target.value)}
-            className="px-4 py-2 border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm bg-white"
-          >
-            <option value="">Tất cả công ty</option>
-            {companies.map((c) => (
-              <option key={c.id} value={c.id}>{c.name}</option>
-            ))}
-          </select>
-          <AgencyFilter value={agencyId} onChange={setAgencyId} />
-        </div>
-
-        {selectedIds.length > 0 && (
-          <div className="flex items-center justify-between gap-3 mb-3 px-4 py-2.5 bg-red-50 border border-red-200 rounded-xl">
-            <span className="text-sm font-medium text-red-700">Đã chọn {selectedIds.length} khách hàng</span>
-            <div className="flex gap-2">
-              <button onClick={() => setSelectedIds([])} className="px-3 py-1.5 rounded-lg bg-white border text-gray-600 hover:bg-gray-50 text-sm font-semibold">Bỏ chọn</button>
-              <button onClick={handleBulkDelete} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-600 text-white hover:bg-red-700 text-sm font-semibold">
-                <Trash2 size={15} /> Xóa đã chọn ({selectedIds.length})
-              </button>
-            </div>
-          </div>
+    <div>
+      <PageHeader
+        icon={Users}
+        title="Khách hàng"
+        description="Danh bạ khách, công nợ gộp 4 dịch vụ và bảng kê in được."
+        actions={(
+          <>
+            <Button variant="secondary" icon={Upload} onClick={() => setImportOpen(true)}>Import</Button>
+            <Button icon={Plus} onClick={() => setForm({})}>Thêm khách</Button>
+          </>
         )}
+      />
 
-        {loading && <p className="text-gray-500">Đang tải…</p>}
-        {error && <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-red-700">{error}</div>}
-
-        {!loading && !error && (
-          <div className="bg-white rounded-2xl shadow overflow-auto max-h-[70vh]">
-            <table className="min-w-full text-sm">
-              <thead className="bg-gray-50 sticky top-0 z-10 [&_th]:bg-gray-50">
-                <tr>
-                  <th className="px-4 py-3 text-left font-semibold text-gray-600 sticky left-0 z-20">
-                    <span className="inline-flex items-center gap-2">
-                      <input type="checkbox" checked={allSelected} onChange={toggleSelectAll} title="Chọn tất cả" className="w-4 h-4 rounded cursor-pointer" />
-                      <span onClick={() => sorter.toggle('name')} className="cursor-pointer select-none hover:text-gray-900">Tên{sorter.arrow('name')}</span>
-                    </span>
-                  </th>
-                  <th className="px-4 py-3 text-left font-semibold text-gray-600">SĐT</th>
-                  <th className="px-4 py-3 text-left font-semibold text-gray-600 hidden md:table-cell">Đại lý</th>
-                  <th className="px-4 py-3 text-left font-semibold text-gray-600">Loại</th>
-                  <th onClick={() => sorter.toggle('outstanding')} className="px-4 py-3 text-right font-semibold text-gray-600 cursor-pointer select-none hover:bg-gray-100">Còn nợ{sorter.arrow('outstanding')}</th>
-                  <th className="px-4 py-3 text-right font-semibold text-gray-600"></th>
-                </tr>
-              </thead>
-              <tbody>
-                {sorted.length === 0 ? (
-                  <tr><td colSpan={6} className="px-4 py-8 text-center text-gray-400">Chưa có khách hàng.</td></tr>
-                ) : pagedCustomers.map((c) => (
-                  <tr key={c.id} className="border-t hover:bg-gray-50 group">
-                    <td className="px-4 py-3 font-medium text-gray-800 sticky left-0 z-10 bg-white group-hover:bg-gray-50">
-                      <span className="inline-flex items-center gap-2">
-                        {(!currentUserId || c.user_id === currentUserId) && (
-                          <input type="checkbox" checked={selectedIds.includes(c.id)} onChange={() => toggleSelect(c.id)} className="w-4 h-4 rounded cursor-pointer shrink-0" />
-                        )}
-                        {(!currentUserId || c.user_id === currentUserId) ? (
-                          <span onClick={() => openEdit(c)} title="Bấm để sửa" className="cursor-pointer hover:underline">{c.name}</span>
-                        ) : c.name}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-gray-600">{c.phone || '—'}</td>
-                    <td className="px-4 py-3 text-gray-500 text-xs hidden md:table-cell">{c.owner_name || c.owner_username || ''}</td>
-                    <td className="px-4 py-3 text-gray-600">
-                      {c.type === 'company'
-                        ? (companies.find((co) => String(co.id) === String(c.company_id))?.name || 'Công ty')
-                        : 'Cá nhân'}
-                    </td>
-                    <td className="px-4 py-3 text-right font-semibold text-red-600">{formatCurrency(c.outstanding)}</td>
-                    <td className="px-4 py-3 text-right whitespace-nowrap">
-                      {(!currentUserId || c.user_id === currentUserId) ? (
-                        <>
-                          <button onClick={() => openEdit(c)} className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg"><Edit2 size={16} /></button>
-                          <button onClick={() => remove(c)} className="p-2 text-red-600 hover:bg-red-50 rounded-lg"><Trash2 size={16} /></button>
-                        </>
-                      ) : (
-                        <span className="text-xs text-gray-400 italic">Chỉ xem</span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {sorted.length > PAGE_SIZE && (
-              <div className="flex items-center justify-between gap-3 px-4 py-3 border-t bg-gray-50 text-xs sm:text-sm">
-                <span className="text-gray-500">
-                  {(curPage - 1) * PAGE_SIZE + 1}–{Math.min(curPage * PAGE_SIZE, sorted.length)} / {sorted.length} khách
-                </span>
-                <div className="flex items-center gap-1">
-                  <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={curPage <= 1} className="px-3 py-1.5 rounded-lg border bg-white disabled:opacity-40 hover:bg-gray-100 font-semibold">Trước</button>
-                  <span className="px-2 text-gray-600">Trang {curPage}/{totalPages}</span>
-                  <button onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={curPage >= totalPages} className="px-3 py-1.5 rounded-lg border bg-white disabled:opacity-40 hover:bg-gray-100 font-semibold">Sau</button>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+        <StatCard icon={Users} label="Số khách" value={stats.count} sub={hasFilter ? 'theo bộ lọc' : `${rows.length} tổng`} tone="brand" />
+        <StatCard icon={Landmark} label="Tổng còn nợ" value={formatCurrency(stats.outstanding)} tone="danger" onClick={() => t.setFilter('kind', kind === 'debtor' ? 'all' : 'debtor')} sub="Bấm để lọc khách còn nợ" />
+        <StatCard icon={UserX} label="Khách còn nợ" value={stats.debtors} sub={stats.count ? `${Math.round((stats.debtors / stats.count) * 100)}% số khách` : ''} tone="warning" />
+        <StatCard icon={Cake} label="Sinh nhật tháng này" value={stats.birthdays} sub="Gửi lời chúc giữ khách" tone="purple" />
       </div>
 
-      {/* Form modal */}
-      {showForm && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 p-4 overflow-y-auto">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg my-8">
-            <div className="flex items-center justify-between border-b px-6 py-4">
-              <h3 className="text-lg font-bold">{editingId ? 'Sửa khách hàng' : 'Thêm khách hàng'}</h3>
-              <button onClick={() => setShowForm(false)} className="text-gray-400 hover:text-gray-700"><X size={22} /></button>
-            </div>
-            <div className="px-6 py-4 space-y-3">
-              <div>
-                <label className="block text-sm text-gray-600 mb-1">Loại</label>
-                <select
-                  value={form.type}
-                  onChange={(e) => {
-                    const type = e.target.value;
-                    // Khách lẻ thì bỏ liên kết công ty; "thuộc công ty" thì chờ chọn ở dropdown.
-                    setForm(type === 'individual' ? { ...form, type, companyId: '' } : { ...form, type });
-                  }}
-                  className="w-full border rounded-lg px-3 py-2"
-                >
-                  <option value="individual">Cá nhân (khách lẻ)</option>
-                  <option value="company">Thuộc công ty</option>
-                </select>
-              </div>
+      <div className="card mb-4 p-3 flex flex-col lg:flex-row lg:items-center gap-2.5">
+        <SearchInput value={t.search} onChange={t.setSearch} placeholder="Tìm tên, SĐT, email, CCCD, công ty…" className="lg:w-80" />
+        <div className="flex flex-wrap items-center gap-2">
+          <Select size="sm" value={kind} onChange={(e) => t.setFilter('kind', e.target.value)} className="w-36">
+            {FILTERS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </Select>
+          <AgencyFilter value={agencyId} onChange={setAgencyId} />
+          {hasFilter && <Button size="sm" variant="ghost" icon={RotateCcw} onClick={() => { t.setSearch(''); t.setFilters({}); }}>Xoá lọc</Button>}
+        </div>
+        <div className="flex items-center gap-1 lg:ml-auto">
+          <IconButton icon={RefreshCw} title="Tải lại" onClick={() => load({ silent: true })} className={refreshing ? 'animate-spin' : ''} />
+        </div>
+      </div>
 
-              {form.type === 'company' && (
-                <div>
-                  <label className="block text-sm text-gray-600 mb-1">Công ty *</label>
-                  <select
-                    value={form.companyId}
-                    onChange={(e) => setForm({ ...form, companyId: e.target.value })}
-                    className="w-full border rounded-lg px-3 py-2"
-                  >
-                    <option value="">— Chọn công ty —</option>
-                    {companies.map((c) => (
-                      <option key={c.id} value={c.id}>{c.name}</option>
-                    ))}
-                  </select>
-                  {companies.length === 0 && (
-                    <p className="text-xs text-amber-600 mt-1">Chưa có công ty. Tạo ở mục Công nợ vé → nút “Công ty”.</p>
-                  )}
-                </div>
-              )}
-
-              {/* Thông tin từng khách bay — luôn là một cá nhân, luôn nhập được. */}
-              {[
-                ['name', 'Tên khách hàng *'], ['phone', 'Số điện thoại'],
-                ['email', 'Email'], ['address', 'Địa chỉ'], ['idNumber', 'CCCD/CMND'],
-              ].map(([k, label]) => (
-                <div key={k}>
-                  <label className="block text-sm text-gray-600 mb-1">{label}</label>
-                  <input
-                    value={form[k]}
-                    onChange={(e) => setForm({ ...form, [k]: e.target.value })}
-                    className="w-full border rounded-lg px-3 py-2 focus:border-blue-500 focus:outline-none"
-                  />
-                </div>
-              ))}
-              <div>
-                <label className="block text-sm text-gray-600 mb-1">Ngày sinh</label>
-                <VnDatePicker value={form.birthday} onChange={(v) => setForm({ ...form, birthday: v })} />
-              </div>
-            </div>
-            <div className="flex justify-end gap-3 border-t px-6 py-4">
-              <button onClick={() => setShowForm(false)} className="px-5 py-2 bg-gray-200 rounded-lg font-semibold text-sm">Huỷ</button>
-              <button onClick={save} className="px-5 py-2 bg-blue-600 text-white rounded-lg font-semibold text-sm">Lưu</button>
-            </div>
+      {t.selected.length > 0 && (
+        <div className="mb-3 flex items-center justify-between gap-3 rounded-xl border border-danger-100 bg-danger-50 px-4 py-2.5 animate-fade-in">
+          <span className="text-sm font-medium text-danger-700">Đã chọn {t.selected.length} khách</span>
+          <div className="flex gap-2">
+            <Button size="sm" variant="secondary" onClick={t.clearSelection}>Bỏ chọn</Button>
+            <Button size="sm" variant="danger" icon={Trash2} onClick={bulkDelete}>Xoá đã chọn</Button>
           </div>
         </div>
       )}
 
+      <ErrorBanner message={error} onRetry={load} />
+
+      <DataTable
+        columns={columns}
+        rows={paged}
+        loading={loading}
+        sort={t.sort}
+        onSort={t.toggleSort}
+        selectable
+        selectedIds={t.selected}
+        onToggleRow={t.toggleSelect}
+        onToggleAll={toggleAll}
+        allSelected={allSelected}
+        canSelect={owned}
+        emptyIcon={Users}
+        emptyTitle={rows.length ? 'Không có khách nào khớp bộ lọc' : 'Chưa có khách hàng'}
+        emptyDescription={rows.length ? 'Thử đổi từ khoá hoặc bộ lọc.' : 'Thêm khách thủ công hoặc Import từ Excel. Khách cũng được tạo tự động khi nhập vé.'}
+        emptyAction={!rows.length && <Button icon={Plus} onClick={() => setForm({})}>Thêm khách</Button>}
+        pagination={{ page, totalPages, total: sorted.length, pageSize: t.pageSize, onChange: t.setPage }}
+        mobileCard={mobileCard}
+      />
+
+      <CustomerFormModal
+        open={!!form}
+        initial={form?.id ? form : null}
+        companies={companies}
+        onClose={() => setForm(null)}
+        onSaved={() => load({ silent: true })}
+      />
+
       <ImportModal
-        open={showImport}
-        onClose={() => setShowImport(false)}
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
         title="Import khách hàng từ Excel/CSV"
         templateName="mau-import-khach-hang.xlsx"
         fields={CUSTOMER_IMPORT_FIELDS}
         sampleRow={CUSTOMER_IMPORT_SAMPLE}
         onImport={importCustomers}
-        onSuccess={load}
+        onSuccess={() => load({ silent: true })}
       />
-
-      <ConfirmDialog
-        open={!!confirmState}
-        message={confirmState?.message}
-        confirmText={confirmState?.confirmText}
-        onCancel={closeConfirm}
-        onConfirm={() => { confirmState?.onConfirm?.(); closeConfirm(); }}
-      />
-      <Toast toast={toast} />
     </div>
   );
 }

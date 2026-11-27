@@ -1,7 +1,34 @@
-// controllers/debtController.js
+// controllers/debtController.js — công nợ vé máy bay.
 const pool = require('../config/database');
 const logger = require('../config/logger');
 const { parseAmount, parseDate, upsertCustomer } = require('../utils/importHelpers');
+const { todayLocal } = require('../utils/dates');
+const { assertOwns } = require('../utils/ownership');
+const { logAudit } = require('../utils/audit');
+const v = require('../utils/validate');
+
+const PAYMENT_TARGETS = ['self', 'agency'];
+
+// Kiểm tra + chuẩn hoá body tạo/sửa vé. Ném ValidationError (→ 400) khi sai.
+function parseDebtBody(body) {
+  return {
+    customerName: v.str(body.customerName, { max: 255, required: true, label: 'Tên khách hàng' }),
+    phoneNumber: v.str(body.phoneNumber, { max: 20, label: 'Số điện thoại' }),
+    ticketCode: v.str(body.ticketCode, { max: 50, label: 'Mã vé' }),
+    airline: v.str(body.airline, { max: 50, label: 'Hãng bay' }),
+    route: v.str(body.route, { max: 50, label: 'Hành trình' }),
+    flightDate: v.dateStr(body.flightDate, { label: 'Ngày bay' }),
+    issueDate: v.dateStr(body.issueDate, { label: 'Ngày xuất vé' }),
+    dueDate: v.dateStr(body.dueDate, { label: 'Hạn thanh toán' }),
+    ticketSource: v.str(body.ticketSource, { max: 100, label: 'Nguồn xuất vé' }),
+    ticketAmount: v.amount(body.ticketAmount, { required: true, label: 'Tiền vé' }),
+    costAmount: v.amount(body.costAmount, { label: 'Giá gốc' }) ?? 0,
+    paid: v.amount(body.paid, { label: 'Đã trả' }) ?? 0,
+    notes: v.str(body.notes, { label: 'Ghi chú' }),
+    companyId: v.int(body.companyId, { min: 1, label: 'Công ty' }),
+    paymentTarget: v.oneOf(body.paymentTarget, PAYMENT_TARGETS, { label: 'Tài khoản nhận', fallback: 'self' }),
+  };
+}
 
 // Get all debts for user
 const getDebts = async (req, res) => {
@@ -28,22 +55,19 @@ const getDebts = async (req, res) => {
 
 // Create new debt — tự tạo/liên kết khách hàng (customer_id).
 const createDebt = async (req, res) => {
-  const {
-    customerName, phoneNumber, ticketCode, airline, route, flightDate,
-    issueDate, dueDate, ticketAmount, costAmount, paid, notes, companyId, paymentTarget, ticketSource
-  } = req.body;
-
-  if (!customerName || !ticketAmount) {
-    return res.status(400).json({ error: 'Customer name and ticket amount required' });
-  }
+  const d = parseDebtBody(req.body);
 
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    if (d.companyId !== null && !(await assertOwns(client, 'companies', d.companyId, req.user.id))) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Công ty không hợp lệ' });
+    }
     const customerId = await upsertCustomer(client, req.user.id, {
-      name: customerName, phone: phoneNumber, type: 'individual',
+      name: d.customerName, phone: d.phoneNumber, type: 'individual',
     });
-    const paidAmt = parseFloat(paid) || 0;
+    const issueDate = d.issueDate || todayLocal();
     const result = await client.query(
       `INSERT INTO debts (
         user_id, customer_id, customer_name, phone_number, ticket_code, airline, route,
@@ -51,27 +75,28 @@ const createDebt = async (req, res) => {
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
       RETURNING *`,
       [
-        req.user.id, customerId, customerName, phoneNumber || '', ticketCode || '', airline || '', route || '',
-        flightDate || null, issueDate || new Date().toISOString().split('T')[0], dueDate || null,
-        ticketSource || null, parseFloat(ticketAmount) || 0, parseFloat(costAmount) || 0, paidAmt, notes || '',
-        companyId || null,
+        req.user.id, customerId, d.customerName, d.phoneNumber || '', d.ticketCode || '', d.airline || '', d.route || '',
+        d.flightDate, issueDate, d.dueDate,
+        d.ticketSource, d.ticketAmount, d.costAmount, d.paid, d.notes || '',
+        d.companyId,
       ]
     );
     // Tạo payment record nếu có số tiền đã trả (để track payment_target).
-    if (paidAmt > 0) {
-      const target = ['self', 'agency'].includes(paymentTarget) ? paymentTarget : 'self';
+    if (d.paid > 0) {
       await client.query(
         `INSERT INTO payments (user_id, debt_id, amount, payment_date, method, payment_target)
-         VALUES ($1, $2, $3, COALESCE($4, CURRENT_DATE), 'cash', $5)`,
-        [req.user.id, result.rows[0].id, paidAmt, issueDate || null, target]
+         VALUES ($1, $2, $3, $4, 'cash', $5)`,
+        [req.user.id, result.rows[0].id, d.paid, issueDate, d.paymentTarget]
       );
     }
     await client.query('COMMIT');
-    res.status(201).json(result.rows[0]);
+    const row = result.rows[0];
+    logAudit(req, { action: 'create', entity: 'debt', entityId: row.id, summary: `Tạo vé ${row.ticket_code || ''} cho ${row.customer_name}`, details: { ticketAmount: d.ticketAmount, paid: d.paid } });
+    res.status(201).json(row);
   } catch (error) {
     await client.query('ROLLBACK');
     logger.error('Create debt error:', error.message);
-    res.status(500).json({ error: error.message || 'Failed to create debt' });
+    res.status(500).json({ error: 'Failed to create debt' });
   } finally {
     client.release();
   }
@@ -79,18 +104,18 @@ const createDebt = async (req, res) => {
 
 // Update debt — cập nhật lại liên kết khách hàng theo tên/SĐT mới.
 const updateDebt = async (req, res) => {
-  const { id } = req.params;
-  const {
-    customerName, phoneNumber, ticketCode, airline, route, flightDate,
-    issueDate, dueDate, ticketAmount, costAmount, notes, companyId, ticketSource
-  } = req.body;
+  const id = v.idParam(req.params.id);
+  const d = parseDebtBody(req.body);
 
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-
+    if (d.companyId !== null && !(await assertOwns(client, 'companies', d.companyId, req.user.id))) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Công ty không hợp lệ' });
+    }
     const customerId = await upsertCustomer(client, req.user.id, {
-      name: customerName, phone: phoneNumber, type: 'individual',
+      name: d.customerName, phone: d.phoneNumber, type: 'individual',
     });
     // KHÔNG cập nhật cột `paid` và KHÔNG đụng bảng payments ở đây:
     // `paid` là tổng suy ra từ payments (xem recomputePaid). Tiền trả thêm
@@ -103,8 +128,8 @@ const updateDebt = async (req, res) => {
       WHERE id = $1 AND user_id = $16
       RETURNING *`,
       [
-        id, customerId, customerName, phoneNumber, ticketCode, airline || '', route, flightDate,
-        issueDate, dueDate || null, ticketSource || null, ticketAmount, parseFloat(costAmount) || 0, notes, companyId || null, req.user.id,
+        id, customerId, d.customerName, d.phoneNumber, d.ticketCode, d.airline || '', d.route, d.flightDate,
+        d.issueDate, d.dueDate, d.ticketSource, d.ticketAmount, d.costAmount, d.notes, d.companyId, req.user.id,
       ]
     );
     if (result.rows.length === 0) {
@@ -112,6 +137,7 @@ const updateDebt = async (req, res) => {
       return res.status(404).json({ error: 'Debt not found' });
     }
     await client.query('COMMIT');
+    logAudit(req, { action: 'update', entity: 'debt', entityId: id, summary: `Sửa vé ${d.ticketCode || ''} của ${d.customerName}` });
     res.json(result.rows[0]);
   } catch (error) {
     await client.query('ROLLBACK');
@@ -124,11 +150,10 @@ const updateDebt = async (req, res) => {
 
 // Delete debt
 const deleteDebt = async (req, res) => {
+  const id = v.idParam(req.params.id);
   try {
-    const { id } = req.params;
-
     const result = await pool.query(
-      'DELETE FROM debts WHERE id = $1 AND user_id = $2 RETURNING id',
+      'DELETE FROM debts WHERE id = $1 AND user_id = $2 RETURNING id, customer_name, ticket_code',
       [id, req.user.id]
     );
 
@@ -136,17 +161,19 @@ const deleteDebt = async (req, res) => {
       return res.status(404).json({ error: 'Debt not found' });
     }
 
+    const row = result.rows[0];
+    logAudit(req, { action: 'delete', entity: 'debt', entityId: id, summary: `Xóa vé ${row.ticket_code || ''} của ${row.customer_name}` });
     res.json({ message: 'Debt deleted' });
   } catch (error) {
-    console.error('Delete debt error:', error);
+    logger.error('Delete debt error:', error.message);
     res.status(500).json({ error: 'Failed to delete debt' });
   }
 };
 
 // Đánh dấu đã/chưa check-in online cho khách.
 const setCheckin = async (req, res) => {
+  const id = v.idParam(req.params.id);
   try {
-    const { id } = req.params;
     const { checkedIn } = req.body;
     const result = await pool.query(
       'UPDATE debts SET checked_in = $1 WHERE id = $2 AND user_id = $3 RETURNING *',
@@ -171,52 +198,13 @@ const bulkDeleteDebts = async (req, res) => {
       'DELETE FROM debts WHERE id = ANY($1) AND user_id = $2 RETURNING id',
       [ids.map(Number).filter(Number.isFinite), req.user.id]
     );
+    if (result.rows.length > 0) {
+      logAudit(req, { action: 'delete', entity: 'debt', summary: `Xóa ${result.rows.length} vé`, details: { ids: result.rows.map((r) => r.id) } });
+    }
     res.json({ deleted: result.rows.length });
   } catch (error) {
     logger.error('Bulk delete debts error:', error.message);
     res.status(500).json({ error: 'Failed to delete debts' });
-  }
-};
-
-// Bulk import debts
-const bulkCreateDebts = async (req, res) => {
-  try {
-    const { debts } = req.body;
-
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-
-      const results = [];
-      for (const debt of debts) {
-        const customerId = await upsertCustomer(client, req.user.id, {
-          name: debt.customerName, phone: debt.phoneNumber, type: 'individual',
-        });
-        const result = await client.query(
-          `INSERT INTO debts (
-            user_id, customer_id, customer_name, phone_number, ticket_code, airline, route,
-            flight_date, issue_date, ticket_amount, paid, notes, company_id
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-          RETURNING *`,
-          [
-            req.user.id, customerId, debt.customerName, debt.phoneNumber, debt.ticketCode, debt.airline || '', debt.route,
-            debt.flightDate, debt.issueDate, debt.ticketAmount, debt.paid, debt.notes, debt.companyId || null
-          ]
-        );
-        results.push(result.rows[0]);
-      }
-
-      await client.query('COMMIT');
-      res.status(201).json({ count: results.length, debts: results });
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
-  } catch (error) {
-    logger.error('Bulk create error:', error.message);
-    res.status(500).json({ error: 'Failed to bulk import debts' });
   }
 };
 
@@ -240,12 +228,12 @@ const importDebts = async (req, res) => {
         return;
       }
       const amount = parseAmount(row.ticketAmount);
-      if (!Number.isFinite(amount)) {
+      if (!Number.isFinite(amount) || amount < 0) {
         errors.push({ row: line, message: `Số tiền vé không hợp lệ: "${row.ticketAmount}"` });
         return;
       }
       const paid = parseAmount(row.paid);
-      if (!Number.isFinite(paid)) {
+      if (!Number.isFinite(paid) || paid < 0) {
         errors.push({ row: line, message: `Số tiền đã trả không hợp lệ: "${row.paid}"` });
         return;
       }
@@ -256,11 +244,11 @@ const importDebts = async (req, res) => {
         return;
       }
       valid.push({
-        customerName: name,
-        phoneNumber: (row.phoneNumber || '').toString().trim(),
-        ticketCode: (row.ticketCode || '').toString().trim(),
-        airline: (row.airline || '').toString().trim(),
-        route: (row.route || '').toString().trim(),
+        customerName: name.slice(0, 255),
+        phoneNumber: (row.phoneNumber || '').toString().trim().slice(0, 20),
+        ticketCode: (row.ticketCode || '').toString().trim().slice(0, 50),
+        airline: (row.airline || '').toString().trim().slice(0, 50),
+        route: (row.route || '').toString().trim().slice(0, 50),
         flightDate,
         issueDate,
         ticketAmount: amount,
@@ -283,19 +271,29 @@ const importDebts = async (req, res) => {
           phone: d.phoneNumber,
           type: 'individual',
         });
-        await client.query(
+        const issueDate = d.issueDate || todayLocal();
+        const ins = await client.query(
           `INSERT INTO debts (
             user_id, customer_id, customer_name, phone_number, ticket_code, airline, route,
             flight_date, issue_date, ticket_amount, paid, notes
-          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
           [
             req.user.id, customerId, d.customerName, d.phoneNumber, d.ticketCode, d.airline, d.route,
-            d.flightDate, d.issueDate, d.ticketAmount, d.paid, d.notes,
+            d.flightDate, issueDate, d.ticketAmount, d.paid, d.notes,
           ]
         );
+        // Khoản đã trả trong file → 1 dòng payments để sổ thanh toán khớp cột paid.
+        if (d.paid > 0) {
+          await client.query(
+            `INSERT INTO payments (user_id, debt_id, amount, payment_date, method, payment_target, notes)
+             VALUES ($1, $2, $3, $4, 'cash', 'self', 'Import từ file')`,
+            [req.user.id, ins.rows[0].id, d.paid, issueDate]
+          );
+        }
         inserted += 1;
       }
       await client.query('COMMIT');
+      logAudit(req, { action: 'create', entity: 'debt', summary: `Import ${inserted} vé từ file`, details: { inserted, failed: errors.length } });
       res.status(201).json({ inserted, failed: errors.length, errors });
     } catch (error) {
       await client.query('ROLLBACK');
@@ -316,6 +314,5 @@ module.exports = {
   deleteDebt,
   setCheckin,
   bulkDeleteDebts,
-  bulkCreateDebts,
   importDebts,
 };

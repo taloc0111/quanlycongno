@@ -3,12 +3,12 @@
 //   - admin  : tất cả users
 //   - khác   : chính mình + toàn bộ đại lý con (đệ quy theo parent_id)
 // Việc GHI (tạo/sửa/xóa) vẫn luôn giới hạn ở req.user.id trong từng controller.
+// role lấy từ req.user (authenticateToken đã nạp từ DB) — không query lại.
 const pool = require('../config/database');
 
 async function attachScope(req, res, next) {
   try {
-    const me = await pool.query('SELECT role FROM users WHERE id = $1', [req.user.id]);
-    const role = me.rows[0]?.role || 'user';
+    const role = req.user?.role || 'user';
 
     let userIds;
     if (role === 'admin') {

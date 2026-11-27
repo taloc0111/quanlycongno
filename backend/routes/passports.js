@@ -6,8 +6,7 @@ const {
   updatePassport,
   deletePassport,
   bulkDeletePassports,
-  bulkCreatePassports,
-  importPassports
+  importPassports,
 } = require('../controllers/passportController');
 
 const router = express.Router();
@@ -17,7 +16,6 @@ router.post('/', createPassport);
 router.put('/:id', updatePassport);
 router.delete('/:id', deletePassport);
 router.post('/bulk-delete', bulkDeletePassports);
-router.post('/bulk', bulkCreatePassports);
 router.post('/import', importPassports);
 
 module.exports = router;

@@ -1,159 +1,193 @@
-import React, { useEffect, useState } from 'react';
-import { X, Trash2, Plus, Landmark, User } from 'lucide-react';
-import VnDatePicker from './VnDatePicker';
-import MoneyInput from './MoneyInput';
-import { apiGet, apiSend } from '../services/client';
-import { formatCurrency, formatDate } from '../utils/format';
+import { useCallback, useEffect, useState } from 'react';
+import { Trash2, Plus, Landmark, User, Wallet, Receipt, PiggyBank, AlertCircle, Zap } from 'lucide-react';
+import { api } from '../services/client';
+import { formatCurrency, formatDate, today, num } from '../utils/format';
+import { useFeedback } from '../ui/FeedbackContext';
+import { Button, IconButton, Field, Select, MoneyField, DateField, Modal, Badge, EmptyState, Skeleton, ErrorBanner } from '../ui';
+
+const PARAM = { debt: 'debtId', passport: 'passportId', train: 'trainTicketId', tour: 'tourId' };
+const METHOD_LABEL = { cash: 'Tiền mặt', bank_transfer: 'Chuyển khoản', momo: 'Momo' };
 
 /**
- * Modal lịch sử thanh toán cho 1 khoản nợ vé hoặc 1 hộ chiếu.
+ * Modal lịch sử thanh toán cho 1 khoản nợ (vé máy bay / tàu / hộ chiếu / tour).
  * Props:
- *  - target: { type: 'debt'|'passport', id, name, total, paid }
+ *  - target: { type: 'debt'|'passport'|'train'|'tour', id, name, total, paid }
  *  - onClose: () => void
- *  - onChanged: () => void   gọi sau khi thêm/xóa (để cha tải lại danh sách)
+ *  - onChanged: () => void   gọi sau khi thêm/xoá (để cha tải lại danh sách)
  */
 export default function PaymentModal({ target, onClose, onChanged }) {
+  const { toast, confirm } = useFeedback();
   const [payments, setPayments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [amount, setAmount] = useState('');
-  const [date, setDate] = useState('');
+  const [date, setDate] = useState(today());
   const [method, setMethod] = useState('cash');
   const [paymentTarget, setPaymentTarget] = useState('self');
   const [saving, setSaving] = useState(false);
 
-  const PARAM = { debt: 'debtId', passport: 'passportId', train: 'trainTicketId', tour: 'tourId' };
   const paramKey = PARAM[target.type] || 'debtId';
   const query = `${paramKey}=${target.id}`;
-  const paidSum = payments.reduce((s, p) => s + Number(p.amount), 0);
-  const remaining = Number(target.total) - paidSum;
+  const total = num(target.total);
+  const paidSum = payments.reduce((s, p) => s + num(p.amount), 0);
+  const remaining = total - paidSum;
+  const amt = num(amount);
+  const exceeds = amt > 0 && remaining > 0 && amt > remaining;
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
-      setPayments(await apiGet(`/payments?${query}`));
+      setPayments(await api.get(`/payments?${query}`));
     } catch (err) {
       setError(err.message);
     } finally {
       setLoading(false);
     }
-  };
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [target.id]);
+  }, [query]);
+
+  useEffect(() => { load(); }, [load]);
 
   const add = async () => {
-    const amt = parseFloat(amount);
-    if (!Number.isFinite(amt) || amt <= 0) { alert('⚠️ Nhập số tiền hợp lệ'); return; }
+    if (!Number.isFinite(amt) || amt <= 0) { toast.error('Nhập số tiền hợp lệ'); return; }
     setSaving(true);
     try {
-      await apiSend('POST', '/payments', {
+      await api.post('/payments', {
         [paramKey]: target.id,
-        amount: amt, paymentDate: date || undefined, method,
+        amount: amt,
+        paymentDate: date || undefined,
+        method,
         paymentTarget,
       });
       setAmount('');
+      toast.success(`Đã ghi nhận ${formatCurrency(amt)}`);
       await load();
       onChanged?.();
     } catch (err) {
-      alert('Lỗi: ' + err.message);
+      toast.error(err.message);
     } finally {
       setSaving(false);
     }
   };
 
-  const remove = async (id) => {
-    if (!confirm('Xóa lần thanh toán này?')) return;
-    try { await apiSend('DELETE', `/payments/${id}`); await load(); onChanged?.(); }
-    catch (err) { alert('Lỗi: ' + err.message); }
+  const remove = async (p) => {
+    const ok = await confirm({
+      title: 'Xoá lần thanh toán',
+      message: `Xoá khoản ${formatCurrency(p.amount)} ngày ${formatDate(p.payment_date)}?`,
+    });
+    if (!ok) return;
+    try {
+      await api.del(`/payments/${p.id}`);
+      toast.success('Đã xoá');
+      await load();
+      onChanged?.();
+    } catch (err) {
+      toast.error(err.message);
+    }
   };
 
+  const tiles = [
+    { icon: Receipt, label: 'Tổng', value: total, cls: 'bg-surface-subtle text-ink' },
+    { icon: PiggyBank, label: 'Đã trả', value: paidSum, cls: 'bg-success-50 text-success-700' },
+    { icon: Wallet, label: 'Còn nợ', value: remaining, cls: remaining > 0 ? 'bg-danger-50 text-danger-700' : 'bg-success-50 text-success-700' },
+  ];
+
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 p-4 overflow-y-auto">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg my-8">
-        <div className="flex items-center justify-between border-b px-6 py-4">
-          <div>
-            <h3 className="text-lg font-bold">💵 Lịch sử thanh toán</h3>
-            <p className="text-sm text-gray-500">{target.name}</p>
-          </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-700"><X size={22} /></button>
+    <Modal
+      open
+      onClose={onClose}
+      icon={Wallet}
+      title="Thanh toán"
+      subtitle={target.name}
+      size="lg"
+      footer={<Button variant="secondary" onClick={onClose}>Đóng</Button>}
+    >
+      <div className="space-y-4">
+        {/* 3 ô số liệu */}
+        <div className="grid grid-cols-3 gap-2">
+          {tiles.map((t) => (
+            <div key={t.label} className={`rounded-xl px-3 py-2.5 ${t.cls}`}>
+              <p className="flex items-center gap-1 text-[11px] font-medium uppercase tracking-wide opacity-70"><t.icon size={12} /> {t.label}</p>
+              <p className="mt-0.5 text-sm sm:text-base font-bold tabular truncate" title={formatCurrency(t.value)}>{formatCurrency(t.value)}</p>
+            </div>
+          ))}
         </div>
 
-        <div className="px-6 py-4 space-y-4">
-          <div className="grid grid-cols-3 gap-2 text-center text-sm">
-            <div className="bg-gray-50 rounded-lg py-2">
-              <div className="text-gray-500">Tổng tiền</div>
-              <div className="font-bold">{formatCurrency(target.total)}</div>
-            </div>
-            <div className="bg-green-50 rounded-lg py-2">
-              <div className="text-gray-500">Đã trả</div>
-              <div className="font-bold text-green-600">{formatCurrency(paidSum)}</div>
-            </div>
-            <div className="bg-red-50 rounded-lg py-2">
-              <div className="text-gray-500">Còn nợ</div>
-              <div className="font-bold text-red-600">{formatCurrency(remaining)}</div>
-            </div>
-          </div>
-
-          {/* Thêm thanh toán */}
-          <div className="flex flex-wrap gap-2 items-end border rounded-lg p-3 bg-gray-50">
-            <div className="flex-1 min-w-[120px]">
-              <label className="block text-xs text-gray-500 mb-1">Số tiền</label>
-              <MoneyInput value={amount} onChange={setAmount} className="w-full border rounded-lg px-2 py-1.5 text-sm" />
-            </div>
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">Ngày</label>
-              <VnDatePicker value={date} onChange={setDate} className="border rounded-lg px-2 py-1.5 text-sm" />
-            </div>
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">Hình thức</label>
-              <select value={method} onChange={(e) => setMethod(e.target.value)} className="border rounded-lg px-2 py-1.5 text-sm">
+        {/* Thêm thanh toán */}
+        <form
+          onSubmit={(e) => { e.preventDefault(); add(); }}
+          className="rounded-xl border border-surface-border bg-surface-muted p-3"
+        >
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+            <Field label="Số tiền" required className="col-span-2 sm:col-span-1">
+              <MoneyField value={amount} onChange={setAmount} placeholder="0" />
+              {exceeds && (
+                <p className="mt-1 flex items-center gap-1 text-xs text-warning-600"><AlertCircle size={12} /> Vượt số còn nợ {formatCurrency(remaining)}</p>
+              )}
+            </Field>
+            <Field label="Ngày">
+              <DateField value={date} onChange={setDate} />
+            </Field>
+            <Field label="Hình thức">
+              <Select value={method} onChange={(e) => setMethod(e.target.value)}>
                 <option value="cash">Tiền mặt</option>
                 <option value="bank_transfer">Chuyển khoản</option>
                 <option value="momo">Momo</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">Chuyển vào TK</label>
-              <select value={paymentTarget} onChange={(e) => setPaymentTarget(e.target.value)} className="border rounded-lg px-2 py-1.5 text-sm">
+              </Select>
+            </Field>
+            <Field label="Chuyển vào TK">
+              <Select value={paymentTarget} onChange={(e) => setPaymentTarget(e.target.value)}>
                 <option value="self">TK cá nhân</option>
                 <option value="agency">TK cấp trên (nộp quỹ)</option>
-              </select>
-            </div>
-            <button onClick={add} disabled={saving} className="flex items-center gap-1 px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm font-semibold disabled:opacity-50">
-              <Plus size={16} /> Thêm
-            </button>
+              </Select>
+            </Field>
           </div>
+          <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2">
+            <Button
+              type="button"
+              size="sm"
+              variant="soft"
+              icon={Zap}
+              disabled={remaining <= 0}
+              onClick={() => setAmount(String(Math.round(remaining)))}
+              title="Điền số còn nợ vào ô Số tiền"
+            >
+              Trả hết {remaining > 0 ? formatCurrency(remaining) : ''}
+            </Button>
+            <Button type="submit" size="sm" variant="success" icon={Plus} loading={saving}>Thêm thanh toán</Button>
+          </div>
+        </form>
 
-          {/* Danh sách */}
-          {loading && <p className="text-gray-500 text-sm">Đang tải…</p>}
-          {error && <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">{error}</div>}
-          {!loading && !error && (
-            payments.length === 0 ? (
-              <p className="text-gray-400 text-sm text-center py-3">Chưa có thanh toán nào.</p>
-            ) : (
-              <table className="w-full text-sm">
-                <tbody>
-                  {payments.map((p) => (
-                    <tr key={p.id} className="border-b last:border-0">
-                      <td className="py-2 text-gray-600">{formatDate(p.payment_date)}</td>
-                      <td className="py-2 text-gray-500">{p.method === 'bank_transfer' ? 'CK' : p.method === 'momo' ? 'Momo' : 'TM'}</td>
-                      <td className="py-2">
-                        {p.payment_target === 'agency'
-                          ? <span className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-orange-100 text-orange-700"><Landmark size={10} /> Cấp trên</span>
-                          : <span className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-blue-100 text-blue-700"><User size={10} /> Cá nhân</span>}
-                      </td>
-                      <td className="py-2 text-right font-semibold text-green-600">{formatCurrency(p.amount)}</td>
-                      <td className="py-2 text-right">
-                        <button onClick={() => remove(p.id)} className="text-red-500 p-1 hover:bg-red-50 rounded"><Trash2 size={14} /></button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )
+        {/* Danh sách */}
+        <div>
+          <p className="mb-2 text-[12px] font-semibold uppercase tracking-wide text-ink-muted">Lịch sử ({payments.length})</p>
+          {loading ? (
+            <div className="space-y-2">
+              {[0, 1, 2].map((i) => <Skeleton key={i} className="h-10 w-full" />)}
+            </div>
+          ) : error ? (
+            <ErrorBanner message={error} onRetry={load} />
+          ) : payments.length === 0 ? (
+            <EmptyState icon={AlertCircle} title="Chưa có thanh toán nào" description="Nhập số tiền ở trên để ghi nhận lần trả đầu tiên." compact />
+          ) : (
+            <ul className="divide-y divide-surface-border rounded-xl border border-surface-border overflow-hidden">
+              {payments.map((p) => (
+                <li key={p.id} className="flex items-center gap-3 px-3 py-2 text-sm hover:bg-surface-muted">
+                  <span className="w-20 shrink-0 text-ink-muted tabular">{formatDate(p.payment_date)}</span>
+                  <div className="flex flex-wrap items-center gap-1 min-w-0 flex-1">
+                    <Badge tone="gray">{METHOD_LABEL[p.method] || p.method || '—'}</Badge>
+                    {p.payment_target === 'agency'
+                      ? <Badge tone="warning" icon={Landmark}>Cấp trên</Badge>
+                      : <Badge tone="brand" icon={User}>Cá nhân</Badge>}
+                  </div>
+                  <span className="font-semibold text-success-600 tabular shrink-0">{formatCurrency(p.amount)}</span>
+                  <IconButton icon={Trash2} title="Xoá" variant="danger" size={15} onClick={() => remove(p)} />
+                </li>
+              ))}
+            </ul>
           )}
         </div>
       </div>
-    </div>
+    </Modal>
   );
 }

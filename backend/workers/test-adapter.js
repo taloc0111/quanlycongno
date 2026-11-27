@@ -2,11 +2,12 @@
 // Nhánh SerpApi-only: mọi adapter đều đi HTTP thuần (không cần Chromium).
 // Dùng:  node workers/test-adapter.js <vn> <route> <yyyy-mm-dd> [pax]
 const { ADAPTERS } = require('./adapters');
+const { todayLocal, addDays } = require('../utils/dates');
 
 const [, , key, route = 'SGN-HAN', date, paxArg] = process.argv;
 const adapter = ADAPTERS[key];
 if (!adapter) { console.error('Adapter không hợp lệ. Chọn:', Object.keys(ADAPTERS).join(', ')); process.exit(1); }
-const day = date || new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
+const day = date || addDays(todayLocal(), 30);
 
 (async () => {
   const t0 = Date.now();

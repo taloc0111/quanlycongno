@@ -357,6 +357,8 @@ ALTER TABLE users     ADD COLUMN IF NOT EXISTS role VARCHAR(20) NOT NULL DEFAULT
 ALTER TABLE users     ADD COLUMN IF NOT EXISTS full_name VARCHAR(255);
 ALTER TABLE users     ADD COLUMN IF NOT EXISTS parent_id INTEGER REFERENCES users(id) ON DELETE SET NULL;
 ALTER TABLE users     ADD COLUMN IF NOT EXISTS trial_ends_at TIMESTAMPTZ;
+-- Cờ tính năng theo user (vd {"fareWatch": true}); admin luôn bật, xem utils/features.js.
+ALTER TABLE users     ADD COLUMN IF NOT EXISTS features JSONB NOT NULL DEFAULT '{}'::jsonb;
 
 ALTER TABLE debts     ADD COLUMN IF NOT EXISTS customer_id INTEGER REFERENCES customers(id) ON DELETE SET NULL;
 ALTER TABLE debts     ADD COLUMN IF NOT EXISTS due_date DATE;
@@ -381,6 +383,22 @@ ALTER TABLE payments ADD COLUMN IF NOT EXISTS tour_id INTEGER REFERENCES tours(i
 ALTER TABLE payments DROP CONSTRAINT IF EXISTS chk_payment_target;
 ALTER TABLE payments ADD CONSTRAINT chk_payment_target CHECK (
   (debt_id IS NOT NULL)::int + (passport_id IS NOT NULL)::int + (train_ticket_id IS NOT NULL)::int + (tour_id IS NOT NULL)::int = 1
+);
+
+-- ---------------------------------------------------------------------------
+-- AUDIT_LOGS — nhật ký thao tác (ai làm gì, lúc nào). Ghi nền từ utils/audit.js.
+-- action: create | update | delete | payment | login
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS audit_logs (
+  id         SERIAL PRIMARY KEY,
+  user_id    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  username   VARCHAR(255),
+  action     VARCHAR(20) NOT NULL,
+  entity     VARCHAR(30) NOT NULL,
+  entity_id  INTEGER,
+  summary    TEXT,
+  details    JSONB,
+  created_at TIMESTAMPTZ DEFAULT now()
 );
 
 -- ============================================================================
@@ -422,6 +440,13 @@ CREATE INDEX IF NOT EXISTS idx_payments_tour          ON payments(tour_id);
 CREATE INDEX IF NOT EXISTS idx_invoices_user_id       ON invoices(user_id);
 CREATE INDEX IF NOT EXISTS idx_invoices_customer_id   ON invoices(customer_id);
 CREATE INDEX IF NOT EXISTS idx_invoice_items_invoice  ON invoice_items(invoice_id);
+-- Hạn thanh toán (dashboard: sắp đến hạn / quá hạn) + sổ thanh toán theo tài khoản nhận.
+CREATE INDEX IF NOT EXISTS idx_debts_due_date         ON debts(due_date);
+CREATE INDEX IF NOT EXISTS idx_passports_due_date     ON passports(due_date);
+CREATE INDEX IF NOT EXISTS idx_train_tickets_due_date ON train_tickets(due_date);
+CREATE INDEX IF NOT EXISTS idx_tours_due_date         ON tours(due_date);
+CREATE INDEX IF NOT EXISTS idx_payments_user_target   ON payments(user_id, payment_target);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_user_time   ON audit_logs(user_id, created_at DESC);
 
 -- ============================================================================
 -- TRIGGER tự cập nhật updated_at — best practice, đỡ phải set tay trong code

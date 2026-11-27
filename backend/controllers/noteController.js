@@ -1,6 +1,7 @@
 // controllers/noteController.js — sticky notes (ghi chú nhanh, riêng tư theo user).
 const pool = require('../config/database');
 const logger = require('../config/logger');
+const v = require('../utils/validate');
 
 const COLORS = ['yellow', 'green', 'pink', 'blue', 'purple'];
 
@@ -21,14 +22,14 @@ const getNotes = async (req, res) => {
 };
 
 const createNote = async (req, res) => {
+  const content = v.str(req.body.content, { label: 'Nội dung', trim: false }) ?? '';
+  const color = v.oneOf(req.body.color, COLORS, { label: 'Màu', fallback: 'yellow' });
   try {
-    const { content, color } = req.body;
-    const safeColor = COLORS.includes(color) ? color : 'yellow';
     const result = await pool.query(
       `INSERT INTO sticky_notes (user_id, content, color)
        VALUES ($1, $2, $3)
        RETURNING *`,
-      [req.user.id, (content || '').toString(), safeColor]
+      [req.user.id, content, color]
     );
     res.status(201).json(result.rows[0]);
   } catch (error) {
@@ -38,26 +39,25 @@ const createNote = async (req, res) => {
 };
 
 // Cập nhật từng phần: chỉ đổi field nào được gửi lên (content / color / pinned / position).
+// content gửi null/'' = xoá trắng (cột NOT NULL nên ghi '').
 const updateNote = async (req, res) => {
+  const id = v.idParam(req.params.id);
+  const { content, color, pinned, position } = req.body;
+  const hasContent = content !== undefined;
+  const newContent = hasContent ? (content === null ? '' : v.str(content, { label: 'Nội dung', trim: false }) ?? '') : null;
+  const newColor = color === undefined ? null : v.oneOf(color, COLORS, { label: 'Màu' });
+  const newPinned = v.bool(pinned, { label: 'Ghim' });
+  const newPosition = v.int(position, { min: 0, label: 'Vị trí' });
   try {
-    const { id } = req.params;
-    const { content, color, pinned, position } = req.body;
     const result = await pool.query(
       `UPDATE sticky_notes SET
-         content  = COALESCE($2, content),
+         content  = CASE WHEN $7 THEN $2 ELSE content END,
          color    = COALESCE($3, color),
          pinned   = COALESCE($4, pinned),
          position = COALESCE($5, position)
        WHERE id = $1 AND user_id = $6
        RETURNING *`,
-      [
-        id,
-        content !== undefined ? content.toString() : null,
-        COLORS.includes(color) ? color : null,
-        typeof pinned === 'boolean' ? pinned : null,
-        Number.isInteger(position) ? position : null,
-        req.user.id,
-      ]
+      [id, newContent, newColor, newPinned, newPosition, req.user.id, hasContent]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Note not found' });
     res.json(result.rows[0]);
@@ -68,8 +68,8 @@ const updateNote = async (req, res) => {
 };
 
 const deleteNote = async (req, res) => {
+  const id = v.idParam(req.params.id);
   try {
-    const { id } = req.params;
     const result = await pool.query(
       'DELETE FROM sticky_notes WHERE id = $1 AND user_id = $2 RETURNING id',
       [id, req.user.id]

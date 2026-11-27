@@ -1,10 +1,10 @@
-import React, { useEffect, useState } from 'react';
-import { Search, PlaneTakeoff, PlaneLanding, Loader2, Crown, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react';
-import VnDatePicker from './components/VnDatePicker';
-import Toast from './components/Toast';
-import { apiGet, apiSend } from './services/client';
-import { formatCurrency } from './utils/format';
-import { useToast } from './hooks/useFeedback';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Search, PlaneTakeoff, PlaneLanding, Crown, ChevronDown, ChevronUp, Lock, Users, Clock, ArrowLeftRight, Sparkles } from 'lucide-react';
+import { api } from './services/client';
+import { formatCurrency, formatDate } from './utils/format';
+import { useAuth } from './auth/AuthContext';
+import { useFeedback } from './ui/FeedbackContext';
+import { Button, Field, Input, DateField, Switch, Card, Badge, PageHeader, ErrorBanner, EmptyState, Skeleton } from './ui';
 
 // Các hãng nội địa thường gặp — hiện ở màn hình chờ cho biết phạm vi so giá.
 const AIRLINES = ['VietJet', 'Vietnam Airlines', 'Bamboo Airways', 'Sun PhuQuoc Airways', 'Vietravel'];
@@ -21,9 +21,11 @@ const plusDays = (dep, arr) => {
   return diff > 0 ? ` (+${diff})` : '';
 };
 const fmtDur = (m) => (m ? `${Math.floor(m / 60)}g${String(m % 60).padStart(2, '0')}` : '');
-const fmtDate = (iso) => (iso ? iso.split('-').reverse().join('/') : '');
+const TH = 'px-3 py-2 font-semibold whitespace-nowrap';
 
 export default function FareCheckApp() {
+  const { refreshProfile } = useAuth();
+  const { toast } = useFeedback();
   const [routes, setRoutes] = useState([]);
   const [route, setRoute] = useState('');
   const [roundTrip, setRoundTrip] = useState(false);
@@ -32,12 +34,12 @@ export default function FareCheckApp() {
   const [pax, setPax] = useState('1');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [disabled, setDisabled] = useState(false); // 403 featureDisabled
   const [result, setResult] = useState(null); // { route, date, returnDate, pax, legs: [...] }
   const [expanded, setExpanded] = useState(() => new Set()); // các dòng hãng đang xổ khung giờ
-  const { toast, showToast } = useToast();
 
   useEffect(() => {
-    apiGet('/routes').then(setRoutes).catch(() => {});
+    api.get('/routes').then(setRoutes).catch(() => {});
   }, []);
 
   const toggleExpand = (k) => {
@@ -48,12 +50,12 @@ export default function FareCheckApp() {
     });
   };
 
-  const search = async () => {
-    if (!/^[A-Za-z]{3}\s*[-→\s]\s*[A-Za-z]{3}$/.test(route)) { showToast('Nhập hành trình hợp lệ, vd: SGN-HAN', 'error'); return; }
-    if (!date) { showToast('Chọn ngày đi', 'error'); return; }
+  const search = useCallback(async () => {
+    if (!/^[A-Za-z]{3}\s*[-→\s]\s*[A-Za-z]{3}$/.test(route)) { toast.error('Nhập hành trình hợp lệ, vd: SGN-HAN'); return; }
+    if (!date) { toast.error('Chọn ngày đi'); return; }
     if (roundTrip) {
-      if (!returnDate) { showToast('Chọn ngày về (hoặc chuyển sang Một chiều)', 'error'); return; }
-      if (returnDate < date) { showToast('Ngày về phải từ ngày đi trở đi', 'error'); return; }
+      if (!returnDate) { toast.error('Chọn ngày về (hoặc chuyển sang Một chiều)'); return; }
+      if (returnDate < date) { toast.error('Ngày về phải từ ngày đi trở đi'); return; }
     }
     setLoading(true);
     setError('');
@@ -62,172 +64,203 @@ export default function FareCheckApp() {
     try {
       const body = { route: route.toUpperCase(), date, pax };
       if (roundTrip) body.returnDate = returnDate;
-      const data = await apiSend('POST', '/fares/quote', body);
-      setResult(data);
+      setResult(await api.post('/fares/quote', body));
     } catch (err) {
-      setError(err.message);
+      if (err?.status === 403 && err?.data?.featureDisabled) { setDisabled(true); refreshProfile(); }
+      else if (err?.status === 503 || err?.status === 429) toast.warning(err.message || 'Dịch vụ tra giá đang bận, thử lại sau giây lát.');
+      else setError(err.message);
     } finally {
       setLoading(false);
     }
-  };
+  }, [route, date, returnDate, roundTrip, pax, toast, refreshProfile]);
 
-  // Tổng rẻ nhất khứ hồi = cộng giá rẻ nhất của 2 chiều (mảng đã sắp tăng dần).
-  const legCheapest = (leg) => leg.results.find((r) => r.ok) || null;
-  const roundTripTotal =
-    result?.legs?.length === 2 && result.legs.every((l) => legCheapest(l))
-      ? result.legs.reduce((sum, l) => sum + legCheapest(l).price, 0)
-      : null;
+  // Mỗi chiều: sắp theo giá tăng dần, hãng lỗi xếp cuối. Rẻ nhất = dòng ok đầu tiên.
+  const legs = useMemo(() => (result?.legs || []).map((leg) => {
+    const sorted = [...(leg.results || [])].sort((a, b) => (a.ok === b.ok ? (a.ok ? a.price - b.price : 0) : a.ok ? -1 : 1));
+    return { ...leg, sorted, cheapest: sorted.find((r) => r.ok) || null };
+  }), [result]);
+
+  // Tổng rẻ nhất khứ hồi = cộng giá rẻ nhất của 2 chiều.
+  const roundTripTotal = legs.length === 2 && legs.every((l) => l.cheapest) ? legs.reduce((s, l) => s + l.cheapest.price, 0) : null;
+
+  if (disabled) {
+    return (
+      <div>
+        <PageHeader icon={Search} title="Check vé" description="Tra giá hiện tại của các hãng cho một chặng." />
+        <Card>
+          <EmptyState icon={Lock} title="Tính năng Canh vé chưa được bật cho tài khoản này" description="Liên hệ quản trị viên để bật tính năng." />
+        </Card>
+      </div>
+    );
+  }
 
   return (
-    <div className="min-h-screen bg-gray-50 p-4 sm:p-6">
-      <div className="max-w-4xl mx-auto">
-        <h2 className="flex items-center gap-2 text-2xl font-bold text-gray-900 mb-1"><Search /> Check vé</h2>
-        <p className="text-sm text-gray-500 mb-4">Tra giá hiện tại của các hãng cho một chặng — kèm khung giờ từng chuyến, không lưu khách.</p>
+    <div className="max-w-5xl">
+      <PageHeader icon={Search} title="Check vé" description="Tra giá hiện tại của các hãng cho một chặng — kèm khung giờ từng chuyến, không lưu khách." />
 
-        {/* Form tra giá */}
-        <div className="bg-white rounded-xl border-2 border-gray-200 shadow-sm p-4 grid grid-cols-1 sm:grid-cols-5 gap-3">
-          {/* Một chiều / Khứ hồi */}
-          <div className="sm:col-span-5 flex gap-2">
-            {[{ v: false, label: 'Một chiều' }, { v: true, label: 'Khứ hồi' }].map((opt) => (
-              <button
-                key={opt.label}
-                onClick={() => setRoundTrip(opt.v)}
-                className={`px-4 py-1.5 rounded-full text-sm font-semibold border ${
-                  roundTrip === opt.v ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-blue-400'
-                }`}
-              >
-                {opt.label}
-              </button>
-            ))}
+      {/* Form tra giá */}
+      <Card className="mb-5">
+        <form onSubmit={(e) => { e.preventDefault(); search(); }} className="grid grid-cols-2 lg:grid-cols-[1.4fr_1fr_1fr_0.7fr_auto] gap-3 items-end">
+          <div className="col-span-2 lg:col-span-5 flex items-center justify-between gap-3">
+            <Switch checked={roundTrip} onChange={setRoundTrip} label={roundTrip ? 'Khứ hồi (đi + về)' : 'Một chiều'} />
+            {roundTrip && <span className="text-xs text-ink-faint">Khứ hồi tốn 2 lượt tra giá</span>}
           </div>
-          <div className="sm:col-span-2">
-            <label className="block text-sm text-gray-600 mb-1">Hành trình *</label>
-            <input
-              list="fc-routes"
-              value={route}
-              onChange={(e) => setRoute(e.target.value)}
-              placeholder="VD: SGN-HAN"
-              className="w-full border rounded-lg px-3 py-2 uppercase"
-            />
+          <Field label="Hành trình" required htmlFor="fc-route" className="col-span-2 lg:col-span-1">
+            <Input id="fc-route" list="fc-routes" autoComplete="off" value={route} onChange={(e) => setRoute(e.target.value.toUpperCase())} placeholder="VD: SGN-HAN" className="uppercase font-semibold tracking-wide" />
             <datalist id="fc-routes">{routes.map((r) => <option key={r} value={r} />)}</datalist>
+          </Field>
+          <Field label="Ngày đi" required>
+            <DateField value={date} onChange={setDate} />
+          </Field>
+          <Field label="Ngày về" required={roundTrip} className={roundTrip ? '' : 'hidden lg:block'}>
+            <DateField value={returnDate} onChange={setReturnDate} disabled={!roundTrip} placeholder={roundTrip ? 'dd/mm/yyyy' : '—'} />
+          </Field>
+          <Field label="Số khách" htmlFor="fc-pax" className={roundTrip ? 'col-span-2 sm:col-span-1 lg:col-span-1' : ''}>
+            <Input id="fc-pax" type="number" min="1" max="9" value={pax} onChange={(e) => setPax(e.target.value)} />
+          </Field>
+          <div className="col-span-2 lg:col-span-1">
+            <Button type="submit" block icon={Search} loading={loading}>{loading ? 'Đang tra giá…' : 'Tra giá'}</Button>
           </div>
-          <div>
-            <label className="block text-sm text-gray-600 mb-1">Ngày đi *</label>
-            <VnDatePicker value={date} onChange={setDate} />
-          </div>
-          {roundTrip && (
-            <div>
-              <label className="block text-sm text-gray-600 mb-1">Ngày về *</label>
-              <VnDatePicker value={returnDate} onChange={setReturnDate} />
-            </div>
-          )}
-          <div>
-            <label className="block text-sm text-gray-600 mb-1">Số khách</label>
-            <input type="number" min="1" max="9" value={pax} onChange={(e) => setPax(e.target.value)} className="w-full border rounded-lg px-3 py-2" />
-          </div>
-          <div className="sm:col-span-5">
-            <button
-              onClick={search}
-              disabled={loading}
-              className="w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold disabled:opacity-60"
-            >
-              {loading ? <><Loader2 size={18} className="animate-spin" /> Đang tra giá…</> : <><Search size={18} /> Tra giá</>}
-            </button>
-          </div>
+        </form>
+      </Card>
+
+      <ErrorBanner message={error} onRetry={search} />
+
+      {loading && (
+        <div className="space-y-3">
+          <Skeleton className="h-5 w-56" />
+          <Card padded={false}><div className="p-4 space-y-3">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-9 w-full" />)}</div></Card>
+          <p className="text-center text-xs text-ink-faint">Đang hỏi giá từng hãng — mất khoảng 10–30 giây.</p>
         </div>
+      )}
 
-        {error && (
-          <div className="mt-4 rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-red-700 flex items-center gap-2">
-            <AlertCircle size={18} /> {error}
+      {/* Tổng khứ hồi */}
+      {roundTripTotal != null && (
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-success-100 bg-success-50 px-4 py-3">
+          <div className="flex items-center gap-2.5">
+            <span className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-success-100 text-success-700"><ArrowLeftRight size={18} /></span>
+            <div>
+              <p className="text-sm font-semibold text-success-700">Tổng rẻ nhất khứ hồi</p>
+              <p className="text-xs text-success-600/80">Đi + về, có thể khác hãng · {result.pax} khách</p>
+            </div>
           </div>
-        )}
+          <span className="text-xl font-bold tabular text-success-700">{formatCurrency(roundTripTotal)}</span>
+        </div>
+      )}
 
-        {/* Kết quả so giá — mỗi chiều 1 bảng, bấm vào hãng để xổ khung giờ */}
-        {result?.legs?.map((leg, li) => {
-          const cheapest = legCheapest(leg);
-          return (
-            <div className="mt-5" key={leg.direction}>
-              <p className="flex items-center gap-2 text-sm text-gray-600 mb-2">
-                {leg.direction === 'outbound' ? <PlaneTakeoff size={16} /> : <PlaneLanding size={16} />}
-                <b>{result.legs.length === 2 ? (leg.direction === 'outbound' ? 'Chiều đi' : 'Chiều về') : 'Kết quả'}</b>
-                · <b>{leg.route}</b> · {fmtDate(leg.date)} · {result.pax} khách
-              </p>
-              <div className="bg-white rounded-xl border-2 border-gray-200 shadow-sm divide-y">
-                {leg.results.map((r) => {
-                  const k = `${li}:${r.key}`;
-                  const isCheapest = cheapest && r.ok && r.key === cheapest.key;
-                  const canExpand = r.ok && r.flights?.length > 0;
-                  const isOpen = expanded.has(k);
-                  return (
-                    <div key={r.key}>
-                      <div
-                        onClick={canExpand ? () => toggleExpand(k) : undefined}
-                        className={`flex items-center justify-between gap-3 px-4 py-3 ${isCheapest ? 'bg-green-50' : ''} ${canExpand ? 'cursor-pointer hover:bg-gray-50' : ''}`}
-                      >
-                        <div className="flex items-center gap-2 min-w-0">
-                          <PlaneTakeoff size={16} className={isCheapest ? 'text-green-600' : 'text-gray-400'} />
-                          <span className="font-semibold text-gray-800 truncate">{r.airline}</span>
-                          {isCheapest && <span className="flex items-center gap-1 text-xs font-semibold text-green-700"><Crown size={12} /> Rẻ nhất</span>}
-                          {canExpand && <span className="text-xs text-gray-400 shrink-0">{r.flights.length} chuyến</span>}
-                        </div>
-                        <div className="flex items-center gap-2 shrink-0">
-                          {r.ok ? (
-                            <span className={`font-bold ${isCheapest ? 'text-green-700 text-lg' : 'text-gray-900'}`}>{formatCurrency(r.price)}</span>
-                          ) : (
-                            <span className="text-xs text-amber-600" title={r.error}>không lấy được</span>
-                          )}
-                          {canExpand && (isOpen ? <ChevronUp size={16} className="text-gray-400" /> : <ChevronDown size={16} className="text-gray-400" />)}
-                        </div>
-                      </div>
-                      {canExpand && isOpen && (
-                        <div className="px-4 pb-3 pt-1 bg-gray-50">
-                          {r.flights.map((f, fi) => (
-                            <div key={`${f.flightNo || 'f'}-${fi}`} className="flex items-center justify-between gap-2 py-1.5 text-sm border-b border-gray-100 last:border-0">
-                              <div className="flex items-center gap-3 min-w-0">
-                                <span className="font-mono text-xs text-gray-500 w-16 shrink-0">{f.flightNo || '—'}</span>
-                                <span className="font-semibold text-gray-800">
-                                  {hhmm(f.departTime)} → {hhmm(f.arriveTime)}{plusDays(f.departTime, f.arriveTime)}
-                                </span>
-                                <span className="text-xs text-gray-400 hidden sm:inline">
-                                  {fmtDur(f.durationMin)}{f.stops > 0 ? ` · ${f.stops} điểm dừng` : ' · bay thẳng'}
-                                </span>
-                              </div>
-                              <span className={`shrink-0 ${f.price === r.price ? 'font-semibold text-green-700' : 'text-gray-700'}`}>{formatCurrency(f.price)}</span>
+      {/* Kết quả so giá — mỗi chiều 1 bảng, bấm vào hãng để xổ khung giờ */}
+      {legs.map((leg, li) => {
+        const Icon = leg.direction === 'outbound' ? PlaneTakeoff : PlaneLanding;
+        const title = legs.length === 2 ? (leg.direction === 'outbound' ? 'Chiều đi' : 'Chiều về') : 'Kết quả';
+        return (
+          <div key={leg.direction} className="mb-5">
+            <div className="mb-2 flex flex-wrap items-center gap-2 text-sm">
+              <span className="inline-flex items-center gap-1.5 font-semibold text-ink"><Icon size={16} className="text-brand-500" /> {title}</span>
+              <Badge tone="brand">{leg.route}</Badge>
+              <span className="text-ink-muted">{formatDate(leg.date)}</span>
+              <span className="inline-flex items-center gap-1 text-ink-muted"><Users size={13} /> {result.pax} khách</span>
+            </div>
+            <Card padded={false} className="overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-[13.5px]">
+                  <thead>
+                    <tr className="bg-surface-muted text-[12px] uppercase tracking-wide text-ink-muted">
+                      <th className={`${TH} text-left`}>Hãng</th>
+                      <th className={`${TH} text-left hidden sm:table-cell`}>Chuyến</th>
+                      <th className={`${TH} text-right`}>Giá / khách</th>
+                      <th className={`${TH} w-10`} />
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-surface-border">
+                    {leg.sorted.length === 0 && (
+                      <tr><td colSpan={4} className="px-3 py-6 text-center text-ink-faint">Không có dữ liệu hãng nào.</td></tr>
+                    )}
+                    {leg.sorted.map((r) => {
+                      const k = `${li}:${r.key}`;
+                      const isCheapest = leg.cheapest && r.ok && r.key === leg.cheapest.key;
+                      const canExpand = r.ok && r.flights?.length > 0;
+                      const isOpen = expanded.has(k);
+                      return [
+                        <tr
+                          key={k}
+                          onClick={canExpand ? () => toggleExpand(k) : undefined}
+                          className={`transition ${isCheapest ? 'bg-success-50/70' : ''} ${canExpand ? 'cursor-pointer hover:bg-surface-muted' : ''}`}
+                        >
+                          <td className="px-3 py-2.5">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <PlaneTakeoff size={15} className={isCheapest ? 'text-success-600' : 'text-ink-faint'} />
+                              <span className="font-semibold text-ink truncate">{r.airline}</span>
+                              {isCheapest && <Badge tone="success" icon={Crown}>Rẻ nhất</Badge>}
                             </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
+                          </td>
+                          <td className="px-3 py-2.5 text-ink-muted hidden sm:table-cell">
+                            {canExpand ? `${r.flights.length} chuyến` : r.ok ? '—' : ''}
+                          </td>
+                          <td className="px-3 py-2.5 text-right">
+                            {r.ok ? (
+                              <span className={`font-bold tabular ${isCheapest ? 'text-success-700 text-base' : 'text-ink'}`}>{formatCurrency(r.price)}</span>
+                            ) : (
+                              <Badge tone="warning"><span title={r.error || ''}>không lấy được</span></Badge>
+                            )}
+                          </td>
+                          <td className="px-3 py-2.5 text-right text-ink-faint">
+                            {canExpand && (isOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />)}
+                          </td>
+                        </tr>,
+                        canExpand && isOpen && (
+                          <tr key={`${k}:flights`} className="bg-surface-muted/60">
+                            <td colSpan={4} className="px-3 py-2">
+                              <ul className="divide-y divide-surface-border">
+                                {r.flights.map((f, fi) => {
+                                  const best = f.price === r.price;
+                                  return (
+                                    <li key={`${f.flightNo || 'f'}-${fi}`} className="flex items-center justify-between gap-2 py-1.5 text-sm">
+                                      <div className="flex items-center gap-3 min-w-0">
+                                        <span className="w-16 shrink-0 font-mono text-xs text-ink-muted">{f.flightNo || '—'}</span>
+                                        <span className="font-semibold tabular text-ink">
+                                          {hhmm(f.departTime)} → {hhmm(f.arriveTime)}{plusDays(f.departTime, f.arriveTime)}
+                                        </span>
+                                        <span className="hidden sm:inline-flex items-center gap-1 text-xs text-ink-muted">
+                                          <Clock size={11} /> {fmtDur(f.durationMin)}{f.stops > 0 ? ` · ${f.stops} điểm dừng` : ' · bay thẳng'}
+                                        </span>
+                                      </div>
+                                      <span className={`shrink-0 tabular ${best ? 'font-semibold text-success-700' : 'text-ink-soft'}`}>{formatCurrency(f.price)}</span>
+                                    </li>
+                                  );
+                                })}
+                              </ul>
+                            </td>
+                          </tr>
+                        ),
+                      ];
+                    })}
+                  </tbody>
+                </table>
               </div>
-              {leg.results.every((r) => !r.ok) && (
-                <p className="text-sm text-amber-600 mt-3">
-                  Chưa lấy được giá chiều này — thử lại sau giây lát (hoặc kiểm tra hạn mức SerpApi trong tháng).
-                </p>
-              )}
-            </div>
-          );
-        })}
-
-        {/* Tổng khứ hồi = giá rẻ nhất chiều đi + chiều về */}
-        {roundTripTotal != null && (
-          <div className="mt-4 rounded-xl border-2 border-green-200 bg-green-50 px-4 py-3 flex items-center justify-between">
-            <span className="text-sm font-semibold text-green-800">Tổng rẻ nhất khứ hồi (đi + về, có thể khác hãng)</span>
-            <span className="text-lg font-bold text-green-700">{formatCurrency(roundTripTotal)}</span>
+            </Card>
+            {leg.sorted.length > 0 && leg.sorted.every((r) => !r.ok) && (
+              <p className="mt-2 text-sm text-warning-600">
+                Chưa lấy được giá chiều này — thử lại sau giây lát (hoặc kiểm tra hạn mức SerpApi trong tháng).
+              </p>
+            )}
           </div>
-        )}
+        );
+      })}
 
-        {!result && !loading && !error && (
-          <div className="text-center text-gray-400 py-16">
-            <div className="flex justify-center gap-2 mb-3 flex-wrap">
-              {AIRLINES.map((a) => <span key={a} className="px-2 py-1 rounded-full bg-gray-100 text-gray-500 text-xs">{a}</span>)}
-            </div>
-            <p>Nhập hành trình + ngày rồi bấm <b>Tra giá</b> để so giá và xem khung giờ các hãng.</p>
-          </div>
-        )}
-      </div>
-      <Toast toast={toast} />
+      {!result && !loading && !error && (
+        <Card>
+          <EmptyState
+            icon={Sparkles}
+            title="Nhập hành trình + ngày rồi bấm “Tra giá”"
+            description="So giá và xem khung giờ các hãng nội địa, tính cho 1 khách."
+            action={(
+              <div className="flex flex-wrap justify-center gap-1.5">
+                {AIRLINES.map((a) => <Badge key={a} tone="outline">{a}</Badge>)}
+              </div>
+            )}
+          />
+        </Card>
+      )}
     </div>
   );
 }

@@ -23,7 +23,9 @@ export default defineConfig([
       },
     },
     rules: {
-      'no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]' }],
+      // Không có plugin react → JSX không tính là "dùng" biến; bỏ qua tên viết hoa (component)
+      // cả ở biến lẫn tham số (vd `icon: Icon`). Các import thường vẫn bị bắt.
+      'no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]', argsIgnorePattern: '^[A-Z_]' }],
     },
   },
 ])

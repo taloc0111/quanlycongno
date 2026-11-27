@@ -1,5 +1,5 @@
-import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -10,4 +10,26 @@ export default defineConfig({
       },
     }),
   ],
-})
+  build: {
+    chunkSizeWarningLimit: 900,
+    rollupOptions: {
+      output: {
+        // Tách thư viện lớn ra chunk riêng để cache tốt hơn.
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return undefined;
+          if (/node_modules[\\/](recharts|d3-|victory-)/.test(id)) return 'charts';
+          if (/node_modules[\\/](react-datepicker|date-fns)/.test(id)) return 'datepicker';
+          if (/node_modules[\\/](react|react-dom|scheduler)[\\/]/.test(id)) return 'react';
+          return undefined;
+        },
+      },
+    },
+  },
+  test: {
+    environment: 'jsdom',
+    globals: true,
+    setupFiles: ['./src/test/setup.js'],
+    restoreMocks: true,
+    css: false,
+  },
+});
