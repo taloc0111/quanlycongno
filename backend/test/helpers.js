@@ -36,8 +36,10 @@ const { app, ensureSchema } = require('../app');
 const TABLES = [
   'audit_logs', 'fare_snapshots', 'ticket_watches', 'api_usage', 'airlines', 'password_resets',
   // Dòng tiền v3 — con trước cha (wallet_entries → payments; supplier_payments → cost_items → suppliers).
-  'wallet_entries', 'supplier_payments', 'cost_items', 'suppliers', 'money_accounts',
-  'invoice_items', 'invoices', 'payments', 'fund_deposits', 'sticky_notes',
+  'wallet_entries', 'supplier_payments', 'cost_items', 'suppliers',
+  // Dòng tiền v3.1 — chuyển TK / thu chi khác (→ money_accounts), phiếu thu (payments/wallet_entries → receipts).
+  'account_transfers', 'account_entries',
+  'invoice_items', 'invoices', 'payments', 'receipts', 'money_accounts', 'fund_deposits', 'sticky_notes',
   'tours', 'train_tickets', 'passports', 'debts', 'flight_routes', 'customers', 'companies', 'users',
 ];
 

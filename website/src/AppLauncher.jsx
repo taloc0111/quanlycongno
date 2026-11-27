@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   LayoutDashboard, FileText, BookOpen, Users, Receipt, Network, UserCircle, Landmark, StickyNote,
-  PlaneTakeoff, PlaneLanding, Train, Palmtree, Search, History, Wallet, Truck, PiggyBank,
+  PlaneTakeoff, PlaneLanding, Train, Palmtree, Search, History, Wallet, Truck, PiggyBank, ReceiptText, LifeBuoy,
 } from 'lucide-react';
 import { useAuth } from './auth/AuthContext.jsx';
 import { useNavigation } from './hooks/useNavigation.jsx';
@@ -30,6 +30,8 @@ import AuditApp from './AuditApp.jsx';
 import AccountsApp from './AccountsApp.jsx';
 import SuppliersApp from './SuppliersApp.jsx';
 import WalletsApp from './WalletsApp.jsx';
+import ExpensesApp from './ExpensesApp.jsx';
+import HelpApp from './HelpApp.jsx';
 
 // roles: chỉ hiện với các role này. feature: chỉ hiện khi tài khoản được bật tính năng
 // (admin luôn có). Không có → hiện cho tất cả.
@@ -46,6 +48,7 @@ const NAV = [
   { key: 'accounts', label: 'Tài khoản', icon: Wallet, group: 'Dòng tiền', Component: AccountsApp },
   { key: 'suppliers', label: 'Nhà cung cấp', icon: Truck, group: 'Dòng tiền', Component: SuppliersApp },
   { key: 'wallets', label: 'Ví trả trước', icon: PiggyBank, group: 'Dòng tiền', Component: WalletsApp },
+  { key: 'expenses', label: 'Thu chi khác', icon: ReceiptText, group: 'Dòng tiền', Component: ExpensesApp },
   { key: 'customer', label: 'Khách hàng', icon: Users, group: 'Danh mục', Component: CustomerApp },
   { key: 'airlines', label: 'Hãng bay', icon: PlaneTakeoff, group: 'Danh mục', Component: AirlinesApp },
   { key: 'invoice', label: 'Hóa đơn', icon: Receipt, group: 'Tài chính', Component: InvoiceApp },
@@ -53,6 +56,7 @@ const NAV = [
   { key: 'agency', label: 'Đại lý', icon: Network, group: 'Hệ thống', Component: AgencyApp, roles: ['admin', 'agency'] },
   { key: 'audit', label: 'Nhật ký', icon: History, group: 'Hệ thống', Component: AuditApp, roles: ['admin', 'agency'] },
   { key: 'profile', label: 'Hồ sơ', icon: UserCircle, group: 'Hệ thống', Component: ProfileApp },
+  { key: 'help', label: 'Hướng dẫn', icon: LifeBuoy, group: 'Hệ thống', Component: HelpApp },
 ];
 
 export default function AppLauncher() {

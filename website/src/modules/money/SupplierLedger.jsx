@@ -10,7 +10,7 @@ import {
 } from '../../ui';
 import ReconcileToggle from './ReconcileToggle';
 import { SupplierFormModal, SupplierPayModal } from './SupplierModals';
-import { dueBadge, isOwnedBy, itemRemaining } from './moneyUtils';
+import { COST_ITEM_KIND, dueBadge, isOwnedBy, itemRefundPending, itemRemaining } from './moneyUtils';
 
 const KIND_TONE = { f1: 'brand', down: 'purple', other: 'gray' };
 const TARGET_LABEL = { debt: 'Vé máy bay', passport: 'Hộ chiếu', train: 'Vé tàu', tour: 'Tour' };
@@ -52,6 +52,7 @@ export default function SupplierLedger({ id }) {
   const totalPaid = data?.total_paid != null ? num(data.total_paid) : payments.reduce((s, p) => s + num(p.amount), 0);
   const balance = data?.balance != null ? num(data.balance) : totalCost - totalPaid;
   const unpaidCount = items.filter((it) => itemRemaining(it) > 0).length;
+  const refundPendingCount = items.filter((it) => itemRefundPending(it) > 0).length;
 
   const reconcile = async (p, next) => {
     setPayments((ps) => ps.map((x) => (x.id === p.id ? { ...x, reconciled: next } : x)));
@@ -83,15 +84,17 @@ export default function SupplierLedger({ id }) {
         </div>
       ),
     },
-    { key: 'label', label: 'Khoản', render: (it) => <span className="text-ink-soft">{it.label}</span> },
-    { key: 'amount', label: 'Số tiền', align: 'right', render: (it) => <span className="font-semibold">{formatCurrency(it.amount)}</span> },
-    { key: 'paid_amount', label: 'Đã trả', align: 'right', hideBelow: 'md', render: (it) => <span className="text-success-600">{formatCurrency(it.paid_amount)}</span> },
     {
-      key: 'remaining', label: 'Còn lại', align: 'right', render: (it) => {
-        const rem = itemRemaining(it);
-        return <span className={`font-bold ${rem > 0 ? 'text-danger-600' : 'text-success-600'}`}>{rem > 0 ? formatCurrency(rem) : 'Đã trả đủ'}</span>;
-      },
+      key: 'label', label: 'Khoản', render: (it) => (
+        <span className="inline-flex items-center gap-1.5">
+          <span className="text-ink-soft">{it.label}</span>
+          {COST_ITEM_KIND[it.kind] && <Badge tone={COST_ITEM_KIND[it.kind].tone}>{COST_ITEM_KIND[it.kind].label}</Badge>}
+        </span>
+      ),
     },
+    { key: 'amount', label: 'Số tiền', align: 'right', render: (it) => <span className={`font-semibold ${num(it.amount) < 0 ? 'text-success-600' : ''}`}>{formatCurrency(it.amount)}</span> },
+    { key: 'paid_amount', label: 'Đã trả/nhận', align: 'right', hideBelow: 'md', render: (it) => <span className="text-success-600">{formatCurrency(Math.abs(num(it.paid_amount)))}</span> },
+    { key: 'remaining', label: 'Còn lại', align: 'right', render: (it) => <ItemRemaining item={it} /> },
     {
       key: 'due_date', label: 'Hạn trả', hideBelow: 'sm', render: (it) => {
         const b = dueBadge(it.due_date, itemRemaining(it));
@@ -104,16 +107,23 @@ export default function SupplierLedger({ id }) {
       },
     },
     {
-      key: 'actions', label: '', align: 'right', width: 70, render: (it) => (owned && itemRemaining(it) > 0
-        ? <Button size="xs" variant="soft" onClick={() => setPaying({ itemId: it.id })}>Trả</Button>
-        : null),
+      key: 'actions', label: '', align: 'right', width: 70, render: (it) => {
+        if (!owned) return null;
+        if (itemRemaining(it) > 0) return <Button size="xs" variant="soft" onClick={() => setPaying({ itemId: it.id })}>Trả</Button>;
+        if (itemRefundPending(it) > 0) return <Button size="xs" variant="soft" onClick={() => setPaying({ itemId: it.id })}>Nhận</Button>;
+        return null;
+      },
     },
   ];
 
   const paymentColumns = [
     { key: 'pay_date', label: 'Ngày', width: 100, render: (p) => formatDate(p.pay_date) },
-    { key: 'amount', label: 'Số tiền', align: 'right', render: (p) => <span className="font-semibold text-danger-600">{formatCurrency(p.amount)}</span> },
-    { key: 'account_name', label: 'Từ TK', render: (p) => p.account_name || <span className="text-ink-faint">—</span> },
+    {
+      key: 'amount', label: 'Số tiền', align: 'right', render: (p) => (num(p.amount) < 0 ? (
+        <span className="inline-flex items-center gap-1.5"><Badge tone="success">NCC hoàn</Badge><span className="font-semibold text-success-600">+{formatCurrency(-num(p.amount))}</span></span>
+      ) : <span className="font-semibold text-danger-600">{formatCurrency(p.amount)}</span>),
+    },
+    { key: 'account_name', label: 'Tài khoản', render: (p) => p.account_name || <span className="text-ink-faint">—</span> },
     { key: 'cost_item_label', label: 'Cho dòng', hideBelow: 'sm', render: (p) => p.cost_item_label || <span className="text-ink-faint">Trả gộp</span> },
     { key: 'notes', label: 'Ghi chú', hideBelow: 'md', render: (p) => <span className="text-ink-muted">{p.notes || ''}</span> },
     { key: 'reconciled', label: 'Đối soát', align: 'center', width: 80, render: (p) => <ReconcileToggle checked={p.reconciled} disabled={!owned} onChange={(v) => reconcile(p, v)} /> },
@@ -123,6 +133,7 @@ export default function SupplierLedger({ id }) {
   return (
     <div>
       <PageHeader
+        help="suppliers"
         icon={Truck}
         title={loading && !supplier ? 'Đang tải…' : (supplier?.name || 'Nhà cung cấp')}
         description={supplier ? [supplierKindLabel(supplier.kind), supplier.phone].filter(Boolean).join(' · ') : 'Chi tiết nhà cung cấp'}
@@ -157,7 +168,11 @@ export default function SupplierLedger({ id }) {
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
             <StatCard icon={ReceiptText} label="Tổng giá vốn" value={loading ? '…' : formatCurrency(totalCost)} sub={`${items.length} dòng`} tone="brand" />
             <StatCard icon={Wallet} label="Đã trả" value={loading ? '…' : formatCurrency(totalPaid)} sub={`${payments.length} lần trả`} tone="success" />
-            <StatCard icon={Scale} label="Còn nợ" value={loading ? '…' : formatCurrency(balance)} sub={unpaidCount ? `${unpaidCount} dòng chưa trả đủ` : 'Không còn dòng nợ'} tone={balance > 0 ? 'danger' : 'gray'} />
+            {balance < 0 ? (
+              <StatCard icon={Scale} label="Đang giữ của mình" value={loading ? '…' : formatCurrency(-balance)} sub={refundPendingCount ? `${refundPendingCount} dòng hoàn chờ nhận` : 'NCC cần trả lại hoặc trừ vào lần sau'} tone="success" />
+            ) : (
+              <StatCard icon={Scale} label="Còn nợ" value={loading ? '…' : formatCurrency(balance)} sub={unpaidCount ? `${unpaidCount} dòng chưa trả đủ` : 'Không còn dòng nợ'} tone={balance > 0 ? 'danger' : 'gray'} />
+            )}
           </div>
 
           <div className="mb-3">
@@ -181,18 +196,17 @@ export default function SupplierLedger({ id }) {
               emptyDescription="Khi nhập giá vốn cho vé/hộ chiếu/tour và chọn nhà cung cấp này, các dòng sẽ hiện ở đây."
               rowClassName={(it) => (dueBadge(it.due_date, itemRemaining(it))?.tone === 'danger' ? 'bg-danger-50/40' : '')}
               mobileCard={(it) => {
-                const rem = itemRemaining(it);
-                const b = dueBadge(it.due_date, rem);
+                const b = dueBadge(it.due_date, itemRemaining(it));
                 return (
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
-                      <p className="font-semibold text-ink truncate">{it.label} · {it.target?.label || '—'}</p>
+                      <p className="font-semibold text-ink truncate">{it.label} · {it.target?.label || '—'} {COST_ITEM_KIND[it.kind] && <Badge tone={COST_ITEM_KIND[it.kind].tone}>{COST_ITEM_KIND[it.kind].label}</Badge>}</p>
                       <p className="text-xs text-ink-muted">{[formatDate(it.created_at), it.target?.customer_name].filter(Boolean).join(' · ')}</p>
                       {b && <Badge tone={b.tone}>{b.label}</Badge>}
                     </div>
                     <div className="text-right shrink-0">
                       <p className="font-semibold tabular">{formatCurrency(it.amount)}</p>
-                      <p className={`text-xs font-bold tabular ${rem > 0 ? 'text-danger-600' : 'text-success-600'}`}>{rem > 0 ? `Còn ${formatCurrency(rem)}` : 'Đã trả đủ'}</p>
+                      <ItemRemaining item={it} className="block text-xs" />
                     </div>
                   </div>
                 );
@@ -213,7 +227,9 @@ export default function SupplierLedger({ id }) {
                     <p className="text-xs text-ink-muted truncate">{p.cost_item_label || 'Trả gộp'}{p.notes ? ` · ${p.notes}` : ''}</p>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
-                    <span className="font-bold tabular text-danger-600">{formatCurrency(p.amount)}</span>
+                    {num(p.amount) < 0
+                      ? <span className="font-bold tabular text-success-600">NCC hoàn +{formatCurrency(-num(p.amount))}</span>
+                      : <span className="font-bold tabular text-danger-600">{formatCurrency(p.amount)}</span>}
                     <ReconcileToggle checked={p.reconciled} disabled={!owned} onChange={(v) => reconcile(p, v)} />
                   </div>
                 </div>
@@ -237,4 +253,14 @@ export default function SupplierLedger({ id }) {
       )}
     </div>
   );
+}
+
+/** Còn lại của 1 dòng giá vốn: dòng thường → còn nợ / đã trả đủ; dòng NCC hoàn (âm) → chờ nhận / đã nhận. */
+function ItemRemaining({ item, className = '' }) {
+  if (num(item.amount) < 0) {
+    const pending = itemRefundPending(item);
+    return <span className={`font-bold tabular text-success-600 ${className}`}>{pending > 0 ? `Chờ nhận ${formatCurrency(pending)}` : 'Đã nhận'}</span>;
+  }
+  const rem = itemRemaining(item);
+  return <span className={`font-bold tabular ${rem > 0 ? 'text-danger-600' : 'text-success-600'} ${className}`}>{rem > 0 ? formatCurrency(rem) : 'Đã trả đủ'}</span>;
 }

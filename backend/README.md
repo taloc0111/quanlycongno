@@ -44,20 +44,24 @@ Dùng Node test runner, chạy trên Postgres **local** (mặc định `postgres
 `/api/debts` (vé máy bay) · `/api/passports` · `/api/train-tickets` · `/api/tours`
 - `GET /`, `POST /`, `PUT /:id`, `DELETE /:id`, `POST /bulk-delete { ids }`, `POST /import { rows }` → `{ inserted, failed, errors }`
 - `PUT /api/debts/:id/checkin { checkedIn }`
+- v3.1: `POST /:id/cancel { cancelDate, note, finalAmount, customerRefund{ amount, to: wallet|account, accountId }, supplierRefunds[{ supplierId, amount, receivedNow, accountId }] }` (huỷ/hoàn, 400 nếu đã huỷ / hoàn quá số đã trả), `POST /:id/uncancel` (hoàn tác toàn bộ; 400 nếu ví khách đã tiêu tiền hoàn); `POST /api/debts/:id/change { changeDate, customerFee, supplierFee, supplierId, newFlightDate, newRoute, newTicketCode, note }`. Dịch vụ đã huỷ: không nhận thanh toán, không vào quá hạn/đến hạn; xoá bị chặn khi còn dòng hoàn tiền khách. `cost_items[].kind`: cost | refund | change.
 - `companyId` phải thuộc về người tạo; `paid`/`paidAmount` khi tạo sẽ sinh 1 dòng `payments` (`paymentTarget: self|agency`, `accountId` tuỳ chọn).
 - Dòng tiền v3 (xem `docs/MONEY-FLOWS.md`): body nhận thêm `costPending`, `costItems[{ id?, supplierId?, label, amount, dueDate?, payNow? }]` (có khoá = thay thế toàn bộ dòng; còn dòng → `cost_amount` = tổng), riêng vé máy bay `ticketKind: normal|down`. Sửa không gửi `costAmount`/`costPending`/`ticketKind` → giữ nguyên. GET trả thêm `cost_items`, `cost_unpaid`, `cost_pending`, (debts) `ticket_kind`.
 
 ### Khách hàng — `/api/customers`
 - `GET /` (kèm `outstanding` 4 loại), `POST /`, `PUT /:id`, `DELETE /:id` (400 nếu khách đã có giao dịch ví), `POST /bulk-delete` (`{ deleted, skipped }` — bỏ qua khách có ví), `POST /import`
+- `GET /:id/outstanding` (v3.1) → `[{ type, id, label, issue_date, due_date, total, paid, remaining }]` dịch vụ còn nợ, chưa huỷ, cũ trước
 - `GET /:id/detail?from=&to=` → `{ customer, debts, passports, trainTickets, tours, payments[{type, target_label}], totals: { sold, cost, paid, outstanding } }`
 
 ### Thanh toán — `/api/payments`
-- `GET /?debtId=|passportId=|trainTicketId=|tourId=` (kèm `account_name`), `POST /` (đúng 1 target, `amount > 0`, `accountId`, `method: 'wallet'` = trừ ví khách), `DELETE /:id` (trừ ví → hoàn lại ví)
+- `GET /?debtId=|passportId=|trainTicketId=|tourId=` (kèm `account_name`), `POST /` (đúng 1 target, `amount > 0`, `accountId`, `method: 'wallet'` = trừ ví khách; v3.1 trả thừa → tự tạo phiếu thu, phần thừa vào ví, response thêm `overflowToWallet`, `receiptId`; `noOverflow: true` giữ hành vi cũ), `DELETE /:id` (trừ ví → hoàn lại ví; 400 nếu thuộc phiếu thu hoặc làm ví âm)
 
 ### Dòng tiền v3 — tài khoản / nhà cung cấp / ví (`docs/MONEY-FLOWS.md`)
-- `/api/accounts`: `GET /?includeArchived=1` (kèm `total_in/total_out/balance/unreconciled_count`), `POST /`, `PUT /:id` (từng phần, `archived`), `DELETE /:id` (400 nếu có giao dịch), `GET /:id/ledger?from&to`, `PUT /reconcile { kind: payment|wallet|supplier_payment, id, reconciled }`
-- `/api/suppliers`: `GET /` (kèm `total_cost/total_paid/balance`), `POST /`, `PUT /:id`, `DELETE /:id` (400 nếu đã dùng), `GET /:id/ledger`, `POST /:id/payments`, `DELETE /payments/:paymentId`
-- `/api/wallets`: `GET /`, `GET /:customerId`, `POST /:customerId/topup|refund|adjust`, `DELETE /entries/:id` (không xoá được entry `charge`, không cho số dư âm)
+- `/api/accounts`: `GET /?includeArchived=1` (kèm `total_in/total_out/balance/unreconciled_count`), `POST /`, `PUT /:id` (từng phần, `archived`), `DELETE /:id` (400 nếu có giao dịch), `GET /:id/ledger?from&to`, `PUT /reconcile { kind: payment|wallet|supplier_payment|receipt|transfer_in|transfer_out|entry (hoặc kind của sổ), id, reconciled }`, `PUT /reconcile-batch { items:[{kind,id,reconciled}] }` → `{ updated }` (tất cả hoặc không)
+- v3.1 `/api/accounts/transfers`: `GET /?accountId=`, `POST / { fromAccountId, toAccountId, amount, fee, transferDate, notes }`, `DELETE /:id`; `/api/accounts/entries`: `GET /?accountId=&from=&to=&category=`, `POST / { accountId, direction: in|out, amount, entryDate, category, notes }`, `PUT /:id`, `DELETE /:id`. Sổ chi tiết thêm kind `receipt`, `customer_refund`, `supplier_refund`, `transfer_in/out`, `entry_in/out`.
+- v3.1 `/api/receipts`: `GET /?customerId=`, `POST / { accountId, receiptDate, method, paymentTarget, notes, customerId, amount, allocations:[{ type: debt|passport|train|tour, id, amount }] }` → `{ receipt, payments, walletTopup }`, `DELETE /:id` (400 nếu ví khách sẽ âm)
+- `/api/suppliers`: `GET /` (kèm `total_cost/total_paid/balance`), `POST /`, `PUT /:id`, `DELETE /:id` (400 nếu đã dùng), `GET /:id/ledger`, `POST /:id/payments` (`direction: out|in`, in = NCC trả lại, lưu âm), `DELETE /payments/:paymentId`
+- `/api/wallets`: `GET /`, `GET /:customerId`, `POST /:customerId/topup|refund|adjust`, `DELETE /entries/:id` (không xoá được entry `charge`/`credit`/nạp từ phiếu thu, không cho số dư âm)
 
 ### Hóa đơn — `/api/invoices`
 - `GET /`, `GET /:id` (kèm `items`), `POST /`, `PUT /:id` (từng phần; `items` thay toàn bộ dòng), `DELETE /:id`
@@ -66,7 +70,7 @@ Dùng Node test runner, chạy trên Postgres **local** (mặc định `postgres
 - `GET /`, `POST /`, `PUT /:id`, `DELETE /:id`, `POST /bulk-delete`, `GET /balance`
 
 ### Thống kê — `GET /api/stats`
-`{ totalAmount, totalPaid, outstanding, totalProfit, costPendingCount, supplierOwed, walletTotal, othersHolding, overdue, counts{debts,passports,trainTickets,tours,customers}, byType{*: amount,cost,paid,count,profit,costPendingCount}, topDebtors, monthly (12 tháng), todo{ flightsTomorrow, dueSoon, overdue, fareHits, costPending, supplierDue } }` — lợi nhuận bỏ qua dòng `cost_pending`.
+`{ totalAmount, totalPaid, outstanding, totalProfit, costPendingCount, supplierOwed, walletTotal, othersHolding, otherIncome, otherExpense, netProfit, overdue, counts{debts,passports,trainTickets,tours,customers,cancelled}, byType{*: amount,cost,paid,count,profit,costPendingCount}, topDebtors, monthly (12 tháng, kèm otherIncome/otherExpense/netProfit), todo{ flightsTomorrow, dueSoon, overdue, fareHits, costPending, supplierDue } }` — lợi nhuận bỏ qua dòng `cost_pending`; thu chi khác bỏ "Góp vốn" / "Rút tiền riêng".
 
 ### Canh vé (cần cờ `fareWatch`)
 - `/api/ticket-watches`: `GET /`, `POST /`, `PUT /:id` (từng phần), `DELETE /:id`, `GET /:id/snapshots`, `POST /:id/check-now` (3 lần/phút/user)

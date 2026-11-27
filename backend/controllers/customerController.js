@@ -4,6 +4,7 @@ const logger = require('../config/logger');
 const { assertOwns } = require('../utils/ownership');
 const { logAudit } = require('../utils/audit');
 const v = require('../utils/validate');
+const { SERVICES, TYPES: SERVICE_TYPES, labelSql } = require('../utils/services');
 
 const TYPES = ['individual', 'company'];
 
@@ -315,9 +316,36 @@ const importCustomers = async (req, res) => {
   }
 };
 
+// Dòng tiền v3.1: GET /api/customers/:id/outstanding — các dịch vụ còn nợ (chưa huỷ) của 1 khách,
+// cũ nhất trước (dùng cho phiếu thu nhiều vé: "Chia tự động (cũ trước)").
+const getCustomerOutstanding = async (req, res) => {
+  const id = v.idParam(req.params.id);
+  try {
+    const cust = await pool.query('SELECT id FROM customers WHERE id = $1 AND user_id = ANY($2)', [id, req.scope.userIds]);
+    if (cust.rows.length === 0) return res.status(404).json({ error: 'Customer not found' });
+    const parts = SERVICE_TYPES.map((t) => {
+      const s = SERVICES[t];
+      return `SELECT '${t}'::text AS type, x.id, (${labelSql(t, 'x')})::text AS label, x.${s.date} AS issue_date, x.due_date,
+                     x.${s.price} AS total, x.${s.paid} AS paid, x.${s.price} - x.${s.paid} AS remaining, x.created_at
+                FROM ${s.table} x
+               WHERE x.customer_id = $1 AND x.user_id = ANY($2) AND x.${s.price} > x.${s.paid}`;
+    });
+    const r = await pool.query(
+      `SELECT type, id, label, issue_date, due_date, total, paid, remaining FROM (${parts.join(' UNION ALL ')}) o
+        ORDER BY o.issue_date ASC NULLS LAST, o.created_at ASC, o.id ASC`,
+      [id, req.scope.userIds]
+    );
+    res.json(r.rows);
+  } catch (error) {
+    logger.error('Get customer outstanding error:', error.message);
+    res.status(500).json({ error: 'Failed to fetch outstanding' });
+  }
+};
+
 module.exports = {
   getCustomers,
   getCustomerDetail,
+  getCustomerOutstanding,
   createCustomer,
   updateCustomer,
   deleteCustomer,

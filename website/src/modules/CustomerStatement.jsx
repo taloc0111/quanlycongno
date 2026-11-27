@@ -1,9 +1,13 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { FileText, Printer, Copy } from 'lucide-react';
 import { useAuth } from '../auth/AuthContext';
 import { useFeedback } from '../ui/FeedbackContext';
 import { formatCurrency, formatDate, today, addDays } from '../utils/format';
-import { Button, Modal, Field, DateField } from '../ui';
+import { Button, Modal, Field, DateField, Select } from '../ui';
+import BankQR from '../components/BankQR';
+import { accountQrInfo, cleanContent } from '../utils/vietqr';
+import { accountsApi, methodLabel } from '../services/money';
+import { storage } from '../services/client';
 
 // Khi in: chỉ hiện .print-area (ẩn mọi thứ khác bằng visibility để không cần sửa Layout).
 const PRINT_CSS = `
@@ -24,6 +28,26 @@ export default function CustomerStatement({ open, onClose, customer, transaction
   const { user } = useAuth();
   const { toast } = useFeedback();
   const [dueDate, setDueDate] = useState(() => addDays(today(), 7));
+
+  // Tài khoản dùng cho mã QR: chỉ TK ngân hàng của mình, đủ thông tin; mặc định TK dùng gần nhất.
+  const [accounts, setAccounts] = useState([]);
+  const [qrAccountId, setQrAccountId] = useState('');
+  useEffect(() => {
+    if (!open) return undefined;
+    let cancelled = false;
+    accountsApi.list().then((list) => {
+      if (cancelled) return;
+      const usable = (list || []).filter((a) => !a.archived && a.is_own !== false && accountQrInfo(a).ok);
+      setAccounts(usable);
+      const last = storage.get('payment:lastAccount');
+      setQrAccountId((cur) => cur || String((usable.find((a) => String(a.id) === last) || usable[0])?.id || ''));
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [open]);
+  const qrAccounts = accounts;
+  const qrAccount = accounts.find((a) => String(a.id) === String(qrAccountId)) || null;
+  const qrBankName = qrAccount ? accountQrInfo(qrAccount).bank?.name : '';
+  const qrContent = `${customer.name || ''} ${customer.phone || ''} thanh toan`;
 
   const shopName = user?.fullName || user?.username || '';
   const outstanding = useMemo(() => transactions.filter((t) => t.remaining > 0), [transactions]);
@@ -48,6 +72,10 @@ export default function CustomerStatement({ open, onClose, customer, transaction
       });
       lines.push('', `TỔNG CÒN NỢ: ${formatCurrency(sumOutstanding)}`);
       lines.push(`Vui lòng thanh toán trước ngày ${formatDate(dueDate)}.`);
+      if (qrAccount) {
+        lines.push(`Chuyển khoản: ${qrBankName} - ${qrAccount.account_number}${qrAccount.holder_name ? ` - ${qrAccount.holder_name}` : ''}`);
+        lines.push(`Nội dung: ${cleanContent(qrContent)}`);
+      }
     }
     lines.push('', `Tổng mua trong kỳ: ${formatCurrency(totals?.sold)} · Đã trả: ${formatCurrency(totals?.paid)} · Còn nợ: ${formatCurrency(totals?.outstanding)}`);
     return lines.join('\n');
@@ -77,9 +105,19 @@ export default function CustomerStatement({ open, onClose, customer, transaction
       size="xl"
       footer={(
         <div className="no-print flex flex-wrap items-center gap-2 w-full justify-between">
-          <Field label="Hạn thanh toán ghi trên bảng kê" className="flex items-center gap-2 [&>label]:mb-0">
-            <DateField value={dueDate} onChange={setDueDate} className="w-36 input-sm" />
-          </Field>
+          <div className="flex flex-wrap items-center gap-3">
+            <Field label="Hạn thanh toán ghi trên bảng kê" className="flex items-center gap-2 [&>label]:mb-0">
+              <DateField value={dueDate} onChange={setDueDate} className="w-36 input-sm" />
+            </Field>
+            {qrAccounts.length > 0 && (
+              <Field label="QR vào TK" htmlFor="stmt-qr-account" className="flex items-center gap-2 [&>label]:mb-0">
+                <Select id="stmt-qr-account" size="sm" value={qrAccountId} onChange={(e) => setQrAccountId(e.target.value)} className="w-48">
+                  <option value="">Không in QR</option>
+                  {qrAccounts.map((a) => <option key={a.id} value={a.id}>{a.name} · {a.account_number}</option>)}
+                </Select>
+              </Field>
+            )}
+          </div>
           <div className="flex gap-2">
             <Button variant="secondary" onClick={onClose}>Đóng</Button>
             <Button variant="secondary" icon={Copy} onClick={copy}>Sao chép tóm tắt</Button>
@@ -172,7 +210,7 @@ export default function CustomerStatement({ open, onClose, customer, transaction
                 <tr key={p.id}>
                   <td className={td}>{formatDate(p.payment_date)}</td>
                   <td className={td}>{p.target_label || '—'}{p.notes ? <span className="text-slate-500"> · {p.notes}</span> : null}</td>
-                  <td className={td}>{p.method || ''}</td>
+                  <td className={td}>{methodLabel(p.method)}</td>
                   <td className={`${td} text-right tabular`}>{formatCurrency(p.amount)}</td>
                 </tr>
               ))}
@@ -195,6 +233,20 @@ export default function CustomerStatement({ open, onClose, customer, transaction
 
         {sumOutstanding > 0 && (
           <p className="mt-3 font-semibold">Vui lòng thanh toán trước ngày <u>{formatDate(dueDate)}</u>. Xin cảm ơn quý khách!</p>
+        )}
+
+        {/* Mã QR chuyển khoản đúng số còn nợ */}
+        {sumOutstanding > 0 && qrAccount && (
+          <div className="mt-4 flex items-center gap-4 rounded border border-slate-300 p-3" data-qr-print>
+            <BankQR account={qrAccount} amount={sumOutstanding} content={qrContent} size={130} showInfo={false} />
+            <div className="text-[13px] leading-relaxed">
+              <p className="font-bold">Quét mã để chuyển khoản</p>
+              <p>{qrBankName} · <b>{qrAccount.account_number}</b></p>
+              {qrAccount.holder_name && <p className="uppercase">{qrAccount.holder_name}</p>}
+              <p>Số tiền: <b>{formatCurrency(sumOutstanding)}</b></p>
+              <p>Nội dung: {cleanContent(qrContent)}</p>
+            </div>
+          </div>
         )}
 
         {/* Ký tên */}

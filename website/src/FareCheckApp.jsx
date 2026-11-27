@@ -86,7 +86,7 @@ export default function FareCheckApp() {
   if (disabled) {
     return (
       <div>
-        <PageHeader icon={Search} title="Check vé" description="Tra giá hiện tại của các hãng cho một chặng." />
+        <PageHeader help="fare-watch" icon={Search} title="Check vé" description="Tra giá hiện tại của các hãng cho một chặng." />
         <Card>
           <EmptyState icon={Lock} title="Tính năng Canh vé chưa được bật cho tài khoản này" description="Liên hệ quản trị viên để bật tính năng." />
         </Card>
@@ -96,7 +96,7 @@ export default function FareCheckApp() {
 
   return (
     <div className="max-w-5xl">
-      <PageHeader icon={Search} title="Check vé" description="Tra giá hiện tại của các hãng cho một chặng — kèm khung giờ từng chuyến, không lưu khách." />
+      <PageHeader help="fare-watch" icon={Search} title="Check vé" description="Tra giá hiện tại của các hãng cho một chặng — kèm khung giờ từng chuyến, không lưu khách." />
 
       {/* Form tra giá */}
       <Card className="mb-5">

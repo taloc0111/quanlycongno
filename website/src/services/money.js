@@ -75,3 +75,67 @@ export const accountLabel = (a) => {
   const num = a.account_number ? ` · …${String(a.account_number).slice(-4)}` : '';
   return `${a.name}${num}${a.is_own === false ? ' (giữ hộ)' : ''}`;
 };
+
+// ---- v3.1 service actions (huỷ / hoàn / đổi vé) — docs/MONEY-FLOWS.md ----
+// endpoint = cfg.endpoint của module ('/debts', '/passports', '/train-tickets', '/tours').
+export const serviceActionsApi = {
+  cancel: async (endpoint, id, body) => { const r = await api.post(`${endpoint}/${id}/cancel`, body); invalidateMoneyCache(); return r; },
+  uncancel: async (endpoint, id) => { const r = await api.post(`${endpoint}/${id}/uncancel`, {}); invalidateMoneyCache(); return r; },
+  change: async (id, body) => { const r = await api.post(`/debts/${id}/change`, body); invalidateMoneyCache(); return r; },
+};
+
+// ---- v3.1 accounts/receipts ----
+// Chuyển tiền giữa TK, thu chi khác, phiếu thu nhiều vé, khớp sao kê (docs/MONEY-FLOWS.md v3.1).
+
+/**
+ * Danh mục thu chi khác theo chiều. `owner: true` = dòng tiền của chủ (Rút tiền riêng / Góp vốn),
+ * KHÔNG tính vào lãi/lỗ.
+ */
+export const ENTRY_CATEGORIES = {
+  out: [
+    { value: 'Phí ngân hàng', label: 'Phí ngân hàng' },
+    { value: 'Văn phòng', label: 'Văn phòng' },
+    { value: 'Lương', label: 'Lương' },
+    { value: 'Quảng cáo', label: 'Quảng cáo' },
+    { value: 'Điện nước', label: 'Điện nước' },
+    { value: 'Rút tiền riêng', label: 'Rút tiền riêng', owner: true },
+    { value: 'Khác', label: 'Khác' },
+  ],
+  in: [
+    { value: 'Góp vốn', label: 'Góp vốn', owner: true },
+    { value: 'Lãi ngân hàng', label: 'Lãi ngân hàng' },
+    { value: 'Thu khác', label: 'Thu khác' },
+  ],
+};
+
+/** Danh mục là dòng tiền của chủ (không tính lãi/lỗ). */
+export const isOwnerCategory = (category) =>
+  [...ENTRY_CATEGORIES.out, ...ENTRY_CATEGORIES.in].some((c) => c.owner && c.value === category);
+
+/** Gộp phiếu nhiều thao tác: số dư TK đổi → xoá cache danh sách TK. */
+const touchAccounts = async (promise) => { const r = await promise; invalidateMoneyCache('accounts'); return r; };
+
+export const transfersApi = {
+  list: ({ accountId } = {}) => api.get(`/accounts/transfers${qs({ accountId })}`),
+  create: (body) => touchAccounts(api.post('/accounts/transfers', body)),
+  remove: (id) => touchAccounts(api.del(`/accounts/transfers/${id}`)),
+};
+
+export const entriesApi = {
+  list: ({ accountId, from, to, category } = {}) => api.get(`/accounts/entries${qs({ accountId, from, to, category })}`),
+  create: (body) => touchAccounts(api.post('/accounts/entries', body)),
+  update: (id, body) => touchAccounts(api.put(`/accounts/entries/${id}`, body)),
+  remove: (id) => touchAccounts(api.del(`/accounts/entries/${id}`)),
+};
+
+export const receiptsApi = {
+  create: (body) => touchAccounts(api.post('/receipts', body)),
+  list: ({ customerId } = {}) => api.get(`/receipts${qs({ customerId })}`),
+  remove: (id) => touchAccounts(api.del(`/receipts/${id}`)),
+};
+
+/** Các dịch vụ còn nợ (chưa huỷ) của 1 khách, cũ nhất trước. */
+export const customerOutstanding = (customerId) => api.get(`/customers/${encodeURIComponent(customerId)}/outstanding`);
+
+/** Đánh dấu đối soát nhiều dòng một lần (khớp sao kê): items = [{ kind, id, reconciled }]. */
+accountsApi.reconcileBatch = (items) => touchAccounts(api.put('/accounts/reconcile-batch', { items }));

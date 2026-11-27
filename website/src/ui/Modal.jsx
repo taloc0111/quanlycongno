@@ -1,7 +1,12 @@
 import { useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 
 const SIZES = { sm: 'max-w-sm', md: 'max-w-lg', lg: 'max-w-2xl', xl: 'max-w-4xl', full: 'max-w-6xl' };
+
+// Ngăn xếp modal đang mở: Escape chỉ đóng modal TRÊN CÙNG (modal lồng nhau, vd QR trong Thanh toán).
+const openStack = [];
+let seq = 0;
 
 /**
  * Modal chuẩn: Escape để đóng, khoá cuộn trang, tự focus ô nhập đầu tiên,
@@ -17,7 +22,13 @@ export default function Modal({ open, onClose, title, subtitle, icon: Icon, size
 
   useEffect(() => {
     if (!open) return undefined;
-    const onKey = (e) => { if (e.key === 'Escape') onCloseRef.current?.(); };
+    const myId = ++seq;
+    openStack.push(myId);
+    const onKey = (e) => {
+      if (e.key !== 'Escape' || openStack[openStack.length - 1] !== myId) return;
+      e.stopPropagation();
+      onCloseRef.current?.();
+    };
     document.addEventListener('keydown', onKey);
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
@@ -30,6 +41,8 @@ export default function Modal({ open, onClose, title, subtitle, icon: Icon, size
     }, 10);
     return () => {
       document.removeEventListener('keydown', onKey);
+      const i = openStack.indexOf(myId);
+      if (i >= 0) openStack.splice(i, 1);
       document.body.style.overflow = prevOverflow;
       clearTimeout(t);
     };
@@ -37,7 +50,7 @@ export default function Modal({ open, onClose, title, subtitle, icon: Icon, size
 
   if (!open) return null;
 
-  return (
+  return createPortal(
     <div
       className="fixed inset-0 z-50 flex items-start sm:items-center justify-center bg-ink/50 backdrop-blur-[2px] p-3 sm:p-6 overflow-y-auto animate-fade-in"
       onMouseDown={(e) => { if (!isStatic && e.target === e.currentTarget) onClose?.(); }}
@@ -80,5 +93,5 @@ export default function Modal({ open, onClose, title, subtitle, icon: Icon, size
         {footer && <div className="flex flex-wrap items-center justify-end gap-2 border-t border-surface-border px-5 py-3 bg-surface-muted rounded-b-2xl">{footer}</div>}
       </div>
     </div>
-  );
+  , document.body);
 }

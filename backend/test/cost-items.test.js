@@ -50,7 +50,7 @@ test('vé down 3 dòng: cost_amount = tổng; GET trả cost_items/cost_unpaid/c
   assert.equal(N(row.cost_unpaid), 1705000);
   assert.equal(row.cost_items.length, 3);
   const it = row.cost_items[2];
-  assert.deepEqual(Object.keys(it).sort(), ['amount', 'due_date', 'id', 'label', 'paid_amount', 'supplier_id', 'supplier_name'].sort());
+  assert.deepEqual(Object.keys(it).sort(), ['amount', 'due_date', 'id', 'kind', 'label', 'paid_amount', 'supplier_id', 'supplier_name'].sort());
   assert.equal(it.due_date, '2026-11-25');
   assert.equal(typeof it.amount, 'string', 'tiền dạng chuỗi numeric');
   assert.equal(N(it.paid_amount), 0);

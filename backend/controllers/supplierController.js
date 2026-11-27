@@ -1,5 +1,5 @@
 // controllers/supplierController.js — Nhà cung cấp (F1, người làm down, khác) + tiền trả NCC.
-// balance = tổng giá vốn gắn NCC − tổng đã trả NCC = mình còn nợ họ.
+// balance = tổng giá vốn gắn NCC − tổng đã trả NCC = mình còn nợ họ (âm = NCC đang giữ tiền của mình, v3.1).
 const pool = require('../config/database');
 const logger = require('../config/logger');
 const { logAudit } = require('../utils/audit');
@@ -141,7 +141,7 @@ const getSupplierLedger = async (req, res) => {
 
     const [items, payments] = await Promise.all([
       pool.query(
-        `SELECT ci.id, ci.label, ci.amount, ci.paid_amount, ci.due_date, ci.created_at,
+        `SELECT ci.id, ci.label, ci.kind, ci.amount, ci.paid_amount, ci.due_date, ci.created_at,
                 ${targetTypeSql('ci')} AS target_type,
                 COALESCE(ci.debt_id, ci.passport_id, ci.train_ticket_id, ci.tour_id) AS target_id,
                 COALESCE(d.customer_name, ps.customer_name, tr.customer_name, tu.customer_name) AS customer_name,
@@ -168,6 +168,7 @@ const getSupplierLedger = async (req, res) => {
       items: items.rows.map((r) => ({
         id: r.id,
         label: r.label,
+        kind: r.kind, // v3.1: cost | refund (NCC hoàn, âm) | change (phí đổi)
         amount: r.amount,
         paid_amount: r.paid_amount,
         due_date: r.due_date,
@@ -185,7 +186,8 @@ const getSupplierLedger = async (req, res) => {
   }
 };
 
-// POST /api/suppliers/:id/payments { amount*>0, payDate, accountId, costItemId, notes }
+// POST /api/suppliers/:id/payments { amount*>0, payDate, accountId, costItemId, notes, direction: 'out'|'in' }
+// direction 'in' (v3.1) = NCC trả lại tiền cho mình → lưu amount ÂM (tiền VÀO tài khoản).
 const createSupplierPayment = async (req, res) => {
   const id = v.idParam(req.params.id);
   const amount = v.num(req.body.amount, { required: true, label: 'Số tiền' });
@@ -194,6 +196,8 @@ const createSupplierPayment = async (req, res) => {
   const accountId = v.int(req.body.accountId, { min: 1, label: 'Tài khoản' });
   const costItemId = v.int(req.body.costItemId, { min: 1, label: 'Dòng giá vốn' });
   const notes = v.str(req.body.notes, { label: 'Ghi chú' });
+  const direction = v.oneOf(req.body.direction, ['out', 'in'], { label: 'Chiều tiền', fallback: 'out' });
+  const signed = direction === 'in' ? -amount : amount;
 
   const client = await pool.connect();
   try {
@@ -218,15 +222,15 @@ const createSupplierPayment = async (req, res) => {
     const ins = await client.query(
       `INSERT INTO supplier_payments (user_id, supplier_id, cost_item_id, account_id, amount, pay_date, notes)
        VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-      [req.user.id, id, costItemId, accountId, amount, payDate, notes]
+      [req.user.id, id, costItemId, accountId, signed, payDate, notes]
     );
     await recomputeCostItemPaid(client, costItemId);
     await client.query('COMMIT');
     const row = ins.rows[0];
     logAudit(req, {
       action: 'payment', entity: 'supplier_payment', entityId: row.id,
-      summary: `Trả ${sup.rows[0].name} ${fmtVnd(amount)}`,
-      details: { supplierId: id, costItemId, accountId, amount },
+      summary: direction === 'in' ? `Nhận lại từ ${sup.rows[0].name} ${fmtVnd(amount)}` : `Trả ${sup.rows[0].name} ${fmtVnd(amount)}`,
+      details: { supplierId: id, costItemId, accountId, amount: signed, direction },
     });
     res.status(201).json(row);
   } catch (error) {

@@ -5,6 +5,7 @@ import { Button, Field, Input, MoneyField, Modal, Switch, Textarea } from '../..
 import { accountsApi } from '../../services/money';
 import { num } from '../../utils/format';
 import { BANKS } from './moneyUtils';
+import { VN_BANKS, findBank } from '../../utils/vietqr';
 
 const toForm = (a) => ({
   id: a?.id,
@@ -69,10 +70,11 @@ export default function AccountFormModal({ initial, onClose, onSaved }) {
         <Field label="Tên tài khoản" required htmlFor="ac-name" hint='Vd "TCB chính", "TK chị Lan"' className="sm:col-span-2">
           <Input id="ac-name" value={form.name} onChange={(e) => set('name', e.target.value)} placeholder="TCB chính" />
         </Field>
-        <Field label="Ngân hàng / ví" htmlFor="ac-bank">
+        <Field label="Ngân hàng / ví" htmlFor="ac-bank" hint={form.bank.trim() ? (findBank(form.bank) ? `Tạo được mã QR · ${findBank(form.bank).name}` : 'Không tạo mã QR được với tên này (vd TCB, VCB, MB, ACB)') : 'Chọn trong danh sách để dùng được mã QR'}>
           <Input id="ac-bank" list="ac-bank-options" value={form.bank} onChange={(e) => set('bank', e.target.value)} placeholder="TCB" />
           <datalist id="ac-bank-options">
-            {BANKS.map((b) => <option key={b} value={b} />)}
+            {VN_BANKS.map((b) => <option key={b.code} value={b.code}>{b.name}</option>)}
+            {BANKS.filter((b) => !findBank(b)).map((b) => <option key={b} value={b} />)}
           </datalist>
         </Field>
         <Field label="Số tài khoản" htmlFor="ac-number">

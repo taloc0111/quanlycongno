@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Plus, Download, Upload, Columns3, Trash2, Pencil, Wallet, RefreshCw, Users, Landmark,
   TrendingUp, Receipt, AlertTriangle, PiggyBank, CheckCircle2, Eye, RotateCcw, ListPlus, Truck, Hourglass,
+  MoreHorizontal, Ban, Undo2, Repeat, HandCoins,
 } from 'lucide-react';
 import { useAuth } from '../auth/AuthContext';
 import { useNavigation } from '../hooks/useNavigation.jsx';
@@ -11,10 +12,13 @@ import { api, qs } from '../services/client';
 import { formatCurrency, formatDate, formatMonth, monthOf, today, num, daysUntil } from '../utils/format';
 import {
   payState, isCostPending, costUnpaid, costTotal, newCostItem, downTemplate,
-  activeAccounts, defaultAccountId, rememberAccount,
+  activeAccounts, defaultAccountId, rememberAccount, isCancelled, originalAmount,
 } from './payState';
-import { accountsApi, suppliersApi, accountLabel, invalidateMoneyCache } from '../services/money';
+import { accountsApi, suppliersApi, accountLabel, invalidateMoneyCache, serviceActionsApi } from '../services/money';
 import CostItemsEditor from './CostItemsEditor';
+import CancelModal from './CancelModal';
+import ChangeTicketModal from './ChangeTicketModal';
+import ReceiptModal from './money/ReceiptModal';
 import { exportWorkbook } from '../utils/excel';
 import {
   Button, IconButton, Field, Input, Select, MoneyField, DateField, SearchInput, Textarea,
@@ -31,6 +35,13 @@ const PAY_FILTER = [
   { value: 'paid', label: 'Đã trả đủ' },
 ];
 
+// Trạng thái hiệu lực (huỷ / chưa huỷ) — mặc định ẩn dịch vụ đã huỷ. Tour có bộ lọc tiến độ riêng nên không dùng.
+const LIFE_FILTER = [
+  { value: 'active', label: 'Đang hiệu lực' },
+  { value: 'cancelled', label: 'Đã huỷ' },
+  { value: 'all', label: 'Trạng thái: Tất cả' },
+];
+
 const STATUS_BADGE = {
   overdue: { tone: 'danger', label: 'Quá hạn' },
   paid: { tone: 'success', label: 'Đã trả đủ' },
@@ -42,6 +53,24 @@ export function PayBadge({ row, cfg }) {
   const s = payState(row, cfg);
   const b = STATUS_BADGE[s.status];
   return <Badge tone={b.tone} dot>{b.label}</Badge>;
+}
+
+/** Badge "Đã huỷ" (null nếu dịch vụ còn hiệu lực). */
+export function CancelledBadge({ row }) {
+  if (!isCancelled(row)) return null;
+  return <span title={row.cancel_note || undefined}><Badge tone="gray" icon={Ban}>Đã huỷ</Badge></span>;
+}
+
+/** Ô giá bán: dịch vụ đã huỷ hiện giá gốc gạch ngang + giá còn lại. */
+export function AmountCell({ row, cfg, amountKey }) {
+  const key = amountKey || cfg.amountKey;
+  const orig = originalAmount(row, { ...cfg, amountKey: key });
+  return (
+    <span className="font-semibold">
+      {orig !== null && <s className="mr-1.5 text-xs font-normal text-ink-faint" title="Giá bán gốc trước khi huỷ">{formatCurrency(orig)}</s>}
+      {formatCurrency(row[key])}
+    </span>
+  );
 }
 
 const COST_FILTER = [
@@ -94,6 +123,9 @@ export default function ServicePage({ config: cfg }) {
   const [importOpen, setImportOpen] = useState(false);
   const [showDebtors, setShowDebtors] = useState(false);
   const [extraOpen, setExtraOpen] = useState(null); // modal phụ (routes/companies) do config cung cấp
+  const [cancelling, setCancelling] = useState(null); // dòng đang mở modal Huỷ / hoàn
+  const [changing, setChanging] = useState(null);     // dòng đang mở modal Đổi vé
+  const [receiptOpen, setReceiptOpen] = useState(false);
 
   const t = useTableState({
     storageKey: cfg.storageKey,
@@ -105,6 +137,8 @@ export default function ServicePage({ config: cfg }) {
   const month = filters.month || '';
   const pay = filters.pay || 'all';
   const costFilter = filters.cost || 'all';
+  const hasLifeFilter = cfg.lifecycleFilter !== false;
+  const life = hasLifeFilter ? (filters.life || 'active') : 'all';
 
   // ---------- Tải dữ liệu ----------
   const load = useCallback(async ({ silent = false } = {}) => {
@@ -172,6 +206,8 @@ export default function ServicePage({ config: cfg }) {
         if (pay === 'overdue') return s.overdue;
         return true;
       } : null,
+      life === 'active' ? (row) => !isCancelled(row) : null,
+      life === 'cancelled' ? (row) => isCancelled(row) : null,
       costFilter === 'pending' ? (row) => isCostPending(row) : null,
       costFilter === 'owed' ? (row) => costUnpaid(row) > 0 : null,
       ...extraFilterFns,
@@ -216,6 +252,14 @@ export default function ServicePage({ config: cfg }) {
   const selectableIds = sorted.filter(owned).map((r) => r.id);
   const allSelected = selectableIds.length > 0 && selectableIds.every((id) => t.selected.includes(id));
   const toggleAll = () => t.setSelected(allSelected ? [] : selectableIds);
+  // Thu tiền nhiều vé: chỉ khi mọi dòng chọn cùng 1 khách (customer_id) và chưa huỷ.
+  const selectedRows = rows.filter((r) => t.selected.includes(r.id));
+  const selCustomerIds = [...new Set(selectedRows.map((r) => r.customer_id ?? null))];
+  const selCustomerId = selCustomerIds.length === 1 ? selCustomerIds[0] : null;
+  const receiptBlockedReason = !selectedRows.length ? ''
+    : selCustomerId === null ? 'Chỉ thu chung được cho cùng 1 khách'
+      : selectedRows.some((r) => isCancelled(r) && payState(r, cfg).remaining <= 0) ? 'Có dịch vụ đã huỷ và hết nợ trong các dòng đã chọn'
+        : '';
 
   // ---------- CRUD ----------
   const openAdd = () => setForm({ ...cfg.emptyForm, [cfg.form.dateField || 'issueDate']: today(), accountId: defaultAccountId(accounts) });
@@ -273,6 +317,43 @@ export default function ServicePage({ config: cfg }) {
       toast.success(`Đã xoá ${data.deleted} ${cfg.itemLabel}`);
       notifyChanged();
     } catch (err) { toast.error(err.message); }
+  };
+
+  // ---------- Huỷ / hoàn tác huỷ / đổi vé / thu nhiều vé ----------
+  const afterMoneyAction = async () => {
+    invalidateMoneyCache();
+    reloadSuppliers();
+    await load({ silent: true });
+    notifyChanged();
+  };
+
+  const uncancel = async (row) => {
+    const ok = await confirm({
+      title: 'Hoàn tác huỷ',
+      message: `Khôi phục ${cfg.itemLabel} của "${row.customer_name}"? Giá bán về như trước khi huỷ, các khoản hoàn tiền khách / NCC hoàn ghi lúc huỷ sẽ bị xoá.`,
+      confirmText: 'Hoàn tác huỷ',
+    });
+    if (!ok) return;
+    try {
+      await serviceActionsApi.uncancel(cfg.endpoint, row.id);
+      toast.success('Đã hoàn tác huỷ');
+      await afterMoneyAction();
+    } catch (err) { toast.error(err.message); }
+  };
+
+  const onCancelDone = async () => { setCancelling(null); await afterMoneyAction(); };
+  const onChangeDone = async () => { setChanging(null); await afterMoneyAction(); };
+  const onReceiptDone = async () => { setReceiptOpen(false); t.clearSelection(); await afterMoneyAction(); };
+
+  const moreMenu = (row) => {
+    const cancelled = isCancelled(row);
+    return (
+      <Dropdown trigger={<IconButton icon={MoreHorizontal} title="Thao tác khác" />} width="w-48">
+        {!cancelled && <MenuItem icon={Ban} danger onClick={() => setCancelling(row)}>Huỷ / hoàn</MenuItem>}
+        {cancelled && <MenuItem icon={Undo2} onClick={() => uncancel(row)}>Hoàn tác huỷ</MenuItem>}
+        {cfg.changeTicket && !cancelled && <MenuItem icon={Repeat} onClick={() => setChanging(row)}>Đổi vé</MenuItem>}
+      </Dropdown>
+    );
   };
 
   const setField = (key, value) => setForm((f) => withAutoPending({ ...f, [key]: value }));
@@ -336,12 +417,13 @@ export default function ServicePage({ config: cfg }) {
 
   // ---------- Cột ----------
   const actionCol = {
-    key: '__actions', label: '', align: 'right', width: 110,
+    key: '__actions', label: '', align: 'right', width: 140,
     render: (row) => owned(row) ? (
       <div className="flex justify-end gap-0.5 opacity-70 group-hover:opacity-100 transition">
-        <IconButton icon={Wallet} title="Thanh toán" variant="success" onClick={(e) => { e.stopPropagation(); setPaying(row); }} />
+        {(!isCancelled(row) || payState(row, cfg).remaining > 0) && <IconButton icon={Wallet} title="Thanh toán" variant="success" onClick={(e) => { e.stopPropagation(); setPaying(row); }} />}
         <IconButton icon={Pencil} title="Sửa" variant="primary" onClick={(e) => { e.stopPropagation(); openEdit(row); }} />
         <IconButton icon={Trash2} title="Xoá" variant="danger" onClick={(e) => { e.stopPropagation(); remove(row); }} />
+        {moreMenu(row)}
       </div>
     ) : <Badge tone="outline" icon={Eye}>Chỉ xem</Badge>,
   };
@@ -478,26 +560,27 @@ export default function ServicePage({ config: cfg }) {
   const mobileCard = (row) => {
     const s = payState(row, cfg);
     return (
-      <div className="flex flex-col gap-1.5">
+      <div className={`flex flex-col gap-1.5 ${s.cancelled ? 'opacity-60' : ''}`}>
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
             <p className="font-semibold text-ink truncate">{row.customer_name}</p>
             <p className="text-xs text-ink-muted truncate">{cfg.mobileSubtitle(row, ctx)}</p>
           </div>
-          <PayBadge row={row} cfg={cfg} />
+          <div className="flex flex-wrap justify-end gap-1"><CancelledBadge row={row} /><PayBadge row={row} cfg={cfg} /></div>
         </div>
         {(row.ticket_kind === 'down' || isCostPending(row) || costUnpaid(row) > 0) && (
           <div className="flex flex-wrap gap-1"><CostBadges row={row} /></div>
         )}
         <div className="flex items-center justify-between text-sm">
-          <span className="text-ink-muted">Giá bán <b className="text-ink tabular">{formatCurrency(s.total)}</b></span>
+          <span className="text-ink-muted">Giá bán <span className="text-ink tabular"><AmountCell row={row} cfg={cfg} /></span></span>
           <span className={`font-bold tabular ${s.isPaid ? 'text-success-600' : 'text-danger-600'}`}>{s.isPaid ? 'Đã trả đủ' : `Nợ ${formatCurrency(s.remaining)}`}</span>
         </div>
         {owned(row) && (
-          <div className="flex gap-2 pt-1">
-            <Button size="xs" variant="soft" icon={Wallet} onClick={() => setPaying(row)}>Thanh toán</Button>
+          <div className="flex flex-wrap items-center gap-2 pt-1">
+            {(!s.cancelled || s.remaining > 0) && <Button size="xs" variant="soft" icon={Wallet} onClick={() => setPaying(row)}>Thanh toán</Button>}
             <Button size="xs" variant="secondary" icon={Pencil} onClick={() => openEdit(row)}>Sửa</Button>
             <Button size="xs" variant="ghost" icon={Trash2} className="text-danger-600" onClick={() => remove(row)}>Xoá</Button>
+            {moreMenu(row)}
           </div>
         )}
       </div>
@@ -508,6 +591,7 @@ export default function ServicePage({ config: cfg }) {
     <div>
       <PageHeader
         icon={Icon}
+        help={cfg.helpTopic}
         title={cfg.title}
         description={cfg.description}
         actions={(
@@ -572,6 +656,11 @@ export default function ServicePage({ config: cfg }) {
           <Select size="sm" value={pay} onChange={(e) => setFilter('pay', e.target.value)} className="w-36">
             {PAY_FILTER.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
           </Select>
+          {hasLifeFilter && (
+            <Select size="sm" value={life} onChange={(e) => setFilter('life', e.target.value)} className="w-44" title="Lọc theo trạng thái huỷ" aria-label="Trạng thái">
+              {LIFE_FILTER.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </Select>
+          )}
           <Select size="sm" value={costFilter} onChange={(e) => setFilter('cost', e.target.value)} className="w-44" title="Lọc theo giá vốn" aria-label="Lọc giá vốn">
             {COST_FILTER.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
           </Select>
@@ -582,7 +671,7 @@ export default function ServicePage({ config: cfg }) {
             </Select>
           ))}
           <AgencyFilter value={agencyId} onChange={setAgencyId} />
-          {(t.search || month || pay !== 'all' || Object.values(filters).some((v) => v && v !== 'all')) && (
+          {(t.search || month || pay !== 'all' || Object.entries(filters).some(([k, v]) => v && v !== 'all' && !(k === 'life' && v === 'active'))) && (
             <Button size="sm" variant="ghost" icon={RotateCcw} onClick={() => { t.setSearch(''); t.setFilters({}); }}>Xoá lọc</Button>
           )}
         </div>
@@ -607,10 +696,15 @@ export default function ServicePage({ config: cfg }) {
 
       {/* Thanh xoá hàng loạt */}
       {t.selected.length > 0 && (
-        <div className="mb-3 flex items-center justify-between gap-3 rounded-xl border border-danger-100 bg-danger-50 px-4 py-2.5 animate-fade-in">
-          <span className="text-sm font-medium text-danger-700">Đã chọn {t.selected.length} {cfg.itemLabel}</span>
-          <div className="flex gap-2">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-brand-100 bg-brand-50 px-4 py-2.5 animate-fade-in">
+          <span className="text-sm font-medium text-brand-700">Đã chọn {t.selected.length} {cfg.itemLabel}</span>
+          <div className="flex flex-wrap gap-2">
             <Button size="sm" variant="secondary" onClick={t.clearSelection}>Bỏ chọn</Button>
+            <span title={receiptBlockedReason || undefined}>
+              <Button size="sm" variant="success" icon={HandCoins} disabled={!!receiptBlockedReason} title={receiptBlockedReason || undefined} onClick={() => setReceiptOpen(true)}>
+                Thu tiền các vé đã chọn
+              </Button>
+            </span>
             <Button size="sm" variant="danger" icon={Trash2} onClick={bulkDelete}>Xoá đã chọn</Button>
           </div>
         </div>
@@ -630,7 +724,7 @@ export default function ServicePage({ config: cfg }) {
         onToggleAll={toggleAll}
         allSelected={allSelected}
         canSelect={owned}
-        rowClassName={(row) => (payState(row, cfg).overdue ? 'bg-danger-50/40' : '')}
+        rowClassName={(row) => (isCancelled(row) ? 'opacity-60' : payState(row, cfg).overdue ? 'bg-danger-50/40' : '')}
         emptyIcon={Icon}
         emptyTitle={rows.length ? 'Không có dòng nào khớp bộ lọc' : `Chưa có ${cfg.itemLabel} nào`}
         emptyDescription={rows.length ? 'Thử đổi tháng, trạng thái hoặc từ khoá tìm kiếm.' : `Bấm "${cfg.addLabel}" để bắt đầu, hoặc Import từ Excel.`}
@@ -680,9 +774,23 @@ export default function ServicePage({ config: cfg }) {
 
       {paying && (
         <PaymentModal
-          target={{ type: cfg.paymentType, id: paying.id, name: cfg.paymentLabel(paying), total: paying[cfg.amountKey], paid: paying[cfg.paidKey], customerId: paying.customer_id }}
+          target={{ type: cfg.paymentType, id: paying.id, name: cfg.paymentLabel(paying), total: paying[cfg.amountKey], paid: paying[cfg.paidKey], customerId: paying.customer_id, cancelled: isCancelled(paying) }}
           onClose={() => setPaying(null)}
           onChanged={() => { load({ silent: true }); notifyChanged(); }}
+        />
+      )}
+
+      <CancelModal open={!!cancelling} row={cancelling} cfg={cfg} onClose={() => setCancelling(null)} onDone={onCancelDone} />
+      {cfg.changeTicket && (
+        <ChangeTicketModal open={!!changing} row={changing} cfg={cfg} onClose={() => setChanging(null)} onDone={onChangeDone} />
+      )}
+      {receiptOpen && selCustomerId !== null && (
+        <ReceiptModal
+          open
+          onClose={() => setReceiptOpen(false)}
+          onDone={onReceiptDone}
+          customerId={selCustomerId}
+          preselect={selectedRows.map((r) => ({ type: cfg.paymentType, id: r.id }))}
         />
       )}
 

@@ -7,6 +7,7 @@ const { assertOwns } = require('../utils/ownership');
 const { logAudit } = require('../utils/audit');
 const v = require('../utils/validate');
 const ci = require('../utils/costItems');
+const { assertNoRefunds } = require('../utils/services');
 
 const STATUSES = ['consulting', 'deposited', 'completed', 'cancelled'];
 const PAYMENT_TARGETS = ['self', 'agency'];
@@ -115,6 +116,15 @@ const updateTour = async (req, res) => {
       await client.query('ROLLBACK');
       return res.status(400).json({ error: 'Công ty không hợp lệ' });
     }
+    // Dòng tiền v3.1: tour đã huỷ qua "Huỷ / hoàn" (có cancelled_at) chỉ được mở lại bằng "Hoàn tác huỷ"
+    // để tiền hoàn khách / NCC được gỡ đúng — không cho đổi status trực tiếp.
+    if (t.status && t.status !== 'cancelled') {
+      const cur = await client.query('SELECT status, cancelled_at FROM tours WHERE id = $1 AND user_id = $2', [id, req.user.id]);
+      if (cur.rows[0] && cur.rows[0].status === 'cancelled' && cur.rows[0].cancelled_at) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'Tour đã huỷ — hãy dùng "Hoàn tác huỷ" để mở lại' });
+      }
+    }
     const customerId = await upsertCustomer(client, req.user.id, { name: t.customerName, phone: t.phoneNumber, type: 'individual' });
     // Không đụng cột paid/payments — tiền trả thêm ghi qua màn Thanh toán.
     const result = await client.query(
@@ -153,6 +163,8 @@ const updateTour = async (req, res) => {
 
 const deleteTour = async (req, res) => {
   const id = v.idParam(req.params.id);
+  // Dòng tiền v3.1: dịch vụ đã huỷ có hoàn tiền khách → phải hoàn tác huỷ trước (không mất tiền ví/sổ TK).
+  await assertNoRefunds(pool, 'tour', id, req.user.id);
   try {
     const result = await pool.query('DELETE FROM tours WHERE id = $1 AND user_id = $2 RETURNING id, customer_name, tour_name', [id, req.user.id]);
     if (result.rows.length === 0) return res.status(404).json({ error: 'Tour not found' });
@@ -169,6 +181,7 @@ const bulkDeleteTours = async (req, res) => {
   try {
     const { ids } = req.body;
     if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: 'Không có bản ghi nào để xóa' });
+    await assertNoRefunds(pool, 'tour', ids.map(Number).filter(Number.isInteger), req.user.id);
     const result = await pool.query(
       'DELETE FROM tours WHERE id = ANY($1) AND user_id = $2 RETURNING id',
       [ids.map(Number).filter(Number.isFinite), req.user.id]
@@ -178,6 +191,7 @@ const bulkDeleteTours = async (req, res) => {
     }
     res.json({ deleted: result.rows.length });
   } catch (error) {
+    if (error instanceof v.ValidationError) return res.status(400).json({ error: error.message });
     logger.error('Bulk delete tours error:', error.message);
     res.status(500).json({ error: 'Failed to delete tours' });
   }

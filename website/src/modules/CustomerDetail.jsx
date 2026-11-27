@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ArrowLeft, Users, Pencil, FileText, Phone, Mail, MapPin, CreditCard, Building2, AlertTriangle,
-  ShoppingBag, PiggyBank, Landmark, ListOrdered, Cake, RefreshCw, CheckCircle2, Eye,
+  ShoppingBag, PiggyBank, Landmark, ListOrdered, Cake, RefreshCw, CheckCircle2, Eye, HandCoins,
 } from 'lucide-react';
 import { useAuth } from '../auth/AuthContext';
 import { useNavigation } from '../hooks/useNavigation.jsx';
@@ -14,7 +14,9 @@ import {
 } from '../ui';
 import CustomerStatement from './CustomerStatement';
 import WalletPanel from './money/WalletPanel';
-import { methodLabel } from '../services/money';
+import ReceiptModal from './money/ReceiptModal';
+import CustomerReceipts from './money/CustomerReceipts';
+import { methodLabel, receiptsApi } from '../services/money';
 
 // ---------- Chuẩn hoá giao dịch 4 loại dịch vụ về 1 dạng ----------
 const SERVICE = {
@@ -25,6 +27,7 @@ const SERVICE = {
 };
 
 const STATUS = {
+  cancelled: { tone: 'gray', label: 'Đã huỷ' },
   overdue: { tone: 'danger', label: 'Quá hạn' },
   paid: { tone: 'success', label: 'Đã trả đủ' },
   partial: { tone: 'warning', label: 'Trả 1 phần' },
@@ -46,9 +49,10 @@ function normalizeTransactions(detail) {
       const paid = num(r[s.paidKey]);
       const remaining = sold - paid;
       const due = normalizeYmd(r.due_date);
-      const overdue = remaining > 0 && due && due < now;
-      const status = overdue ? 'overdue' : remaining <= 0 ? 'paid' : paid > 0 ? 'partial' : 'unpaid';
-      out.push({ id: `${type}-${r.id}`, type, typeLabel: s.label, tone: s.tone, date: normalizeYmd(r[s.dateKey]), desc: s.desc(r), sold, paid, remaining, due, status, raw: r });
+      const cancelled = r.status === 'cancelled';
+      const overdue = !cancelled && remaining > 0 && due && due < now;
+      const status = cancelled ? 'cancelled' : overdue ? 'overdue' : remaining <= 0 ? 'paid' : paid > 0 ? 'partial' : 'unpaid';
+      out.push({ id: `${type}-${r.id}`, type, typeLabel: s.label, tone: s.tone, date: normalizeYmd(r[s.dateKey]), desc: s.desc(r), sold, paid, remaining, due, status, cancelled, raw: r });
     }
   }
   return out.sort((a, b) => (a.date === b.date ? 0 : a.date < b.date ? 1 : -1));
@@ -201,6 +205,10 @@ export default function CustomerDetail({ id }) {
   const [tab, setTab] = useState('all');
   const [editing, setEditing] = useState(false);
   const [statementOpen, setStatementOpen] = useState(false);
+  const [receiptOpen, setReceiptOpen] = useState(false);
+  const [receipts, setReceipts] = useState(null);
+  const [receiptsError, setReceiptsError] = useState('');
+  const [walletKey, setWalletKey] = useState(0); // đổi để WalletPanel tải lại sau phiếu thu
 
   const load = useCallback(async ({ silent = false } = {}) => {
     if (silent) setRefreshing(true); else setLoading(true);
@@ -216,6 +224,22 @@ export default function CustomerDetail({ id }) {
   }, [id, from, to]);
   useEffect(() => { load(); }, [load]);
   useEffect(() => { api.get('/companies').then(setCompanies).catch(() => {}); }, []);
+
+  const loadReceipts = useCallback(() => {
+    let alive = true;
+    receiptsApi.list({ customerId: id })
+      .then((rows) => { if (alive) { setReceipts(Array.isArray(rows) ? rows : []); setReceiptsError(''); } })
+      .catch((err) => { if (alive) { setReceipts([]); setReceiptsError(err.message); } });
+    return () => { alive = false; };
+  }, [id]);
+  useEffect(() => loadReceipts(), [loadReceipts]);
+
+  // Sau khi ghi/xoá phiếu thu: số đã trả, ví và danh sách phiếu đều đổi.
+  const afterReceipt = () => {
+    load({ silent: true });
+    loadReceipts();
+    setWalletKey((k) => k + 1);
+  };
 
   const customer = detail?.customer;
   const owned = !customer || !user?.id || customer.user_id === user.id;
@@ -241,7 +265,16 @@ export default function CustomerDetail({ id }) {
     { key: 'date', label: 'Ngày', width: 110, render: (r) => formatDate(r.date) || <span className="text-ink-faint">—</span> },
     { key: 'type', label: 'Loại', width: 110, render: (r) => <Badge tone={r.tone}>{r.typeLabel}</Badge> },
     { key: 'desc', label: 'Mô tả', render: (r) => <span className="font-medium text-ink">{r.desc}</span> },
-    { key: 'sold', label: 'Giá bán', align: 'right', render: (r) => <span className="font-semibold">{formatCurrency(r.sold)}</span> },
+    {
+      key: 'sold', label: 'Giá bán', align: 'right', render: (r) => (
+        <span className="font-semibold">
+          {r.cancelled && r.raw?.original_amount != null && num(r.raw.original_amount) !== r.sold && (
+            <span className="mr-1.5 font-normal text-ink-faint line-through">{formatCurrency(r.raw.original_amount)}</span>
+          )}
+          {formatCurrency(r.sold)}
+        </span>
+      ),
+    },
     { key: 'paid', label: 'Đã trả', align: 'right', hideBelow: 'lg', render: (r) => <span className="text-success-600">{formatCurrency(r.paid)}</span> },
     { key: 'remaining', label: 'Còn nợ', align: 'right', render: (r) => <span className={`font-bold ${r.remaining <= 0 ? 'text-success-600' : 'text-danger-600'}`}>{formatCurrency(r.remaining)}</span> },
     { key: 'status', label: 'Trạng thái', width: 110, render: (r) => <StatusBadge status={r.status} /> },
@@ -275,6 +308,7 @@ export default function CustomerDetail({ id }) {
   return (
     <div>
       <PageHeader
+        help="customers"
         icon={Users}
         title={loading ? 'Đang tải…' : (customer?.name || 'Khách hàng')}
         description={customer ? `Khách hàng #${customer.id}${!owned ? ` · thuộc đại lý ${customer.owner_name || customer.owner_username || ''}` : ''}` : 'Chi tiết khách hàng'}
@@ -283,6 +317,7 @@ export default function CustomerDetail({ id }) {
             <Button variant="secondary" icon={ArrowLeft} onClick={() => navigate('customer')}>Danh sách</Button>
             <IconButton icon={RefreshCw} title="Tải lại" onClick={() => load({ silent: true })} className={refreshing ? 'animate-spin' : ''} />
             {customer && owned && <Button variant="secondary" icon={Pencil} onClick={() => setEditing(true)}>Sửa khách</Button>}
+            {customer && owned && <Button variant="secondary" icon={HandCoins} onClick={() => setReceiptOpen(true)}>Thu tiền nhiều vé</Button>}
             {customer && <Button icon={FileText} onClick={() => setStatementOpen(true)}>Bảng kê công nợ</Button>}
           </>
         )}
@@ -337,7 +372,7 @@ export default function CustomerDetail({ id }) {
           </div>
 
           {/* Ví trả trước (thu gọn, bấm để xem lịch sử) */}
-          {customer && <WalletPanel customerId={customer.id} readOnly={!owned} collapsible />}
+          {customer && <WalletPanel key={walletKey} customerId={customer.id} readOnly={!owned} collapsible />}
 
           {/* Số liệu */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
@@ -365,6 +400,9 @@ export default function CustomerDetail({ id }) {
             </div>
           </div>
 
+          {tab === 'payment' && (
+            <CustomerReceipts receipts={receipts} error={receiptsError} onRetry={loadReceipts} onChanged={afterReceipt} />
+          )}
           {tab === 'payment' ? (
             <DataTable
               columns={payColumns}
@@ -395,7 +433,7 @@ export default function CustomerDetail({ id }) {
               columns={txColumns}
               rows={visibleRows}
               loading={loading}
-              rowClassName={(r) => (r.status === 'overdue' ? 'bg-danger-50/40' : '')}
+              rowClassName={(r) => (r.cancelled ? 'opacity-60' : r.status === 'overdue' ? 'bg-danger-50/40' : '')}
               emptyIcon={ListOrdered}
               emptyTitle={transactions.length ? 'Không có giao dịch loại này' : 'Chưa có giao dịch nào'}
               emptyDescription={from || to ? 'Thử mở rộng khoảng thời gian.' : 'Giao dịch của khách ở các mục Công nợ vé / Vé tàu / Hộ chiếu / Tour sẽ hiện ở đây.'}
@@ -428,6 +466,10 @@ export default function CustomerDetail({ id }) {
           onClose={() => setEditing(false)}
           onSaved={() => load({ silent: true })}
         />
+      )}
+
+      {customer && owned && (
+        <ReceiptModal open={receiptOpen} customerId={customer.id} onClose={() => setReceiptOpen(false)} onDone={afterReceipt} />
       )}
 
       {customer && statementOpen && (

@@ -1,10 +1,10 @@
 // controllers/accountController.js — Tài khoản tiền (ngân hàng / ví / TK người khác giữ hộ).
-// Số dư = opening_balance + tiền vào (payments ≠ ví, nạp ví) − tiền ra (trả NCC, hoàn ví).
+// Số dư (v3.1) = opening_balance + tiền vào − tiền ra; công thức đầy đủ ở utils/money.js (accountFlowsSql).
 // Đọc theo phạm vi (cấp 1 xem cấp 2, chỉ xem); ghi chỉ trên dữ liệu của chính mình.
 const pool = require('../config/database');
 const logger = require('../config/logger');
 const { logAudit } = require('../utils/audit');
-const { accountListSql, accountFlowsSql, targetLabelSql, targetJoinsSql, fmtVnd } = require('../utils/money');
+const { accountListSql, accountFlowsSql, ledgerRowsSql, fmtVnd } = require('../utils/money');
 const v = require('../utils/validate');
 
 const has = (obj, key) => Object.prototype.hasOwnProperty.call(obj || {}, key);
@@ -107,7 +107,10 @@ const deleteAccount = async (req, res) => {
     const used = await client.query(
       `SELECT EXISTS (SELECT 1 FROM payments WHERE account_id = $1)
            OR EXISTS (SELECT 1 FROM wallet_entries WHERE account_id = $1)
-           OR EXISTS (SELECT 1 FROM supplier_payments WHERE account_id = $1) AS used`,
+           OR EXISTS (SELECT 1 FROM supplier_payments WHERE account_id = $1)
+           OR EXISTS (SELECT 1 FROM receipts WHERE account_id = $1)
+           OR EXISTS (SELECT 1 FROM account_transfers WHERE from_account_id = $1 OR to_account_id = $1)
+           OR EXISTS (SELECT 1 FROM account_entries WHERE account_id = $1) AS used`,
       [id]
     );
     if (used.rows[0].used) {
@@ -131,13 +134,40 @@ const deleteAccount = async (req, res) => {
 const lowerFirst = (s) => (s ? s.charAt(0).toLowerCase() + s.slice(1) : s);
 
 function describe(r) {
-  if (r.kind === 'payment') return [`Khách ${r.customer_name || ''}`.trim(), r.target_label].filter(Boolean).join(' · ');
-  if (r.kind === 'topup') return `Nạp ví · ${r.customer_name || ''}`.trim();
-  if (r.kind === 'refund') return `Hoàn ví · ${r.customer_name || ''}`.trim();
-  // supplier_payment
-  let s = `Trả ${r.supplier_name || ''}`.trim();
-  if (r.item_label) s += ` · ${r.item_label}${r.target_label ? ` (${lowerFirst(r.target_label)})` : ''}`;
-  return s;
+  switch (r.kind) {
+    case 'payment':
+      return [`Khách ${r.customer_name || ''}`.trim(), r.target_label].filter(Boolean).join(' · ');
+    case 'customer_refund':
+      return [`Hoàn tiền khách ${r.customer_name || ''}`.trim(), r.target_label].filter(Boolean).join(' · ');
+    case 'receipt': {
+      const parts = [r.customer_name ? `Khách ${r.customer_name}` : 'Phiếu thu'];
+      if (r.target_label) parts.push(r.target_label);
+      if (Number(r.wallet_amount) > 0) parts.push(`vào ví ${fmtVnd(r.wallet_amount)}`);
+      return parts.join(' · ');
+    }
+    case 'topup':
+      return `Nạp ví · ${r.customer_name || ''}`.trim();
+    case 'refund':
+      return `Hoàn ví · ${r.customer_name || ''}`.trim();
+    case 'transfer_out': {
+      let s = `Chuyển sang ${r.other_account || ''}`.trim();
+      if (Number(r.fee) > 0) s += ` (gồm phí ${fmtVnd(r.fee)})`;
+      return r.notes ? `${s} · ${r.notes}` : s;
+    }
+    case 'transfer_in': {
+      const s = `Nhận từ ${r.other_account || ''}`.trim();
+      return r.notes ? `${s} · ${r.notes}` : s;
+    }
+    case 'entry_in':
+    case 'entry_out':
+      return [r.item_label, r.notes].filter(Boolean).join(' · ');
+    default: {
+      // supplier_payment / supplier_refund
+      let s = r.kind === 'supplier_refund' ? `Nhận lại từ ${r.supplier_name || ''}`.trim() : `Trả ${r.supplier_name || ''}`.trim();
+      if (r.item_label) s += ` · ${r.item_label}${r.target_label ? ` (${lowerFirst(r.target_label)})` : ''}`;
+      return s;
+    }
+  }
 }
 
 // GET /api/accounts/:id/ledger?from&to — sổ chi tiết 1 tài khoản.
@@ -165,36 +195,9 @@ const getLedger = async (req, res) => {
     const closing = await pool.query('SELECT ($1::numeric + $2::numeric - $3::numeric) AS closing', [s.opening, s.total_in, s.total_out]);
 
     const rows = await pool.query(
-      `SELECT * FROM (
-         SELECT 'payment' AS kind, p.id, p.payment_date AS date, 'in' AS direction, p.amount, p.reconciled,
-                CASE WHEN p.debt_id IS NOT NULL THEN 'debt' WHEN p.passport_id IS NOT NULL THEN 'passport'
-                     WHEN p.train_ticket_id IS NOT NULL THEN 'train' ELSE 'tour' END AS ref_type,
-                COALESCE(p.debt_id, p.passport_id, p.train_ticket_id, p.tour_id) AS ref_id,
-                COALESCE(d.customer_name, ps.customer_name, tr.customer_name, tu.customer_name) AS customer_name,
-                COALESCE(d.customer_id, ps.customer_id, tr.customer_id, tu.customer_id) AS customer_id,
-                NULL::text AS supplier_name, NULL::text AS item_label,
-                ${targetLabelSql()} AS target_label, p.notes
-           FROM payments p ${targetJoinsSql('p')}
-          WHERE p.account_id = $1 AND COALESCE(p.method, '') <> 'wallet'
-         UNION ALL
-         SELECT w.kind, w.id, w.entry_date, CASE WHEN w.kind = 'topup' THEN 'in' ELSE 'out' END, ABS(w.amount), w.reconciled,
-                'wallet', w.customer_id, c.name, w.customer_id, NULL, NULL, NULL, w.notes
-           FROM wallet_entries w JOIN customers c ON c.id = w.customer_id
-          WHERE w.account_id = $1 AND w.kind IN ('topup', 'refund')
-         UNION ALL
-         SELECT 'supplier_payment', sp.id, sp.pay_date, 'out', sp.amount, sp.reconciled,
-                'supplier', sp.supplier_id,
-                COALESCE(d.customer_name, ps.customer_name, tr.customer_name, tu.customer_name),
-                COALESCE(d.customer_id, ps.customer_id, tr.customer_id, tu.customer_id),
-                s.name, ci.label, ${targetLabelSql()}, sp.notes
-           FROM supplier_payments sp
-           JOIN suppliers s ON s.id = sp.supplier_id
-           LEFT JOIN cost_items ci ON ci.id = sp.cost_item_id
-           ${targetJoinsSql('ci')}
-          WHERE sp.account_id = $1
-       ) x
-       WHERE ($2::date IS NULL OR x.date >= $2) AND ($3::date IS NULL OR x.date <= $3)
-       ORDER BY x.date ASC, x.id ASC`,
+      `SELECT * FROM (${ledgerRowsSql()}) x
+        WHERE ($2::date IS NULL OR x.date >= $2) AND ($3::date IS NULL OR x.date <= $3)
+        ORDER BY x.date ASC, x.id ASC, x.kind ASC`,
       [id, from, to]
     );
 
@@ -225,31 +228,116 @@ const getLedger = async (req, res) => {
   }
 };
 
-// Loại giao dịch đối soát → bảng (whitelist).
-const RECONCILE_TABLES = { payment: 'payments', wallet: 'wallet_entries', supplier_payment: 'supplier_payments' };
+// Loại giao dịch đối soát → bảng + cột (whitelist, ghép thẳng vào SQL).
+// Nhận thêm tên kind của sổ chi tiết làm bí danh (topup/refund → wallet, customer_refund → payment, ...)
+// để FE gửi thẳng `row.kind` của ledger.
+const RECONCILE = {
+  payment: { table: 'payments', col: 'reconciled', amount: 'amount' },
+  wallet: { table: 'wallet_entries', col: 'reconciled', amount: 'amount' },
+  supplier_payment: { table: 'supplier_payments', col: 'reconciled', amount: 'amount' },
+  receipt: { table: 'receipts', col: 'reconciled', amount: 'amount' },
+  transfer_in: { table: 'account_transfers', col: 'reconciled_to', amount: 'amount' },
+  transfer_out: { table: 'account_transfers', col: 'reconciled_from', amount: 'amount + fee' },
+  entry: { table: 'account_entries', col: 'reconciled', amount: 'amount' },
+};
+const RECONCILE_ALIASES = {
+  customer_refund: 'payment',
+  topup: 'wallet',
+  refund: 'wallet',
+  supplier_refund: 'supplier_payment',
+  entry_in: 'entry',
+  entry_out: 'entry',
+};
+const RECONCILE_KINDS = [...Object.keys(RECONCILE), ...Object.keys(RECONCILE_ALIASES)];
+
+function parseReconcileItem(item, prefix = '') {
+  if (!item || typeof item !== 'object' || Array.isArray(item)) throw new v.ValidationError(`${prefix}Giao dịch không hợp lệ`);
+  const raw = v.oneOf(item.kind, RECONCILE_KINDS, { required: true, label: `${prefix}Loại giao dịch` });
+  const id = v.int(item.id, { min: 1, required: true, label: `${prefix}Mã giao dịch` });
+  const reconciled = v.bool(item.reconciled, { label: `${prefix}Đã đối soát` });
+  if (reconciled === null) throw new v.ValidationError(`${prefix}Đã đối soát là bắt buộc`);
+  return { kind: RECONCILE_ALIASES[raw] || raw, id, reconciled };
+}
+
+/**
+ * Đánh dấu 1 giao dịch (trong transaction / pool). Phiếu thu: đánh dấu cả payments + nạp ví con.
+ * @returns {Promise<null|{amount:string}>} null nếu không phải giao dịch của userId.
+ */
+async function applyReconcile(client, userId, { kind, id, reconciled }) {
+  const t = RECONCILE[kind];
+  const r = await client.query(
+    `UPDATE ${t.table} SET ${t.col} = $1 WHERE id = $2 AND user_id = $3 RETURNING ${t.amount} AS amount`,
+    [reconciled, id, userId]
+  );
+  if (r.rows.length === 0) return null;
+  if (kind === 'receipt') {
+    await client.query('UPDATE payments SET reconciled = $1 WHERE receipt_id = $2 AND user_id = $3', [reconciled, id, userId]);
+    await client.query('UPDATE wallet_entries SET reconciled = $1 WHERE receipt_id = $2 AND user_id = $3', [reconciled, id, userId]);
+  }
+  return r.rows[0];
+}
 
 // PUT /api/accounts/reconcile { kind, id, reconciled } — chỉ trên dữ liệu của mình.
 const reconcile = async (req, res) => {
-  const kind = v.oneOf(req.body.kind, Object.keys(RECONCILE_TABLES), { required: true, label: 'Loại giao dịch' });
-  const id = v.int(req.body.id, { min: 1, required: true, label: 'Mã giao dịch' });
-  const reconciled = v.bool(req.body.reconciled, { label: 'Đã đối soát' });
-  if (reconciled === null) return res.status(400).json({ error: 'Đã đối soát là bắt buộc' });
+  const item = parseReconcileItem(req.body);
+  const client = await pool.connect();
   try {
-    const r = await pool.query(
-      `UPDATE ${RECONCILE_TABLES[kind]} SET reconciled = $1 WHERE id = $2 AND user_id = $3 RETURNING id, amount`,
-      [reconciled, id, req.user.id]
-    );
-    if (r.rows.length === 0) return res.status(404).json({ error: 'Không tìm thấy giao dịch' });
+    await client.query('BEGIN');
+    const r = await applyReconcile(client, req.user.id, item);
+    if (!r) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Không tìm thấy giao dịch' });
+    }
+    await client.query('COMMIT');
     logAudit(req, {
-      action: 'update', entity: 'reconcile', entityId: id,
-      summary: `${reconciled ? 'Đánh dấu' : 'Bỏ'} đối soát ${kind} #${id} (${fmtVnd(Math.abs(Number(r.rows[0].amount)))})`,
-      details: { kind, reconciled },
+      action: 'update', entity: 'reconcile', entityId: item.id,
+      summary: `${item.reconciled ? 'Đánh dấu' : 'Bỏ'} đối soát ${item.kind} #${item.id} (${fmtVnd(Math.abs(Number(r.amount)))})`,
+      details: { kind: item.kind, reconciled: item.reconciled },
     });
     res.json({ ok: true });
   } catch (error) {
+    await client.query('ROLLBACK');
     logger.error('Reconcile error:', error.message);
     res.status(500).json({ error: 'Failed to reconcile' });
+  } finally {
+    client.release();
   }
 };
 
-module.exports = { getAccounts, createAccount, updateAccount, deleteAccount, getLedger, reconcile };
+const MAX_BATCH = 1000;
+
+// PUT /api/accounts/reconcile-batch { items:[{kind,id,reconciled}] } → { updated } — tất cả hoặc không gì cả.
+const reconcileBatch = async (req, res) => {
+  const raw = req.body.items;
+  if (!Array.isArray(raw) || raw.length === 0) return res.status(400).json({ error: 'Danh sách giao dịch không hợp lệ' });
+  if (raw.length > MAX_BATCH) return res.status(400).json({ error: `Tối đa ${MAX_BATCH} giao dịch mỗi lần` });
+  const items = raw.map((it, i) => parseReconcileItem(it, `Dòng ${i + 1}: `));
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    let updated = 0;
+    for (const it of items) {
+      const r = await applyReconcile(client, req.user.id, it);
+      if (!r) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: `Giao dịch không hợp lệ: ${it.kind} #${it.id}` });
+      }
+      updated += 1;
+    }
+    await client.query('COMMIT');
+    logAudit(req, {
+      action: 'update', entity: 'reconcile',
+      summary: `Khớp sao kê: ${updated} giao dịch`,
+      details: { items: items.map((it) => ({ kind: it.kind, id: it.id, reconciled: it.reconciled })) },
+    });
+    res.json({ updated });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    logger.error('Reconcile batch error:', error.message);
+    res.status(500).json({ error: 'Failed to reconcile' });
+  } finally {
+    client.release();
+  }
+};
+
+module.exports = { getAccounts, createAccount, updateAccount, deleteAccount, getLedger, reconcile, reconcileBatch };

@@ -92,6 +92,7 @@ function WalletsList() {
   return (
     <div>
       <PageHeader
+        help="wallets"
         icon={PiggyBank}
         title="Ví trả trước"
         description="Khách/đại lý cấp dưới chuyển trước, xuất vé trừ dần"
@@ -163,6 +164,7 @@ function WalletDetail({ customerId }) {
   return (
     <div>
       <PageHeader
+        help="wallets"
         icon={PiggyBank}
         title={customer?.name ? `Ví · ${customer.name}` : 'Ví trả trước'}
         description={customer ? [customer.phone, !owned && customer.owner_name ? `thuộc ${customer.owner_name}` : ''].filter(Boolean).join(' · ') || 'Lịch sử nạp / trừ / hoàn' : 'Lịch sử nạp / trừ / hoàn'}

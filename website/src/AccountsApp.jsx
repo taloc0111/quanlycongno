@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Wallet, Plus, RefreshCw, ArrowDownLeft, ArrowUpRight, HandCoins, ListChecks, Pencil, Trash2, Archive, ArchiveRestore, Eye,
+  QrCode, Wallet, Plus, RefreshCw, ArrowDownLeft, ArrowUpRight, HandCoins, ListChecks, Pencil, Trash2, Archive, ArchiveRestore, Eye,
+  ArrowRightLeft, ReceiptText, Undo2,
 } from 'lucide-react';
 import { useAuth } from './auth/AuthContext';
 import { useNavigation } from './hooks/useNavigation.jsx';
@@ -10,7 +11,11 @@ import { formatCurrency, num } from './utils/format';
 import { Badge, Button, Card, EmptyState, ErrorBanner, IconButton, PageHeader, Skeleton, StatCard, Switch } from './ui';
 import AccountFormModal from './modules/money/AccountFormModal';
 import AccountLedger from './modules/money/AccountLedger';
+import TransferModal from './modules/money/TransferModal';
+import EntryModal from './modules/money/EntryModal';
 import { isOwnedBy, maskNumber } from './modules/money/moneyUtils';
+import { QrModal } from './components/BankQR';
+import { accountQrInfo } from './utils/vietqr';
 
 /** Trang Tài khoản tiền: `#accounts` (danh sách) hoặc `#accounts/<id>` (sổ chi tiết). */
 export default function AccountsApp({ param }) {
@@ -28,6 +33,9 @@ function AccountsList() {
   const [error, setError] = useState('');
   const [showArchived, setShowArchived] = useState(false);
   const [editing, setEditing] = useState(null); // null = đóng, {} = thêm, row = sửa
+  const [transfer, setTransfer] = useState(null); // null | giá trị điền sẵn
+  const [entry, setEntry] = useState(null); // null | giá trị điền sẵn
+  const [qrAccount, setQrAccount] = useState(null); // TK đang mở mã QR
 
   const load = useCallback(async ({ silent = false } = {}) => {
     if (silent) setRefreshing(true); else setLoading(true);
@@ -51,6 +59,9 @@ function AccountsList() {
   const othersTotal = active.filter((a) => a.is_own === false).reduce((s, a) => s + num(a.balance), 0);
   const othersCount = active.filter((a) => a.is_own === false).length;
   const unreconciled = rows.reduce((s, a) => s + num(a.unreconciled_count), 0);
+  // TK chính = TK của mình (không giữ hộ, chưa lưu trữ) đầu tiên — đích của "Rút về TK chính".
+  const mainAccount = active.find((a) => a.is_own !== false && isOwnedBy(a, user));
+  const withdrawToMain = (a) => setTransfer({ fromAccountId: a.id, toAccountId: mainAccount?.id, amount: num(a.balance) > 0 ? num(a.balance) : '' });
 
   const setArchived = async (a, archived) => {
     try {
@@ -83,12 +94,15 @@ function AccountsList() {
   return (
     <div>
       <PageHeader
+        help="accounts"
         icon={Wallet}
         title="Tài khoản tiền"
         description="Theo dõi tiền vào/ra từng tài khoản để không sót"
         actions={(
           <>
             <IconButton icon={RefreshCw} title="Tải lại" onClick={() => load({ silent: true })} className={refreshing ? 'animate-spin' : ''} />
+            <Button variant="secondary" icon={ReceiptText} onClick={() => setEntry({})}>Thu/chi khác</Button>
+            <Button variant="secondary" icon={ArrowRightLeft} onClick={() => setTransfer({})}>Chuyển tiền</Button>
             <Button icon={Plus} onClick={() => setEditing({})}>Thêm tài khoản</Button>
           </>
         )}
@@ -133,6 +147,8 @@ function AccountsList() {
               onEdit={() => setEditing(a)}
               onArchive={() => setArchived(a, !a.archived)}
               onDelete={() => remove(a)}
+              onQr={accountQrInfo(a).ok ? () => setQrAccount(a) : null}
+              onWithdraw={a.is_own === false && !a.archived && mainAccount ? () => withdrawToMain(a) : null}
             />
           ))}
         </div>
@@ -145,11 +161,14 @@ function AccountsList() {
           onSaved={() => load({ silent: true })}
         />
       )}
+      {transfer && <TransferModal initial={transfer} onClose={() => setTransfer(null)} onSaved={() => load({ silent: true })} />}
+      <QrModal open={!!qrAccount} onClose={() => setQrAccount(null)} account={qrAccount} title={qrAccount ? `Mã QR · ${qrAccount.name}` : ''} />
+      {entry && <EntryModal initial={entry} onClose={() => setEntry(null)} onSaved={() => load({ silent: true })} />}
     </div>
   );
 }
 
-function AccountCard({ account: a, owned, onOpen, onEdit, onArchive, onDelete }) {
+function AccountCard({ account: a, owned, onOpen, onEdit, onArchive, onDelete, onWithdraw, onQr }) {
   const balance = num(a.balance);
   const unrec = num(a.unreconciled_count);
   const stop = (fn) => (e) => { e.stopPropagation(); fn(); };
@@ -177,6 +196,7 @@ function AccountCard({ account: a, owned, onOpen, onEdit, onArchive, onDelete })
         </div>
         {owned && (
           <div className="flex shrink-0 items-center opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 transition">
+            {onQr && <IconButton icon={QrCode} title="Mã QR nhận tiền" variant="primary" onClick={stop(onQr)} />}
             <IconButton icon={Pencil} title="Sửa" onClick={stop(onEdit)} />
             <IconButton icon={a.archived ? ArchiveRestore : Archive} title={a.archived ? 'Bỏ lưu trữ' : 'Lưu trữ'} onClick={stop(onArchive)} />
             <IconButton icon={Trash2} title="Xoá" variant="danger" onClick={stop(onDelete)} />
@@ -191,6 +211,11 @@ function AccountCard({ account: a, owned, onOpen, onEdit, onArchive, onDelete })
         </span>
         {unrec > 0 ? <Badge tone="danger">{unrec} chưa đối soát</Badge> : <Badge tone="success">Đã đối soát</Badge>}
       </div>
+      {owned && onWithdraw && (
+        <div className="mt-3 border-t border-surface-border pt-2.5">
+          <Button size="xs" variant="soft" icon={Undo2} onClick={stop(onWithdraw)}>Rút về TK chính</Button>
+        </div>
+      )}
     </div>
   );
 }

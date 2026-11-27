@@ -7,6 +7,7 @@ const { assertOwns } = require('../utils/ownership');
 const { logAudit } = require('../utils/audit');
 const v = require('../utils/validate');
 const ci = require('../utils/costItems');
+const { assertNoRefunds } = require('../utils/services');
 
 const PAYMENT_TARGETS = ['self', 'agency'];
 
@@ -158,6 +159,8 @@ const updateTrainTicket = async (req, res) => {
 
 const deleteTrainTicket = async (req, res) => {
   const id = v.idParam(req.params.id);
+  // Dòng tiền v3.1: dịch vụ đã huỷ có hoàn tiền khách → phải hoàn tác huỷ trước (không mất tiền ví/sổ TK).
+  await assertNoRefunds(pool, 'train', id, req.user.id);
   try {
     const result = await pool.query(
       'DELETE FROM train_tickets WHERE id = $1 AND user_id = $2 RETURNING id, customer_name, train_no',
@@ -179,6 +182,7 @@ const bulkDeleteTrainTickets = async (req, res) => {
     if (!Array.isArray(ids) || ids.length === 0) {
       return res.status(400).json({ error: 'Không có bản ghi nào để xóa' });
     }
+    await assertNoRefunds(pool, 'train', ids.map(Number).filter(Number.isInteger), req.user.id);
     const result = await pool.query(
       'DELETE FROM train_tickets WHERE id = ANY($1) AND user_id = $2 RETURNING id',
       [ids.map(Number).filter(Number.isFinite), req.user.id]
@@ -188,6 +192,7 @@ const bulkDeleteTrainTickets = async (req, res) => {
     }
     res.json({ deleted: result.rows.length });
   } catch (error) {
+    if (error instanceof v.ValidationError) return res.status(400).json({ error: error.message });
     logger.error('Bulk delete train tickets error:', error.message);
     res.status(500).json({ error: 'Failed to delete train tickets' });
   }

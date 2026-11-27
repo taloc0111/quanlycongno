@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   LayoutDashboard, RefreshCw, Receipt, TrendingUp, PiggyBank, Landmark, AlertTriangle,
   PlaneTakeoff, CalendarClock, BellRing, ListTodo, Users, ArrowRight, Phone, BarChart3, PieChart as PieIcon,
-  Truck, HandCoins, Wallet, ReceiptText,
+  Truck, HandCoins, Wallet, ReceiptText, Scale,
 } from 'lucide-react';
 import {
   ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, CartesianGrid, Legend, PieChart, Pie, Cell,
@@ -32,7 +32,9 @@ const TYPE_MODULE = { debt: 'debt', passport: 'passport', train: 'train', tour: 
 
 // Số cột lưới "Việc cần làm" theo số mục (6 mục = 3×2, 4 mục = 1 hàng). Class viết tĩnh để Tailwind quét được.
 const TODO_COLS = { 1: 'xl:grid-cols-1', 2: 'xl:grid-cols-2', 3: 'xl:grid-cols-3', 4: 'xl:grid-cols-4', 5: 'xl:grid-cols-3', 6: 'xl:grid-cols-3' };
-const MONEY_COLS = { 1: 'sm:grid-cols-1', 2: 'sm:grid-cols-2', 3: 'sm:grid-cols-3' };
+const MONEY_COLS = { 1: 'sm:grid-cols-1', 2: 'sm:grid-cols-2', 3: 'sm:grid-cols-3', 4: 'sm:grid-cols-2 xl:grid-cols-4' };
+// 6 thẻ chen 1 hàng làm số tiền bị ngắt giữa chừng → 3 cột tới màn rất rộng mới 6 cột.
+const STAT_COLS = { 5: 'xl:grid-cols-5', 6: 'xl:grid-cols-3 2xl:grid-cols-6' };
 
 const greeting = (hour) => {
   if (hour < 11) return 'Chào buổi sáng';
@@ -92,19 +94,29 @@ export default function DashboardApp() {
   const todoCount = flightsTomorrow.length + dueSoon.length + overdueList.length + fareHits.length + costPending.length + supplierDue.length;
   const todoSections = 3 + (hasFeature('fareWatch') ? 1 : 0) + (hasCostPending ? 1 : 0) + (hasSupplierDue ? 1 : 0);
   const costPendingCount = num(stats?.costPendingCount);
+  // v3.1: lãi ròng = lãi − chi phí khác + thu khác (backend cũ không có → ẩn).
+  const hasNet = stats?.netProfit != null;
+  const thisMonth = (stats?.monthly || []).find((m) => m.month === today().slice(0, 7));
+  const hasOtherExpense = stats?.otherExpense != null || (stats?.monthly || []).some((m) => m.otherExpense != null);
+  const otherExpenseMonth = num(thisMonth?.otherExpense);
   const moneyCards = stats ? [
-    stats.supplierOwed != null && { key: 'supplierOwed', icon: Truck, label: 'Nợ nhà cung cấp', value: num(stats.supplierOwed), sub: 'Giá vốn còn phải trả F1/down', tone: num(stats.supplierOwed) > 0 ? 'danger' : 'gray', to: 'suppliers' },
+    stats.supplierOwed != null && (num(stats.supplierOwed) < 0
+      // Số âm = NCC (vd F1 sau khi huỷ vé) đang giữ tiền của mình, không phải mình nợ họ.
+      ? { key: 'supplierOwed', icon: Truck, label: 'NCC đang giữ của mình', value: -num(stats.supplierOwed), sub: 'Tiền NCC còn phải trả lại / trừ vào lần sau', tone: 'success', to: 'suppliers' }
+      : { key: 'supplierOwed', icon: Truck, label: 'Nợ nhà cung cấp', value: num(stats.supplierOwed), sub: 'Giá vốn còn phải trả F1/down', tone: num(stats.supplierOwed) > 0 ? 'danger' : 'gray', to: 'suppliers' }),
     stats.othersHolding != null && { key: 'othersHolding', icon: HandCoins, label: 'Tiền ở TK người khác', value: num(stats.othersHolding), sub: 'TK giữ hộ — cần thu về', tone: num(stats.othersHolding) > 0 ? 'warning' : 'gray', to: 'accounts' },
     stats.walletTotal != null && { key: 'walletTotal', icon: Wallet, label: 'Ví khách đang giữ', value: num(stats.walletTotal), sub: 'Tiền khách gửi trước, chưa dùng', tone: 'success', to: 'wallets' },
+    hasOtherExpense && { key: 'otherExpenseMonth', icon: ReceiptText, label: 'Chi phí khác tháng này', value: otherExpenseMonth, sub: 'Phí NH, lương, văn phòng… (không gồm rút tiền riêng)', tone: otherExpenseMonth > 0 ? 'warning' : 'gray', to: 'expenses' },
   ].filter(Boolean) : [];
 
   const monthlyData = useMemo(() => {
     const byMonth = new Map((stats?.monthly || []).map((m) => [m.month, m]));
     return last12Months().map((month) => {
       const m = byMonth.get(month) || {};
-      return { month, label: formatMonth(month), amount: num(m.amount), paid: num(m.paid), profit: num(m.profit), cost: num(m.cost) };
+      return { month, label: formatMonth(month), amount: num(m.amount), paid: num(m.paid), profit: num(m.profit), cost: num(m.cost), netProfit: num(m.netProfit ?? m.profit) };
     });
   }, [stats?.monthly]);
+  const hasMonthlyNet = (stats?.monthly || []).some((m) => m.netProfit != null);
   const hasMonthly = monthlyData.some((m) => m.amount || m.paid || m.profit);
 
   const typeData = useMemo(() => TYPES.map((t) => ({
@@ -123,6 +135,7 @@ export default function DashboardApp() {
       <PageHeader
         icon={LayoutDashboard}
         title="Tổng quan"
+        help="start"
         description={`${greeting(hour)}${displayName ? `, ${displayName}` : ''}! Hôm nay ${formatDate(today())}.`}
         actions={(
           <>
@@ -139,7 +152,7 @@ export default function DashboardApp() {
       ) : stats && (
         <>
           {/* Thẻ số liệu */}
-          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3 mb-5">
+          <div className={`grid grid-cols-2 md:grid-cols-3 ${STAT_COLS[hasNet ? 6 : 5]} gap-3 mb-5`}>
             <StatCard icon={Receipt} label="Tổng phải thu" value={formatCurrency(stats.totalAmount)} sub={`${totalCount} dịch vụ · ${num(stats.counts?.customers)} khách`} tone="brand" />
             <StatCard
               icon={TrendingUp} label="Lợi nhuận" value={formatCurrency(stats.totalProfit)}
@@ -148,6 +161,14 @@ export default function DashboardApp() {
                 : num(stats.totalAmount) ? `${Math.round((num(stats.totalProfit) / num(stats.totalAmount)) * 100)}% doanh số` : ''}
               tone={num(stats.totalProfit) >= 0 ? 'success' : 'danger'}
             />
+            {hasNet && (
+              <StatCard
+                icon={Scale} label="Lãi ròng" value={formatCurrency(stats.netProfit)}
+                sub="Lãi − chi phí khác + thu khác"
+                tone={num(stats.netProfit) >= 0 ? 'success' : 'danger'}
+                onClick={() => navigate('expenses')}
+              />
+            )}
             <StatCard icon={PiggyBank} label="Đã thu" value={formatCurrency(stats.totalPaid)} sub={`${paidPct}% tổng phải thu`} tone="purple" />
             <StatCard icon={Landmark} label="Còn nợ" value={formatCurrency(stats.outstanding)} sub={`${(stats.topDebtors || []).length} khách nợ nhiều nhất`} tone="warning" />
             <StatCard icon={AlertTriangle} label="Nợ quá hạn" value={formatCurrency(stats.overdue)} sub={`${overdueList.length} khoản quá hạn`} tone="danger" />
@@ -244,7 +265,7 @@ export default function DashboardApp() {
           {/* Biểu đồ */}
           <div className="grid grid-cols-1 xl:grid-cols-3 gap-5 mb-5">
             <Card padded={false} className="xl:col-span-2 overflow-hidden">
-              <CardHeading icon={BarChart3} title="Doanh số & lợi nhuận 12 tháng" sub="Cột = doanh số và đã thu · đường = lợi nhuận" />
+              <CardHeading icon={BarChart3} title="Doanh số & lợi nhuận 12 tháng" sub={`Cột = doanh số và đã thu · đường = lợi nhuận${hasMonthlyNet ? ' và lãi ròng' : ''}`} />
               <div className="px-2 pb-4 pt-2">
                 {hasMonthly ? (
                   <ResponsiveContainer width="100%" height={280}>
@@ -257,6 +278,9 @@ export default function DashboardApp() {
                       <Bar dataKey="amount" name="Doanh số" fill={COLORS.brand} radius={[4, 4, 0, 0]} maxBarSize={22} />
                       <Bar dataKey="paid" name="Đã thu" fill={COLORS.success} radius={[4, 4, 0, 0]} maxBarSize={22} />
                       <Line type="monotone" dataKey="profit" name="Lợi nhuận" stroke={COLORS.warning} strokeWidth={2} dot={{ r: 3, strokeWidth: 2, fill: '#fff' }} activeDot={{ r: 5 }} />
+                      {hasMonthlyNet && (
+                        <Line type="monotone" dataKey="netProfit" name="Lãi ròng" stroke={COLORS.purple} strokeWidth={2} strokeDasharray="5 3" dot={{ r: 3, strokeWidth: 2, fill: '#fff' }} activeDot={{ r: 5 }} />
+                      )}
                     </ComposedChart>
                   </ResponsiveContainer>
                 ) : (

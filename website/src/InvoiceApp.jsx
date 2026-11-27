@@ -306,6 +306,7 @@ export default function InvoiceApp() {
   return (
     <div>
       <PageHeader
+        help="invoices"
         icon={FileText}
         title="Hoá đơn"
         description="Lập hoá đơn cho khách lẻ hoặc công ty, theo dõi trạng thái thu tiền."

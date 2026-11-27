@@ -11,9 +11,21 @@ export function payState(row, cfg) {
   const remaining = total - paid;
   const isPaid = remaining <= 0;
   const due = row[cfg.dueKey];
+  const cancelled = isCancelled(row);
+  // Dịch vụ đã huỷ mà khách còn nợ phí huỷ vẫn tính quá hạn (phí đó vẫn phải thu).
   const overdue = !isPaid && !!due && due < today();
   const status = overdue ? 'overdue' : isPaid ? 'paid' : paid > 0 ? 'partial' : 'unpaid';
-  return { total, paid, remaining, isPaid, overdue, status };
+  return { total, paid, remaining, isPaid, overdue, status, cancelled };
+}
+
+/** Dịch vụ đã huỷ (cả 4 loại dùng cột status; tours dùng sẵn 'cancelled'). */
+export const isCancelled = (row) => row?.status === 'cancelled';
+
+/** Giá bán gốc trước khi huỷ (null nếu chưa huỷ hoặc không đổi giá). */
+export function originalAmount(row, cfg) {
+  if (!isCancelled(row) || row.original_amount === null || row.original_amount === undefined) return null;
+  const orig = num(row.original_amount);
+  return orig === num(row[cfg.amountKey]) ? null : orig;
 }
 
 // ---------------------------------------------------------------------------
@@ -69,6 +81,7 @@ export function costItemsFromApi(raw) {
     dueDate: it.due_date ? String(it.due_date).slice(0, 10) : '',
     paidAmount: num(it.paid_amount),
     payNow: false,
+    ...(it.kind && it.kind !== 'cost' ? { kind: it.kind } : {}),
   }));
 }
 
@@ -82,6 +95,7 @@ export function costItemsToPayload(items = []) {
       dueDate: it.dueDate || null,
     };
     if (it.id) out.id = it.id;
+    if (it.kind && it.kind !== 'cost') out.kind = it.kind; // dòng NCC hoàn / phí đổi vé giữ nguyên loại
     if (it.payNow && it.supplierId) {
       out.payNow = { accountId: it.payNow.accountId ? Number(it.payNow.accountId) : null, payDate: it.payNow.payDate || today() };
     }
@@ -99,6 +113,25 @@ export function downTemplate(suppliers = []) {
     newCostItem({ label: 'Phí F1', supplierId: f1Id, amount: '5000' }),
     newCostItem({ label: 'Phí down', supplierId: down ? String(down.id) : '' }),
   ];
+}
+
+/**
+ * Tổng giá vốn theo từng NCC của 1 dịch vụ (bỏ dòng NCC hoàn), theo thứ tự xuất hiện.
+ * @returns {{ supplierId: string, supplierName: string, amount: number }[]}
+ */
+export function costBySupplier(row) {
+  const items = costItemsFromApi(row?.cost_items);
+  let raw = row?.cost_items;
+  if (typeof raw === 'string') { try { raw = JSON.parse(raw); } catch { raw = []; } }
+  const names = new Map((Array.isArray(raw) ? raw : []).map((it) => [String(it.supplier_id || ''), it.supplier_name || '']));
+  const out = new Map();
+  for (const it of items) {
+    if (!it.supplierId || it.kind === 'refund') continue;
+    const cur = out.get(it.supplierId) || { supplierId: it.supplierId, supplierName: names.get(it.supplierId) || '', amount: 0 };
+    cur.amount += num(it.amount);
+    out.set(it.supplierId, cur);
+  }
+  return [...out.values()];
 }
 
 // ---------------------------------------------------------------------------

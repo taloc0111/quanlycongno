@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, waitFor, within, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { AuthProvider } from '../auth/AuthContext';
@@ -10,6 +10,16 @@ import { mockApi } from '../test/mockApi';
 import { storage } from '../services/client';
 import { invalidateMoneyCache } from '../services/money';
 import { today, addDays } from '../utils/format';
+
+// ReceiptModal do module Dòng tiền cung cấp — ở đây chỉ kiểm tra props truyền vào.
+vi.mock('./money/ReceiptModal', () => ({
+  default: ({ customerId, preselect, onClose }) => (
+    <div data-testid="receipt-modal">
+      {JSON.stringify({ customerId, preselect })}
+      <button type="button" onClick={onClose}>Đóng phiếu thu</button>
+    </div>
+  ),
+}));
 
 const ME = { id: 1, username: 'admin', role: 'admin', features: {} };
 const ACCOUNTS = [{ id: 7, name: 'TCB chính', account_number: '19031234', is_own: true, archived: false }];
@@ -379,5 +389,178 @@ describe('ServicePage (giá vốn / dòng tiền)', () => {
     const modal = await screen.findByRole('dialog');
     fireEvent.change(within(modal).getByLabelText('Hình thức'), { target: { value: 'wallet' } });
     await waitFor(() => expect(calls.some((c) => c.path === '/wallets/12')).toBe(true));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// v3.1: huỷ / hoàn, hoàn tác huỷ, đổi vé, thu tiền nhiều vé.
+// ---------------------------------------------------------------------------
+function lifeRows() {
+  return [
+    { id: 1, user_id: 1, customer_name: 'Khách Còn Hạn', customer_id: 11, ticket_code: 'AAA111', issue_date: '2026-11-05', due_date: addDays(today(), -3), ticket_amount: '2500000.00', cost_amount: '2200000.00', paid: '1000000.00', status: 'active' },
+    { id: 2, user_id: 1, customer_name: 'Khách Hai Vé', customer_id: 11, ticket_code: 'AAA222', issue_date: '2026-11-06', due_date: null, ticket_amount: '1000000.00', cost_amount: '900000.00', paid: '0', status: 'active' },
+    {
+      id: 4, user_id: 1, customer_name: 'Khách Đã Huỷ', customer_id: 12, ticket_code: 'CXL444', issue_date: '2026-11-01', due_date: addDays(today(), -10),
+      ticket_amount: '300000.00', original_amount: '2000000.00', cost_amount: '95000.00', paid: '0', status: 'cancelled', cancelled_at: '2026-11-20', cancel_note: 'Khách bận',
+    },
+    { id: 5, user_id: 1, customer_name: 'Khách Khác', customer_id: 13, ticket_code: 'BBB555', issue_date: '2026-11-07', due_date: null, ticket_amount: '800000.00', cost_amount: '700000.00', paid: '0', status: 'active' },
+  ];
+}
+const rowOf = (name) => tbl().getByText(name).closest('tr');
+const lifeFilter = () => screen.getByLabelText('Trạng thái');
+const overdueCard = () => screen.getAllByText('Quá hạn').map((el) => el.closest('.card')).find((c) => c && !c.querySelector('table'));
+
+describe('ServicePage (huỷ / hoàn / đổi vé / thu nhiều vé)', () => {
+  it('hides cancelled rows by default; the status filter shows them with badge + struck original price; a cancellation fee still owed stays payable and overdue', async () => {
+    mockApi(base({ 'GET /debts': lifeRows() }));
+    renderPage(debtsConfig);
+    await waitRows('Khách Còn Hạn');
+    expect(lifeFilter()).toHaveValue('active');
+    expect(tbl().queryByText('Khách Đã Huỷ')).not.toBeInTheDocument();
+    // Quá hạn chỉ tính dòng 1 (còn nợ 1.500.000)
+    expect(within(overdueCard()).getByText(/1\.500\.000/)).toBeInTheDocument();
+    expect(within(overdueCard()).getByText('1 vé')).toBeInTheDocument();
+
+    fireEvent.change(lifeFilter(), { target: { value: 'cancelled' } });
+    await waitFor(() => expect(tbl().queryByText('Khách Còn Hạn')).not.toBeInTheDocument());
+    const row = rowOf('Khách Đã Huỷ');
+    expect(within(row).getByText('Đã huỷ')).toBeInTheDocument();
+    expect(row).toHaveClass('opacity-60');
+    // Khách còn nợ phí huỷ 300k, hạn đã qua → vẫn quá hạn và vẫn thu được
+    expect(within(row).getByText('Quá hạn')).toBeInTheDocument();
+    expect(within(row).getByRole('button', { name: 'Thanh toán' })).toBeInTheDocument();
+    expect(within(row).getByRole('button', { name: 'Sửa' })).toBeInTheDocument();
+    const struck = within(row).getByTitle('Giá bán gốc trước khi huỷ');
+    expect(struck.tagName).toBe('S');
+    expect(struck).toHaveTextContent(/2\.000\.000/);
+    expect(within(overdueCard()).getByText('1 vé')).toBeInTheDocument();
+    expect(within(overdueCard()).getByText(/300.000/)).toBeInTheDocument();
+
+    fireEvent.change(lifeFilter(), { target: { value: 'all' } });
+    await waitFor(() => expect(tbl().getByText('Khách Còn Hạn')).toBeInTheDocument());
+    expect(tbl().getByText('Khách Đã Huỷ')).toBeInTheDocument();
+  });
+
+  it('"Huỷ / hoàn" opens the cancel modal and posts to the module endpoint, then reloads', async () => {
+    let loads = 0;
+    const { calls } = mockApi(base({
+      'GET /debts': () => { loads += 1; return lifeRows(); },
+      'POST /debts/:id/cancel': { ok: true },
+    }));
+    renderPage(debtsConfig);
+    await waitRows('Khách Còn Hạn');
+    const row = rowOf('Khách Hai Vé');
+    await userEvent.click(within(row).getByRole('button', { name: 'Thao tác khác' }));
+    expect(within(row).queryByRole('button', { name: /Hoàn tác huỷ/ })).not.toBeInTheDocument();
+    await userEvent.click(within(row).getByRole('button', { name: /Huỷ \/ hoàn/ }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('Huỷ / hoàn vé')).toBeInTheDocument();
+    await userEvent.click(within(dialog).getByRole('button', { name: /Xác nhận huỷ/ }));
+    await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.path === '/debts/2/cancel')).toBe(true));
+    expect(calls.find((c) => c.path === '/debts/2/cancel').body).toMatchObject({ finalAmount: 0, customerRefund: { amount: 0 } });
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(loads).toBeGreaterThan(1);
+  });
+
+  it('"Hoàn tác huỷ" asks for confirmation then calls uncancel', async () => {
+    const { calls } = mockApi(base({ 'GET /debts': () => lifeRows(), 'POST /debts/:id/uncancel': { ok: true } }));
+    renderPage(debtsConfig);
+    await waitRows('Khách Còn Hạn');
+    fireEvent.change(lifeFilter(), { target: { value: 'cancelled' } });
+    const row = await waitFor(() => rowOf('Khách Đã Huỷ'));
+    await userEvent.click(within(row).getByRole('button', { name: 'Thao tác khác' }));
+    expect(within(row).queryByRole('button', { name: /Huỷ \/ hoàn/ })).not.toBeInTheDocument();
+    expect(within(row).queryByRole('button', { name: /Đổi vé/ })).not.toBeInTheDocument();
+    await userEvent.click(within(row).getByRole('button', { name: /Hoàn tác huỷ/ }));
+    const dlg = await screen.findByRole('alertdialog');
+    await userEvent.click(within(dlg).getByRole('button', { name: 'Hoàn tác huỷ' }));
+    await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.path === '/debts/4/uncancel')).toBe(true));
+    expect(await screen.findByText('Đã hoàn tác huỷ')).toBeInTheDocument();
+  });
+
+  it('"Đổi vé" exists only for air tickets and posts /debts/:id/change', async () => {
+    const { calls } = mockApi(base({ 'GET /debts': () => lifeRows(), 'POST /debts/:id/change': { ok: true } }));
+    const r = renderPage(debtsConfig);
+    await waitRows('Khách Còn Hạn');
+    const row = rowOf('Khách Khác');
+    await userEvent.click(within(row).getByRole('button', { name: 'Thao tác khác' }));
+    await userEvent.click(within(row).getByRole('button', { name: /Đổi vé/ }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByLabelText('Mã vé mới')).toHaveValue('BBB555');
+    await userEvent.type(within(dialog).getByLabelText('Phí đổi thu khách'), '100000');
+    await userEvent.click(within(dialog).getByRole('button', { name: /Lưu đổi vé/ }));
+    await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.path === '/debts/5/change')).toBe(true));
+    r.unmount();
+
+    mockApi(base({ 'GET /train-tickets': [{ id: 1, user_id: 1, customer_name: 'Tàu A', train_no: 'SE7', issue_date: '2026-11-01', ticket_amount: '900000', cost_amount: '800000', paid: '0' }] }));
+    renderPage(trainsConfig);
+    await waitRows('Tàu A');
+    const trow = rowOf('Tàu A');
+    await userEvent.click(within(trow).getByRole('button', { name: 'Thao tác khác' }));
+    expect(within(trow).getByRole('button', { name: /Huỷ \/ hoàn/ })).toBeInTheDocument();
+    expect(within(trow).queryByRole('button', { name: /Đổi vé/ })).not.toBeInTheDocument();
+  });
+
+  it('"Thu tiền các vé đã chọn" is enabled only when all selected rows share one customer', async () => {
+    mockApi(base({ 'GET /debts': lifeRows() }));
+    renderPage(debtsConfig);
+    await waitRows('Khách Còn Hạn');
+    await userEvent.click(within(rowOf('Khách Còn Hạn')).getByLabelText('Chọn dòng'));
+    await userEvent.click(within(rowOf('Khách Khác')).getByLabelText('Chọn dòng'));
+    const btn = screen.getByRole('button', { name: /Thu tiền các vé đã chọn/ });
+    expect(btn).toBeDisabled();
+    expect(btn).toHaveAttribute('title', 'Chỉ thu chung được cho cùng 1 khách');
+
+    await userEvent.click(within(rowOf('Khách Khác')).getByLabelText('Chọn dòng'));
+    await userEvent.click(within(rowOf('Khách Hai Vé')).getByLabelText('Chọn dòng'));
+    expect(btn).not.toBeDisabled();
+    await userEvent.click(btn);
+    const modal = await screen.findByTestId('receipt-modal');
+    expect(JSON.parse(modal.textContent.replace('Đóng phiếu thu', ''))).toEqual({
+      customerId: 11,
+      preselect: [{ type: 'debt', id: 1 }, { type: 'debt', id: 2 }],
+    });
+    await userEvent.click(screen.getByRole('button', { name: 'Đóng phiếu thu' }));
+    expect(screen.queryByTestId('receipt-modal')).not.toBeInTheDocument();
+  });
+
+  it('rows without a customer cannot be collected together', async () => {
+    const rows = lifeRows().map((r) => (r.id === 1 || r.id === 2 ? { ...r, customer_id: null } : r));
+    mockApi(base({ 'GET /debts': rows }));
+    renderPage(debtsConfig);
+    await waitRows('Khách Còn Hạn');
+    await userEvent.click(within(rowOf('Khách Còn Hạn')).getByLabelText('Chọn dòng'));
+    await userEvent.click(within(rowOf('Khách Hai Vé')).getByLabelText('Chọn dòng'));
+    expect(screen.getByRole('button', { name: /Thu tiền các vé đã chọn/ })).toBeDisabled();
+  });
+
+  it('tours keep their own progress filter (no lifecycle filter, cancelled tours visible; fee settled → no pay button, not overdue)', async () => {
+    mockApi(base({
+      'GET /tours': [
+        { id: 1, user_id: 1, customer_name: 'Tour Huỷ', tour_name: 'Phú Quốc', status: 'cancelled', original_amount: '9800000', issue_date: '2026-11-01', due_date: addDays(today(), -5), sell_amount: '500000', cost_amount: '0', paid: '500000' },
+      ],
+    }));
+    renderPage(toursConfig);
+    await waitRows('Tour Huỷ');
+    expect(screen.queryByLabelText('Trạng thái')).not.toBeInTheDocument();
+    const row = rowOf('Tour Huỷ');
+    expect(within(row).getByText('Đã huỷ')).toBeInTheDocument();
+    expect(within(row).queryByText('Quá hạn')).not.toBeInTheDocument();
+    expect(within(row).queryByRole('button', { name: 'Thanh toán' })).not.toBeInTheDocument();
+  });
+
+  it('Excel export adds "Trạng thái" and "Giá bán gốc"', () => {
+    const [active, , cancelled] = lifeRows();
+    const cols = debtsConfig.exportColumns({ companyById: () => null });
+    const status = cols.find((c) => c.label === 'Trạng thái');
+    const orig = cols.find((c) => c.label === 'Giá bán gốc');
+    expect(status.value(active)).toBe('Đang hiệu lực');
+    expect(status.value(cancelled)).toBe('Đã huỷ');
+    expect(orig.value(cancelled)).toBe(2000000);
+    expect(orig.value(active)).toBe(2500000);
+    expect(orig.money).toBe(true);
+    const tourCols = toursConfig.exportColumns({ companyById: () => null });
+    expect(tourCols.filter((c) => c.label === 'Trạng thái')).toHaveLength(1);
+    expect(tourCols.some((c) => c.label === 'Tiến độ')).toBe(true);
   });
 });

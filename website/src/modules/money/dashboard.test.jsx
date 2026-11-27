@@ -55,4 +55,34 @@ describe('DashboardApp — dòng tiền', () => {
     expect(screen.queryByText('Chưa đủ giá vốn')).not.toBeInTheDocument();
     expect(screen.queryByText(/chưa đủ giá vốn/)).not.toBeInTheDocument();
   });
+
+  it('shows net profit and the other expenses of this month when the backend provides them', async () => {
+    const month = today().slice(0, 7);
+    mockApi({
+      'GET /stats': {
+        ...BASE,
+        otherIncome: '15000', otherExpense: '5022000', netProfit: '-3507000',
+        monthly: [{ month, amount: '10000000', paid: '6000000', profit: '1500000', cost: '0', otherExpense: '5022000', netProfit: '-3507000' }],
+      },
+      'GET /users': [],
+      'GET /auth/profile': ME,
+    });
+    renderWithApp(<DashboardApp />);
+    expect(await screen.findByText('Lãi ròng')).toBeInTheDocument();
+    expect(screen.getByText('Lãi − chi phí khác + thu khác')).toBeInTheDocument();
+    expect(screen.getAllByText(/-3\.507\.000/).length).toBeGreaterThan(0);
+    expect(screen.getByText('Chi phí khác tháng này')).toBeInTheDocument();
+    expect(screen.getAllByText(/5\.022\.000/).length).toBeGreaterThan(0);
+    expect(screen.getByText(/đường = lợi nhuận và lãi ròng/)).toBeInTheDocument();
+    await userEvent.click(screen.getByText('Chi phí khác tháng này'));
+    await waitFor(() => expect(window.location.hash).toBe('#expenses'));
+  });
+
+  it('hides net profit on an old backend', async () => {
+    mockApi({ 'GET /stats': BASE, 'GET /users': [], 'GET /auth/profile': ME });
+    renderWithApp(<DashboardApp />);
+    expect(await screen.findByText('Tổng phải thu')).toBeInTheDocument();
+    expect(screen.queryByText('Lãi ròng')).not.toBeInTheDocument();
+    expect(screen.queryByText('Chi phí khác tháng này')).not.toBeInTheDocument();
+  });
 });

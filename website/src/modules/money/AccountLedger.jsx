@@ -1,18 +1,22 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ArrowLeft, ArrowDownLeft, ArrowUpRight, Download, Eye, Landmark, RefreshCw, Scale, Wallet, BookOpenCheck,
+  ArrowRightLeft, ReceiptText, ScanSearch, Trash2,
 } from 'lucide-react';
 import { useAuth } from '../../auth/AuthContext';
 import { useNavigation } from '../../hooks/useNavigation.jsx';
 import { useFeedback } from '../../ui/FeedbackContext';
-import { accountsApi } from '../../services/money';
+import { accountsApi, entriesApi, receiptsApi, transfersApi } from '../../services/money';
 import { exportWorkbook } from '../../utils/excel';
 import { formatCurrency, formatDate, num } from '../../utils/format';
 import {
   Badge, Button, DataTable, DateField, EmptyState, ErrorBanner, IconButton, PageHeader, Segmented, StatCard,
 } from '../../ui';
 import ReconcileToggle from './ReconcileToggle';
-import { LEDGER_KIND, isOwnedBy, maskNumber, monthRange, reconcileKindOf, withRunningBalance } from './moneyUtils';
+import TransferModal from './TransferModal';
+import EntryModal from './EntryModal';
+import StatementMatchModal from './StatementMatchModal';
+import { LEDGER_KIND, isOwnedBy, ledgerDeletable, maskNumber, monthRange, reconcileKindOf, withRunningBalance } from './moneyUtils';
 
 const rowKey = (r) => `${r.kind}-${r.id}`;
 const isOut = (r) => r.direction === 'out';
@@ -22,7 +26,7 @@ const sumOf = (rows) => rows.reduce((s, r) => s + num(r.amount), 0);
 export default function AccountLedger({ id }) {
   const { user } = useAuth();
   const { navigate } = useNavigation();
-  const { toast } = useFeedback();
+  const { toast, confirm } = useFeedback();
   const [data, setData] = useState(null);
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -31,6 +35,9 @@ export default function AccountLedger({ id }) {
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [filter, setFilter] = useState('all');
+  const [transfer, setTransfer] = useState(null); // null | giá trị điền sẵn
+  const [entry, setEntry] = useState(null); // null | giá trị điền sẵn
+  const [matching, setMatching] = useState(false);
 
   const load = useCallback(async ({ silent = false } = {}) => {
     if (silent) setRefreshing(true); else setLoading(true);
@@ -82,6 +89,22 @@ export default function AccountLedger({ id }) {
     }
   };
 
+  // Xoá chuyển tiền / thu chi khác / phiếu thu ngay trên sổ (hoàn tác thao tác tiền).
+  const removeRow = async (row) => {
+    const what = row.kind === 'receipt' ? 'phiếu thu' : row.kind.startsWith('transfer') ? 'lần chuyển tiền' : 'khoản thu/chi khác';
+    const extra = row.kind === 'receipt' ? ' Các khoản trả vào vé và phần vào ví của phiếu cũng bị xoá.' : '';
+    const ok = await confirm({ title: `Xoá ${what}`, message: `Xoá ${what} ${formatCurrency(row.amount)} ngày ${formatDate(row.date)}?${extra}`, confirmText: 'Xoá', danger: true });
+    if (!ok) return;
+    try {
+      if (row.kind === 'receipt') await receiptsApi.remove(row.id);
+      else if (row.kind.startsWith('transfer')) await transfersApi.remove(row.id);
+      else await entriesApi.remove(row.id);
+      toast.success(`Đã xoá ${what}`);
+      load({ silent: true });
+    } catch (err) { toast.error(err.message); }
+  };
+  const reloadSilent = () => load({ silent: true });
+
   const thisMonth = monthRange(0);
   const lastMonth = monthRange(-1);
   const isRange = (r) => from === r.from && to === r.to;
@@ -108,7 +131,7 @@ export default function AccountLedger({ id }) {
 
   const description = (r) => {
     const kind = LEDGER_KIND[r.kind];
-    const supplierId = r.kind === 'supplier_payment' && r.ref?.type === 'supplier' ? r.ref.id : null;
+    const supplierId = (r.kind === 'supplier_payment' || r.kind === 'supplier_refund') && r.ref?.type === 'supplier' ? r.ref.id : null;
     const text = r.description || r.customer_name || r.supplier_name || '—';
     return (
       <div className="flex min-w-0 max-w-[460px] items-center gap-1.5">
@@ -131,6 +154,7 @@ export default function AccountLedger({ id }) {
     { key: 'out', label: 'Ra', align: 'right', render: (r) => (isOut(r) ? <span className="font-semibold text-danger-600">−{formatCurrency(r.amount)}</span> : '') },
     { key: 'running', label: 'Số dư luỹ kế', align: 'right', hideBelow: 'sm', render: (r) => <span data-testid="running" className={`font-semibold ${r.running < 0 ? 'text-danger-600' : 'text-ink'}`}>{formatCurrency(r.running)}</span> },
     { key: 'reconciled', label: 'Đối soát', align: 'center', width: 80, render: (r) => <ReconcileToggle checked={r.reconciled} disabled={!owned} onChange={(v) => reconcile(r, v)} /> },
+    { key: 'actions', label: '', align: 'right', width: 50, render: (r) => (owned && ledgerDeletable(r.kind) ? <IconButton icon={Trash2} title="Xoá" variant="danger" onClick={() => removeRow(r)} /> : null) },
   ];
 
   const footer = visible.length > 0 && (
@@ -140,12 +164,14 @@ export default function AccountLedger({ id }) {
       <td className="px-3 py-2.5 text-right tabular text-danger-600">{formatCurrency(sumOf(visible.filter(isOut)))}</td>
       <td className="hidden sm:table-cell" />
       <td />
+      <td />
     </tr>
   );
 
   return (
     <div>
       <PageHeader
+        help="accounts"
         icon={Wallet}
         title={loading && !account ? 'Đang tải…' : (account?.name || 'Tài khoản')}
         description={account ? ([account.bank, maskNumber(account.account_number), account.holder_name].filter(Boolean).join(' · ') || 'Sổ chi tiết tài khoản') : 'Sổ chi tiết tài khoản'}
@@ -154,6 +180,13 @@ export default function AccountLedger({ id }) {
             <Button variant="secondary" icon={ArrowLeft} onClick={() => navigate('accounts')}>Danh sách</Button>
             <IconButton icon={RefreshCw} title="Tải lại" onClick={() => load({ silent: true })} className={refreshing ? 'animate-spin' : ''} />
             <Button variant="secondary" icon={Download} onClick={exportExcel} disabled={!data}>Excel</Button>
+            {account && owned && (
+              <>
+                <Button variant="secondary" icon={ScanSearch} onClick={() => setMatching(true)}>Khớp sao kê</Button>
+                <Button variant="secondary" icon={ReceiptText} onClick={() => setEntry({ accountId: account.id })}>Thu/chi khác</Button>
+                <Button icon={ArrowRightLeft} onClick={() => setTransfer({ fromAccountId: account.id })}>Chuyển tiền</Button>
+              </>
+            )}
           </>
         )}
       />
@@ -216,7 +249,7 @@ export default function AccountLedger({ id }) {
             loading={loading}
             emptyIcon={Landmark}
             emptyTitle={rows.length ? 'Không có giao dịch nào khớp bộ lọc' : 'Chưa có giao dịch trong kỳ'}
-            emptyDescription="Tiền khách trả (có chọn TK nhận), nạp/hoàn ví và trả nhà cung cấp qua tài khoản này sẽ hiện ở đây."
+            emptyDescription="Tiền khách trả, phiếu thu, nạp/hoàn ví, trả NCC, chuyển tiền và thu chi khác qua tài khoản này sẽ hiện ở đây."
             rowClassName={(r) => (r.reconciled ? '' : 'bg-warning-50/30')}
             footer={footer}
             mobileCard={(r) => (
@@ -229,13 +262,20 @@ export default function AccountLedger({ id }) {
                   <span className={`font-bold tabular ${isOut(r) ? 'text-danger-600' : 'text-success-600'}`}>
                     {isOut(r) ? '−' : '+'}{formatCurrency(r.amount)}
                   </span>
-                  <ReconcileToggle checked={r.reconciled} disabled={!owned} onChange={(v) => reconcile(r, v)} />
+                  <div className="flex items-center gap-1">
+                    {owned && ledgerDeletable(r.kind) && <IconButton icon={Trash2} title="Xoá" variant="danger" onClick={() => removeRow(r)} />}
+                    <ReconcileToggle checked={r.reconciled} disabled={!owned} onChange={(v) => reconcile(r, v)} />
+                  </div>
                 </div>
               </div>
             )}
           />
         </>
       )}
+
+      {transfer && <TransferModal initial={transfer} onClose={() => setTransfer(null)} onSaved={reloadSilent} />}
+      {entry && <EntryModal initial={entry} onClose={() => setEntry(null)} onSaved={reloadSilent} />}
+      {matching && account && <StatementMatchModal account={account} onClose={() => setMatching(false)} onDone={reloadSilent} />}
     </div>
   );
 }

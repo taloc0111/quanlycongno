@@ -8,6 +8,10 @@ const { accountListSql, targetLabelSql, targetTypeSql, targetJoinsSql } = requir
 
 // Dòng tiền v3: dòng cost_pending ("Chưa đủ giá vốn") KHÔNG tính vào lợi nhuận ở mọi nơi,
 // nhưng vẫn tính doanh số / đã thu / còn nợ.
+// v3.1: dịch vụ đã huỷ không vào quá hạn / đến hạn / việc cần làm; lãi ròng = lợi nhuận + thu khác − chi khác.
+
+// Danh mục thu chi là tiền của chủ (không phải lãi/lỗ).
+const OWNER_CATEGORIES = ['Góp vốn', 'Rút tiền riêng'];
 
 const getStats = async (req, res) => {
   try {
@@ -47,7 +51,12 @@ const getStats = async (req, res) => {
          (SELECT COUNT(*) FROM debts WHERE user_id=ANY($1) AND cost_pending)         AS ticket_pending,
          (SELECT COUNT(*) FROM passports WHERE user_id=ANY($1) AND cost_pending)     AS passport_pending,
          (SELECT COUNT(*) FROM train_tickets WHERE user_id=ANY($1) AND cost_pending) AS train_pending,
-         (SELECT COUNT(*) FROM tours WHERE user_id=ANY($1) AND cost_pending)         AS tour_pending`,
+         (SELECT COUNT(*) FROM tours WHERE user_id=ANY($1) AND cost_pending)         AS tour_pending,
+         -- v3.1: số dịch vụ đã huỷ (4 loại)
+         (SELECT COUNT(*) FROM debts WHERE user_id=ANY($1) AND status = 'cancelled')
+         + (SELECT COUNT(*) FROM passports WHERE user_id=ANY($1) AND status = 'cancelled')
+         + (SELECT COUNT(*) FROM train_tickets WHERE user_id=ANY($1) AND status = 'cancelled')
+         + (SELECT COUNT(*) FROM tours WHERE user_id=ANY($1) AND status = 'cancelled')       AS cancelled_count`,
       [ids]
     );
     const t = totals.rows[0];
@@ -78,6 +87,17 @@ const getStats = async (req, res) => {
       [ids]
     );
     const m = money.rows[0];
+
+    // Dòng tiền v3.1: thu chi khác ngoài vé. "Góp vốn" / "Rút tiền riêng" là tiền của chủ → không tính lãi/lỗ.
+    const other = await pool.query(
+      `SELECT COALESCE(SUM(amount) FILTER (WHERE direction = 'in'), 0)  AS other_income,
+              COALESCE(SUM(amount) FILTER (WHERE direction = 'out'), 0) AS other_expense
+         FROM account_entries
+        WHERE user_id = ANY($1) AND NOT (category = ANY($2::text[]))`,
+      [ids, OWNER_CATEGORIES]
+    );
+    const otherIncome = n(other.rows[0].other_income);
+    const otherExpense = n(other.rows[0].other_expense);
 
     // Các khoản còn nợ có hạn thanh toán — dùng chung cho overdue/dueSoon (4 nguồn).
     const DUE_UNION = `
@@ -139,12 +159,36 @@ const getStats = async (req, res) => {
       [ids, monthStart]
     );
 
+    const otherMonthly = await pool.query(
+      `SELECT to_char(date_trunc('month', entry_date), 'YYYY-MM') AS month,
+              COALESCE(SUM(amount) FILTER (WHERE direction = 'in'), 0)  AS other_income,
+              COALESCE(SUM(amount) FILTER (WHERE direction = 'out'), 0) AS other_expense
+         FROM account_entries
+        WHERE user_id = ANY($1) AND NOT (category = ANY($2::text[])) AND entry_date >= ($3::date - INTERVAL '11 months')
+        GROUP BY 1`,
+      [ids, OWNER_CATEGORIES, monthStart]
+    );
+    // Gộp tháng của dịch vụ + tháng chỉ có thu chi khác.
+    const months = new Map();
+    for (const r of monthly.rows) {
+      months.set(r.month, { month: r.month, amount: Number(r.amount), cost: Number(r.cost), profit: Number(r.profit), paid: Number(r.paid), otherIncome: 0, otherExpense: 0 });
+    }
+    for (const r of otherMonthly.rows) {
+      const mo = months.get(r.month) || { month: r.month, amount: 0, cost: 0, profit: 0, paid: 0, otherIncome: 0, otherExpense: 0 };
+      mo.otherIncome = Number(r.other_income);
+      mo.otherExpense = Number(r.other_expense);
+      months.set(r.month, mo);
+    }
+    const monthlyOut = [...months.values()]
+      .sort((a, b) => (a.month < b.month ? -1 : a.month > b.month ? 1 : 0))
+      .map((mo) => ({ ...mo, netProfit: mo.profit + mo.otherIncome - mo.otherExpense }));
+
     // Việc cần làm hôm nay.
     const [flightsTomorrow, dueSoon, overdueList, fareHits, costPendingList, supplierDue] = await Promise.all([
       // Khách bay ngày mai (kể cả đã check-in — FE tự phân biệt bằng checked_in).
       pool.query(
         `SELECT id, customer_name, phone_number, flight_date, route, airline, ticket_code, checked_in
-           FROM debts WHERE user_id=ANY($1) AND flight_date = $2::date
+           FROM debts WHERE user_id=ANY($1) AND status <> 'cancelled' AND flight_date = $2::date
           ORDER BY checked_in ASC, customer_name`,
         [ids, tomorrow]
       ),
@@ -175,16 +219,16 @@ const getStats = async (req, res) => {
       pool.query(
         `SELECT type, id, customer_name, issue_date, amount FROM (
            SELECT 'debt' AS type, id, customer_name, issue_date, ticket_amount AS amount, created_at
-             FROM debts WHERE user_id=ANY($1) AND cost_pending
+             FROM debts WHERE user_id=ANY($1) AND cost_pending AND status <> 'cancelled'
            UNION ALL
            SELECT 'passport', id, customer_name, service_date, total_amount, created_at
-             FROM passports WHERE user_id=ANY($1) AND cost_pending
+             FROM passports WHERE user_id=ANY($1) AND cost_pending AND status <> 'cancelled'
            UNION ALL
            SELECT 'train', id, customer_name, issue_date, ticket_amount, created_at
-             FROM train_tickets WHERE user_id=ANY($1) AND cost_pending
+             FROM train_tickets WHERE user_id=ANY($1) AND cost_pending AND status <> 'cancelled'
            UNION ALL
            SELECT 'tour', id, customer_name, issue_date, sell_amount, created_at
-             FROM tours WHERE user_id=ANY($1) AND cost_pending
+             FROM tours WHERE user_id=ANY($1) AND cost_pending AND status <> 'cancelled'
          ) x
          ORDER BY issue_date DESC NULLS LAST, created_at DESC, id DESC
          LIMIT 50`,
@@ -218,6 +262,9 @@ const getStats = async (req, res) => {
       supplierOwed: n(m.supplier_owed),
       walletTotal: n(m.wallet_total),
       othersHolding: n(m.others_holding),
+      otherIncome,
+      otherExpense,
+      netProfit: totalProfit + otherIncome - otherExpense,
       overdue: Number(overdue.rows[0].amount),
       counts: {
         debts: byType.debts.count,
@@ -225,19 +272,14 @@ const getStats = async (req, res) => {
         trainTickets: byType.trainTickets.count,
         tours: byType.tours.count,
         customers: n(t.customer_count),
+        cancelled: n(t.cancelled_count),
       },
       byType,
       topDebtors: topDebtors.rows.map((r) => ({
         name: r.customer_name,
         outstanding: Number(r.outstanding),
       })),
-      monthly: monthly.rows.map((r) => ({
-        month: r.month,
-        amount: Number(r.amount),
-        cost: Number(r.cost),
-        profit: Number(r.profit),
-        paid: Number(r.paid),
-      })),
+      monthly: monthlyOut,
       todo: {
         flightsTomorrow: flightsTomorrow.rows,
         dueSoon: dueSoon.rows.map((r) => ({ ...r, outstanding: Number(r.outstanding) })),

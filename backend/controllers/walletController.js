@@ -126,13 +126,14 @@ function makeEntryHandler(kind) {
   };
 }
 
-// DELETE /api/wallets/entries/:id — chỉ topup/refund/adjust; charge phải xoá qua payment tương ứng.
+// DELETE /api/wallets/entries/:id — chỉ topup/refund/adjust; charge phải xoá qua payment tương ứng,
+// credit (hoàn vé vào ví) qua Hoàn tác huỷ, nạp từ phiếu thu qua xoá phiếu thu.
 const deleteEntry = async (req, res) => {
   const id = v.idParam(req.params.id);
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const found = await client.query('SELECT customer_id, kind, amount FROM wallet_entries WHERE id = $1 AND user_id = $2', [id, req.user.id]);
+    const found = await client.query('SELECT customer_id, kind, amount, receipt_id FROM wallet_entries WHERE id = $1 AND user_id = $2', [id, req.user.id]);
     if (found.rows.length === 0) {
       await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Không tìm thấy giao dịch ví' });
@@ -141,6 +142,15 @@ const deleteEntry = async (req, res) => {
     if (entry.kind === 'charge') {
       await client.query('ROLLBACK');
       return res.status(400).json({ error: 'Khoản trừ ví gắn với thanh toán — hãy xoá thanh toán tương ứng' });
+    }
+    // v3.1: tiền hoàn vé vào ví (credit) gỡ bằng 'Hoàn tác huỷ'; nạp từ phiếu thu gỡ bằng xoá phiếu thu.
+    if (entry.kind === 'credit') {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Khoản hoàn vé vào ví — hãy dùng "Hoàn tác huỷ" trên dịch vụ' });
+    }
+    if (entry.receipt_id) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Khoản nạp thuộc phiếu thu — hãy xoá phiếu thu' });
     }
     const cust = await lockWallet(client, entry.customer_id);
     const balance = await walletBalance(client, entry.customer_id);

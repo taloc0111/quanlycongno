@@ -7,13 +7,36 @@ export const BANKS = ['TCB', 'VCB', 'VIB', 'ACB', 'MB', 'BIDV', 'Agribank', 'TPB
 /** Loại dòng trong sổ tài khoản (kind từ API ledger). */
 export const LEDGER_KIND = {
   payment: { label: 'Khách trả', tone: 'success' },
+  receipt: { label: 'Phiếu thu', tone: 'success' },
   topup: { label: 'Nạp ví', tone: 'brand' },
   refund: { label: 'Hoàn ví', tone: 'warning' },
+  customer_refund: { label: 'Hoàn khách', tone: 'warning' },
   supplier_payment: { label: 'Trả NCC', tone: 'danger' },
+  supplier_refund: { label: 'NCC hoàn', tone: 'success' },
+  transfer_in: { label: 'Chuyển đến', tone: 'purple' },
+  transfer_out: { label: 'Chuyển đi', tone: 'purple' },
+  entry_in: { label: 'Thu khác', tone: 'brand' },
+  entry_out: { label: 'Chi khác', tone: 'gray' },
 };
 
-/** kind của dòng sổ → kind gửi lên PUT /accounts/reconcile. */
-export const reconcileKindOf = (kind) => (kind === 'payment' ? 'payment' : kind === 'supplier_payment' ? 'supplier_payment' : 'wallet');
+/** kind của dòng sổ → kind gửi lên PUT /accounts/reconcile (và reconcile-batch). */
+const RECONCILE_KIND = {
+  payment: 'payment',
+  customer_refund: 'payment', // dòng payments kind refund (số âm)
+  receipt: 'receipt',
+  topup: 'wallet',
+  refund: 'wallet',
+  supplier_payment: 'supplier_payment',
+  supplier_refund: 'supplier_payment', // supplier_payments số âm
+  transfer_in: 'transfer_in',
+  transfer_out: 'transfer_out',
+  entry_in: 'entry',
+  entry_out: 'entry',
+};
+export const reconcileKindOf = (kind) => RECONCILE_KIND[kind] || 'wallet';
+
+/** Dòng sổ xoá được ngay trên sổ TK: chuyển tiền / thu chi khác / phiếu thu. */
+export const ledgerDeletable = (kind) => ['transfer_in', 'transfer_out', 'entry_in', 'entry_out', 'receipt'].includes(kind);
 
 /** Loại giao dịch ví. */
 export const WALLET_KIND = {
@@ -65,4 +88,28 @@ export const dueBadge = (dueDate, remaining) => {
   if (d === 0) return { tone: 'warning', label: 'Hạn hôm nay' };
   if (d <= 7) return { tone: 'warning', label: `Còn ${d} ngày` };
   return null;
+};
+
+/**
+ * Chia số tiền vào các dòng còn nợ theo thứ tự (cũ trước), mỗi dòng tối đa `remaining`.
+ * rows: [{ key, remaining }] đã sắp cũ → mới. Trả về { [key]: số được chia } (chỉ dòng > 0).
+ */
+export const autoAllocate = (rows, amount) => {
+  let left = Math.max(0, num(amount));
+  const out = {};
+  for (const r of rows || []) {
+    if (left <= 0) break;
+    const take = Math.min(left, Math.max(0, num(r.remaining)));
+    if (take > 0) { out[r.key] = take; left -= take; }
+  }
+  return out;
+};
+
+/** Dòng giá vốn âm (NCC hoàn): số NCC còn phải trả lại mình (> 0) — 0 nếu đã nhận đủ. */
+export const itemRefundPending = (it) => (num(it?.amount) < 0 ? Math.max(0, num(it?.paid_amount) - num(it?.amount)) : 0);
+
+/** Nhãn loại dòng giá vốn (cost_items.kind): refund = NCC hoàn, change = phí đổi vé. */
+export const COST_ITEM_KIND = {
+  refund: { label: 'NCC hoàn', tone: 'success' },
+  change: { label: 'Phí đổi', tone: 'purple' },
 };

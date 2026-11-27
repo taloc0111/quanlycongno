@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Truck, Plus, RefreshCw, Scale, Users, ReceiptText, HandCoins, Pencil, Trash2, Eye } from 'lucide-react';
+import { Truck, Plus, RefreshCw, Scale, Users, ReceiptText, HandCoins, Pencil, Trash2, Eye, PiggyBank } from 'lucide-react';
 import { useAuth } from './auth/AuthContext';
 import { useNavigation } from './hooks/useNavigation.jsx';
 import { useFeedback } from './ui/FeedbackContext';
@@ -13,6 +13,15 @@ import { isOwnedBy } from './modules/money/moneyUtils';
 
 const KIND_TONE = { f1: 'brand', down: 'purple', other: 'gray' };
 const KIND_SHORT = { f1: 'F1', down: 'Down', other: 'Khác' };
+
+/** Số dư NCC: dương = mình còn nợ (đỏ); âm = NCC đang giữ tiền của mình (xanh). */
+export function SupplierBalance({ balance, className = '' }) {
+  const b = num(balance);
+  if (b < 0) {
+    return <span className={`font-bold text-success-600 ${className}`} title="NCC đang giữ tiền của mình">Đang giữ của mình {formatCurrency(-b)}</span>;
+  }
+  return <span className={`font-bold ${b > 0 ? 'text-danger-600' : 'text-ink-muted'} ${className}`}>{formatCurrency(b)}</span>;
+}
 
 /** Trang Nhà cung cấp: `#suppliers` (danh sách) hoặc `#suppliers/<id>` (chi tiết). */
 export default function SuppliersApp({ param }) {
@@ -64,9 +73,11 @@ function SuppliersList() {
     sortValue: (r, key) => (key === 'name' ? (r.name || '').toLowerCase() : num(r[key])),
   });
 
-  const totalOwed = rows.reduce((s, r) => s + num(r.balance), 0);
+  const totalOwed = rows.reduce((s, r) => s + Math.max(0, num(r.balance)), 0);
+  const totalHeld = rows.reduce((s, r) => s + Math.max(0, -num(r.balance)), 0);
   const unpaidItems = rows.reduce((s, r) => s + num(r.unpaid_items), 0);
   const owingCount = rows.filter((r) => num(r.balance) > 0).length;
+  const holdingCount = rows.filter((r) => num(r.balance) < 0).length;
 
   const remove = async (r) => {
     const ok = await confirm({ title: 'Xoá nhà cung cấp', message: `Xoá "${r.name}"?` });
@@ -102,7 +113,7 @@ function SuppliersList() {
     { ...COLUMNS[1], render: (r) => (r.phone ? <a href={`tel:${r.phone}`} onClick={(e) => e.stopPropagation()} className="hover:text-brand-600">{r.phone}</a> : <span className="text-ink-faint">—</span>) },
     { ...COLUMNS[2], render: (r) => formatCurrency(r.total_cost) },
     { ...COLUMNS[3], render: (r) => <span className="text-success-600">{formatCurrency(r.total_paid)}</span> },
-    { ...COLUMNS[4], render: (r) => <span className={`font-bold ${num(r.balance) > 0 ? 'text-danger-600' : 'text-ink-muted'}`}>{formatCurrency(r.balance)}</span> },
+    { ...COLUMNS[4], render: (r) => <SupplierBalance balance={r.balance} /> },
     { ...COLUMNS[5], render: (r) => (num(r.unpaid_items) ? <Badge tone="warning">{num(r.unpaid_items)}</Badge> : <span className="text-ink-faint">0</span>) },
     { ...COLUMNS[6], render: actions },
   ];
@@ -110,6 +121,7 @@ function SuppliersList() {
   return (
     <div>
       <PageHeader
+        help="suppliers"
         icon={Truck}
         title="Nhà cung cấp"
         description="F1, bên down và các nơi lấy vé — còn nợ ai bao nhiêu"
@@ -121,8 +133,9 @@ function SuppliersList() {
         )}
       />
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
-        <StatCard icon={Scale} label="Tổng còn nợ NCC" value={loading ? '…' : formatCurrency(totalOwed)} sub={owingCount ? `Đang nợ ${owingCount} nơi` : 'Không nợ ai'} tone={totalOwed > 0 ? 'danger' : 'success'} />
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 mb-5">
+        <StatCard icon={Scale} label="Mình còn nợ NCC" value={loading ? '…' : formatCurrency(totalOwed)} sub={owingCount ? `Đang nợ ${owingCount} nơi` : 'Không nợ ai'} tone={totalOwed > 0 ? 'danger' : 'success'} />
+        <StatCard icon={PiggyBank} label="NCC đang giữ của mình" value={loading ? '…' : formatCurrency(totalHeld)} sub={holdingCount ? `${holdingCount} nơi cần trả lại/trừ dần` : 'Không ai giữ tiền của mình'} tone={totalHeld > 0 ? 'success' : 'gray'} />
         <StatCard icon={Users} label="Số NCC" value={loading ? '…' : rows.length} sub={SUPPLIER_KINDS.map((k) => `${KIND_SHORT[k.value]} ${rows.filter((r) => (r.kind || 'other') === k.value).length}`).join(' · ')} tone="brand" />
         <StatCard icon={ReceiptText} label="Dòng giá vốn chưa trả" value={loading ? '…' : unpaidItems} sub="Dòng có NCC còn nợ tiền" tone={unpaidItems ? 'warning' : 'gray'} />
       </div>
@@ -156,7 +169,7 @@ function SuppliersList() {
               <p className="text-xs text-ink-muted">{[r.phone, num(r.unpaid_items) ? `${num(r.unpaid_items)} dòng chưa trả` : ''].filter(Boolean).join(' · ')}</p>
               <div className="mt-1.5">{actions(r)}</div>
             </div>
-            <span className={`font-bold tabular shrink-0 ${num(r.balance) > 0 ? 'text-danger-600' : 'text-ink-muted'}`}>{formatCurrency(r.balance)}</span>
+            <SupplierBalance balance={r.balance} className="tabular shrink-0 text-right" />
           </div>
         )}
       />

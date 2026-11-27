@@ -3,8 +3,8 @@ import { Plane, Train, BookOpen, Palmtree, Building2, Route, CheckCircle2, Circl
 import { api } from '../services/client';
 import { formatCurrency, formatDate, num } from '../utils/format';
 import { Badge, Button } from '../ui';
-import { DateCell, PayBadge, CostBadges } from './ServicePage';
-import { isCostPending, rowProfit, costUnpaid, costItemsFromApi, costItemsToPayload } from './payState';
+import { DateCell, PayBadge, CostBadges, CancelledBadge, AmountCell } from './ServicePage';
+import { isCostPending, rowProfit, costUnpaid, costItemsFromApi, costItemsToPayload, isCancelled } from './payState';
 import { RouteManagerModal, CompanyManagerModal } from './DebtExtras';
 
 const DEFAULT_ROUTES = ['HAN-SGN', 'SGN-HAN', 'HAN-DAD', 'DAD-HAN', 'SGN-DAD', 'DAD-SGN', 'HAN-PQC', 'SGN-PQC', 'HAN-CXR', 'SGN-CXR', 'HAN-DLI', 'SGN-DLI', 'HAN-HPH', 'SGN-HPH'];
@@ -32,13 +32,14 @@ const statusCol = {
   key: '__status', label: 'Trạng thái', defaultVisible: true,
   render: (r, ctx) => (
     <div className="flex flex-wrap items-center gap-1 max-w-[230px]">
+      <CancelledBadge row={r} />
       <PayBadge row={r} cfg={ctx.cfg} />
       <CostBadges row={r} />
     </div>
   ),
 };
 const moneyCols = (amountKey, { amountLabel = 'Giá bán' } = {}) => [
-  { key: amountKey, label: amountLabel, align: 'right', sortable: true, sortValue: (r) => num(r[amountKey]), render: (r) => <span className="font-semibold">{formatCurrency(r[amountKey])}</span> },
+  { key: amountKey, label: amountLabel, align: 'right', sortable: true, sortValue: (r) => num(r[amountKey]), render: (r, ctx) => <AmountCell row={r} cfg={ctx.cfg} amountKey={amountKey} /> },
   { key: 'cost_amount', label: 'Giá gốc', align: 'right', sortable: true, defaultVisible: false, sortValue: (r) => num(r.cost_amount), render: (r) => <span className="text-ink-muted">{formatCurrency(r.cost_amount)}</span> },
   {
     key: 'profit', label: 'Lợi nhuận', align: 'right', sortable: true,
@@ -105,6 +106,11 @@ const costToPayload = (f, { editing, ticketKind = false }) => {
   if (!editing && num(f.paid) > 0) out.accountId = f.accountId ? Number(f.accountId) : null;
   return out;
 };
+/** Cột Excel v3.1: trạng thái huỷ + giá bán gốc (trước khi huỷ). */
+const lifecycleExport = (amountKey) => [
+  { label: 'Trạng thái', value: (r) => (isCancelled(r) ? 'Đã huỷ' : 'Đang hiệu lực') },
+  { label: 'Giá bán gốc', value: (r) => num(isCancelled(r) && r.original_amount != null ? r.original_amount : r[amountKey]), money: true },
+];
 const profitExport = (amountKey) => ({
   label: 'Lợi nhuận', money: true,
   value: (r) => { const p = rowProfit(r, { amountKey, costKey: 'cost_amount' }); return p === null ? '' : p; },
@@ -128,7 +134,8 @@ const baseValidate = (amountField, amountLabel) => (f) => {
 export const debtsConfig = {
   key: 'debts', storageKey: 'debts', endpoint: '/debts', changeEvent: 'data:debts-changed',
   title: 'Công nợ vé máy bay', description: 'Vé đã xuất, giá bán/giá gốc, thanh toán và công nợ của khách.',
-  icon: Plane, itemLabel: 'vé', addLabel: 'Thêm vé', exportName: 'cong-no-ve-may-bay',
+  icon: Plane, itemLabel: 'vé', addLabel: 'Thêm vé', exportName: 'cong-no-ve-may-bay', helpTopic: 'debts',
+  changeTicket: true, // có thao tác "Đổi vé"
   paymentType: 'debt', paymentLabel: (r) => `${r.customer_name} · ${r.ticket_code || r.route || 'vé máy bay'}`,
   amountKey: 'ticket_amount', costKey: 'cost_amount', paidKey: 'paid', dateKey: 'issue_date', dueKey: 'due_date', sourceKey: 'ticket_source',
   searchPlaceholder: 'Tìm khách, SĐT, mã vé, hành trình, công ty…',
@@ -190,6 +197,7 @@ export const debtsConfig = {
       { label: 'Khách hàng', value: (r) => r.customer_name, width: 22 }, c.company, { label: 'SĐT', value: (r) => r.phone_number || '' },
       { label: 'Mã vé', value: (r) => r.ticket_code || '' }, { label: 'Hãng', value: (r) => r.airline || '', width: 16 }, { label: 'Nguồn vé', value: (r) => r.ticket_source || '' },
       { label: 'Hành trình', value: (r) => r.route || '' }, { label: 'Ngày bay', value: (r) => formatDate(r.flight_date) }, { label: 'Ngày xuất vé', value: (r) => formatDate(r.issue_date) },
+      ...lifecycleExport('ticket_amount'),
       { label: 'Tiền vé', value: (r) => num(r.ticket_amount), money: true }, { label: 'Giá gốc', value: (r) => num(r.cost_amount), money: true },
       profitExport('ticket_amount'), ...costExportCols({ ticketKind: true }), { label: 'Đã thanh toán', value: (r) => num(r.paid), money: true },
       c.payTarget, { label: 'Còn nợ', value: (r) => num(r.ticket_amount) - num(r.paid), money: true }, { label: 'Hạn trả', value: (r) => formatDate(r.due_date) }, { label: 'Ghi chú', value: (r) => r.notes || '', width: 24 },
@@ -229,7 +237,7 @@ export const debtsConfig = {
 export const trainsConfig = {
   key: 'trains', storageKey: 'trains', endpoint: '/train-tickets',
   title: 'Vé tàu hỏa', description: 'Vé tàu đã bán, giá bán/giá gốc và công nợ.',
-  icon: Train, itemLabel: 'vé tàu', addLabel: 'Thêm vé tàu', exportName: 'cong-no-ve-tau',
+  icon: Train, itemLabel: 'vé tàu', addLabel: 'Thêm vé tàu', exportName: 'cong-no-ve-tau', helpTopic: 'other-services',
   paymentType: 'train', paymentLabel: (r) => `${r.customer_name} · ${r.train_no || r.route || 'vé tàu'}`,
   amountKey: 'ticket_amount', costKey: 'cost_amount', paidKey: 'paid', dateKey: 'issue_date', dueKey: 'due_date', sourceKey: 'ticket_source',
   searchPlaceholder: 'Tìm khách, SĐT, số tàu, hành trình…',
@@ -282,6 +290,7 @@ export const trainsConfig = {
       { label: 'Khách hàng', value: (r) => r.customer_name, width: 22 }, c.company, { label: 'SĐT', value: (r) => r.phone_number || '' },
       { label: 'Số tàu', value: (r) => r.train_no || '' }, { label: 'Hành trình', value: (r) => r.route || '', width: 18 }, { label: 'Loại chỗ', value: (r) => r.seat_class || '' },
       { label: 'Ngày đi', value: (r) => formatDate(r.depart_date) }, { label: 'Ngày xuất', value: (r) => formatDate(r.issue_date) }, { label: 'Nguồn', value: (r) => r.ticket_source || '' },
+      ...lifecycleExport('ticket_amount'),
       { label: 'Giá bán', value: (r) => num(r.ticket_amount), money: true }, { label: 'Giá gốc', value: (r) => num(r.cost_amount), money: true },
       profitExport('ticket_amount'), ...costExportCols(), { label: 'Đã trả', value: (r) => num(r.paid), money: true },
       c.payTarget, { label: 'Còn nợ', value: (r) => num(r.ticket_amount) - num(r.paid), money: true }, { label: 'Ghi chú', value: (r) => r.notes || '', width: 24 },
@@ -315,12 +324,14 @@ const TOUR_STATUS = [
 export const toursConfig = {
   key: 'tours', storageKey: 'tours', endpoint: '/tours',
   title: 'Tour du lịch', description: 'Tour đã bán, tiến độ (tư vấn/cọc/đã đi) và công nợ.',
-  icon: Palmtree, itemLabel: 'tour', addLabel: 'Thêm tour', exportName: 'cong-no-tour',
+  icon: Palmtree, itemLabel: 'tour', addLabel: 'Thêm tour', exportName: 'cong-no-tour', helpTopic: 'other-services',
   paymentType: 'tour', paymentLabel: (r) => `${r.customer_name} · ${r.tour_name || 'tour'}`,
   amountKey: 'sell_amount', costKey: 'cost_amount', paidKey: 'paid', dateKey: 'issue_date', dueKey: 'due_date', sourceKey: 'source',
   searchPlaceholder: 'Tìm khách, SĐT, tên tour…',
   searchText: (r) => [r.customer_name, r.phone_number, r.tour_name, r.source].filter(Boolean).join(' '),
   mobileSubtitle: (r) => [r.tour_name, r.depart_date ? `đi ${formatDate(r.depart_date)}` : '', r.pax ? `${r.pax} khách` : ''].filter(Boolean).join(' · '),
+  // Tour đã có trạng thái tiến độ (gồm "Huỷ") → dùng bộ lọc tiến độ, không thêm bộ lọc "Đang hiệu lực/Đã huỷ".
+  lifecycleFilter: false,
   extraFilters: [{ key: 'status', label: 'Mọi trạng thái', options: TOUR_STATUS, fn: (r, v) => r.status === v }],
   emptyForm: { customerName: '', phoneNumber: '', tourName: '', departDate: '', returnDate: '', pax: '1', issueDate: '', dueDate: '', source: '', sellAmount: '', costAmount: '', paid: '', status: 'deposited', notes: '', companyId: '', paymentTarget: 'self', ...COST_EMPTY },
   toForm: (d) => ({
@@ -371,8 +382,9 @@ export const toursConfig = {
     return [
       { label: 'Khách hàng', value: (r) => r.customer_name, width: 22 }, c.company, { label: 'SĐT', value: (r) => r.phone_number || '' },
       { label: 'Tour', value: (r) => r.tour_name || '', width: 24 }, { label: 'Ngày đi', value: (r) => formatDate(r.depart_date) }, { label: 'Ngày về', value: (r) => formatDate(r.return_date) },
-      { label: 'Số khách', value: (r) => r.pax ?? 1 }, { label: 'Trạng thái', value: (r) => TOUR_STATUS.find((x) => x.value === r.status)?.label || r.status },
+      { label: 'Số khách', value: (r) => r.pax ?? 1 }, { label: 'Tiến độ', value: (r) => TOUR_STATUS.find((x) => x.value === r.status)?.label || r.status },
       { label: 'Ngày bán', value: (r) => formatDate(r.issue_date) }, { label: 'Nguồn', value: (r) => r.source || '' },
+      ...lifecycleExport('sell_amount'),
       { label: 'Giá bán', value: (r) => num(r.sell_amount), money: true }, { label: 'Giá gốc', value: (r) => num(r.cost_amount), money: true },
       profitExport('sell_amount'), ...costExportCols(), { label: 'Đã trả', value: (r) => num(r.paid), money: true },
       c.payTarget, { label: 'Còn nợ', value: (r) => num(r.sell_amount) - num(r.paid), money: true }, { label: 'Ghi chú', value: (r) => r.notes || '', width: 24 },
@@ -400,7 +412,7 @@ export const toursConfig = {
 export const passportsConfig = {
   key: 'passports', storageKey: 'passports', endpoint: '/passports',
   title: 'Dịch vụ hộ chiếu', description: 'Hồ sơ làm hộ chiếu, phí dịch vụ và công nợ.',
-  icon: BookOpen, itemLabel: 'hồ sơ', addLabel: 'Thêm hồ sơ', exportName: 'cong-no-ho-chieu',
+  icon: BookOpen, itemLabel: 'hồ sơ', addLabel: 'Thêm hồ sơ', exportName: 'cong-no-ho-chieu', helpTopic: 'other-services',
   paymentType: 'passport', paymentLabel: (r) => `${r.customer_name} · ${r.passport_number || 'hộ chiếu'}`,
   amountKey: 'total_amount', costKey: 'cost_amount', paidKey: 'paid_amount', dateKey: 'service_date', dueKey: 'due_date', sourceKey: 'address',
   defaultSort: { key: 'service_date', dir: 'desc' },
@@ -447,6 +459,7 @@ export const passportsConfig = {
       { label: 'Khách hàng', value: (r) => r.customer_name, width: 22 }, c.company, { label: 'SĐT', value: (r) => r.phone_number || '' },
       { label: 'Số hộ chiếu', value: (r) => r.passport_number || '' }, { label: 'Địa chỉ', value: (r) => r.address || '', width: 24 },
       { label: 'Ngày làm', value: (r) => formatDate(r.service_date) }, { label: 'Hạn trả', value: (r) => formatDate(r.due_date) },
+      ...lifecycleExport('total_amount'),
       { label: 'Tổng tiền', value: (r) => num(r.total_amount), money: true }, { label: 'Giá gốc', value: (r) => num(r.cost_amount), money: true },
       profitExport('total_amount'), ...costExportCols(), { label: 'Đã trả', value: (r) => num(r.paid_amount), money: true },
       { label: 'Còn nợ', value: (r) => num(r.total_amount) - num(r.paid_amount), money: true }, { label: 'Ghi chú', value: (r) => r.notes || '', width: 24 },

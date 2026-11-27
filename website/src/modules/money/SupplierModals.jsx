@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { CheckCircle2, HandCoins, Truck } from 'lucide-react';
 import { useFeedback } from '../../ui/FeedbackContext';
-import { Button, Field, Input, MoneyField, DateField, Modal, Select, Textarea } from '../../ui';
+import { Button, Field, Input, MoneyField, DateField, Modal, Segmented, Select, Textarea } from '../../ui';
 import { SUPPLIER_KINDS, accountsApi, accountLabel, suppliersApi } from '../../services/money';
 import { formatCurrency, num, today } from '../../utils/format';
-import { itemRemaining } from './moneyUtils';
+import { itemRefundPending, itemRemaining } from './moneyUtils';
 
 /** Modal thêm/sửa nhà cung cấp. `initial` = dòng NCC (sửa) hoặc null (thêm). */
 export function SupplierFormModal({ initial, onClose, onSaved }) {
@@ -69,13 +69,22 @@ export function SupplierFormModal({ initial, onClose, onSaved }) {
   );
 }
 
-const itemOptionLabel = (it) => {
+const itemOptionLabel = (it, direction) => {
   const target = [it.target?.label, it.target?.customer_name].filter(Boolean).join(' · ');
-  return `${it.label}${target ? ` (${target})` : ''} — còn ${formatCurrency(itemRemaining(it))}`;
+  const rest = direction === 'in' ? `chờ nhận ${formatCurrency(itemRefundPending(it))}` : `còn ${formatCurrency(itemRemaining(it))}`;
+  return `${it.label}${target ? ` (${target})` : ''} — ${rest}`;
 };
 
+const DIRECTIONS = [
+  { value: 'out', label: 'Mình trả NCC' },
+  { value: 'in', label: 'NCC trả lại mình' },
+];
+/** Số còn lại của 1 dòng theo chiều: trả NCC (dòng dương) / NCC trả lại (dòng âm). */
+const pendingOf = (it, direction) => (direction === 'in' ? itemRefundPending(it) : itemRemaining(it));
+const directionOfItem = (it) => (num(it?.amount) < 0 ? 'in' : 'out');
+
 /**
- * Modal trả tiền cho nhà cung cấp.
+ * Modal trả tiền cho nhà cung cấp — hoặc ghi NCC trả lại tiền cho mình (direction 'in', server lưu số âm).
  * Props: supplier ({ id, name, balance }), items (dòng giá vốn — không truyền thì tự tải sổ NCC),
  * initialItemId (chọn sẵn 1 dòng), onClose, onPaid(row).
  */
@@ -84,10 +93,14 @@ export function SupplierPayModal({ supplier, items: itemsProp, initialItemId, on
   const [accounts, setAccounts] = useState([]);
   const [loadedItems, setLoadedItems] = useState(null);
   const items = itemsProp || loadedItems;
-  const unpaid = useMemo(() => (items || []).filter((it) => itemRemaining(it) > 0), [items]);
   const initialItem = initialItemId ? (itemsProp || []).find((it) => String(it.id) === String(initialItemId)) : null;
+  const [direction, setDirectionState] = useState(() => (
+    initialItem ? directionOfItem(initialItem) : num(supplier.balance) < 0 ? 'in' : 'out'
+  ));
+  const unpaid = useMemo(() => (items || []).filter((it) => pendingOf(it, direction) > 0), [items, direction]);
   const [form, setForm] = useState(() => ({
-    amount: initialItem ? String(itemRemaining(initialItem)) : '',
+    amount: initialItem && pendingOf(initialItem, directionOfItem(initialItem)) > 0
+      ? String(pendingOf(initialItem, directionOfItem(initialItem))) : '',
     payDate: today(),
     accountId: '',
     costItemId: initialItem ? String(initialItem.id) : '',
@@ -111,16 +124,22 @@ export function SupplierPayModal({ supplier, items: itemsProp, initialItemId, on
 
   const selectedItem = unpaid.find((it) => String(it.id) === String(form.costItemId));
   const balance = num(supplier.balance);
-  const payAllAmount = selectedItem ? itemRemaining(selectedItem) : balance;
+  const isIn = direction === 'in';
+  const payAllAmount = selectedItem ? pendingOf(selectedItem, direction) : isIn ? Math.max(0, -balance) : balance;
+
+  const setDirection = (d) => {
+    setDirectionState(d);
+    setForm((f) => ({ ...f, costItemId: '', amount: '' }));
+  };
 
   const pickItem = (idValue) => {
     const it = unpaid.find((x) => String(x.id) === String(idValue));
-    setForm((f) => ({ ...f, costItemId: idValue, amount: it && !num(f.amount) ? String(itemRemaining(it)) : f.amount }));
+    setForm((f) => ({ ...f, costItemId: idValue, amount: it && !num(f.amount) ? String(pendingOf(it, direction)) : f.amount }));
   };
 
   const save = async () => {
     const amount = num(form.amount);
-    if (amount <= 0) { toast.error('Nhập số tiền trả lớn hơn 0'); return; }
+    if (amount <= 0) { toast.error(isIn ? 'Nhập số tiền NCC trả lại lớn hơn 0' : 'Nhập số tiền trả lớn hơn 0'); return; }
     setSaving(true);
     try {
       const body = {
@@ -129,9 +148,10 @@ export function SupplierPayModal({ supplier, items: itemsProp, initialItemId, on
         accountId: form.accountId ? Number(form.accountId) : null,
         costItemId: form.costItemId ? Number(form.costItemId) : null,
         notes: form.notes,
+        direction,
       };
       const row = await suppliersApi.pay(supplier.id, body);
-      toast.success(`Đã ghi trả ${formatCurrency(amount)} cho ${supplier.name}`);
+      toast.success(isIn ? `Đã ghi ${supplier.name} trả lại ${formatCurrency(amount)}` : `Đã ghi trả ${formatCurrency(amount)} cho ${supplier.name}`);
       onPaid?.(row);
       onClose?.();
     } catch (err) {
@@ -146,32 +166,40 @@ export function SupplierPayModal({ supplier, items: itemsProp, initialItemId, on
       open
       onClose={onClose}
       icon={HandCoins}
-      title={`Trả tiền · ${supplier.name}`}
-      subtitle={`Đang nợ ${formatCurrency(balance)}`}
+      title={`${isIn ? 'Nhận tiền về' : 'Trả tiền'} · ${supplier.name}`}
+      subtitle={balance < 0 ? `Đang giữ của mình ${formatCurrency(-balance)}` : `Đang nợ ${formatCurrency(balance)}`}
       footer={(
         <>
           <Button variant="secondary" onClick={onClose}>Huỷ</Button>
-          <Button icon={CheckCircle2} loading={saving} onClick={save}>Ghi trả tiền</Button>
+          <Button icon={CheckCircle2} loading={saving} onClick={save}>{isIn ? 'Ghi nhận tiền về' : 'Ghi trả tiền'}</Button>
         </>
       )}
     >
       <form onSubmit={(e) => { e.preventDefault(); save(); }} className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-        <Field label="Cho dòng giá vốn" htmlFor="pay-item" className="sm:col-span-2" hint={items === null ? 'Đang tải dòng giá vốn…' : unpaid.length ? 'Bỏ trống = trả gộp, không gắn dòng nào.' : 'Không còn dòng giá vốn nào chưa trả.'}>
+        <div className="sm:col-span-2">
+          <Segmented value={direction} onChange={setDirection} options={DIRECTIONS} size="md" />
+        </div>
+        <Field
+          label="Cho dòng giá vốn"
+          htmlFor="pay-item"
+          className="sm:col-span-2"
+          hint={items === null ? 'Đang tải dòng giá vốn…' : unpaid.length ? 'Bỏ trống = ghi gộp, không gắn dòng nào.' : isIn ? 'Không có dòng hoàn nào đang chờ nhận.' : 'Không còn dòng giá vốn nào chưa trả.'}
+        >
           <Select id="pay-item" value={form.costItemId} onChange={(e) => pickItem(e.target.value)}>
-            <option value="">— Trả gộp —</option>
-            {unpaid.map((it) => <option key={it.id} value={it.id}>{itemOptionLabel(it)}</option>)}
+            <option value="">{isIn ? '— Ghi gộp —' : '— Trả gộp —'}</option>
+            {unpaid.map((it) => <option key={it.id} value={it.id}>{itemOptionLabel(it, direction)}</option>)}
           </Select>
         </Field>
         <Field label="Số tiền" required htmlFor="pay-amount">
           <div className="flex gap-2">
             <MoneyField id="pay-amount" value={form.amount} onChange={(v) => set('amount', v)} placeholder="0" />
-            <Button variant="soft" size="sm" className="shrink-0 self-center" disabled={payAllAmount <= 0} onClick={() => set('amount', String(payAllAmount))}>Trả hết</Button>
+            <Button variant="soft" size="sm" className="shrink-0 self-center" disabled={payAllAmount <= 0} onClick={() => set('amount', String(payAllAmount))}>{isIn ? 'Nhận hết' : 'Trả hết'}</Button>
           </div>
         </Field>
-        <Field label="Ngày trả">
+        <Field label={isIn ? 'Ngày nhận' : 'Ngày trả'}>
           <DateField value={form.payDate} onChange={(v) => set('payDate', v)} />
         </Field>
-        <Field label="Từ tài khoản" htmlFor="pay-account" className="sm:col-span-2" hint={accounts.length ? undefined : 'Chưa có tài khoản — thêm ở mục Dòng tiền → Tài khoản.'}>
+        <Field label={isIn ? 'Vào tài khoản' : 'Từ tài khoản'} htmlFor="pay-account" className="sm:col-span-2" hint={accounts.length ? undefined : 'Chưa có tài khoản — thêm ở mục Dòng tiền → Tài khoản.'}>
           <Select id="pay-account" value={form.accountId} onChange={(e) => set('accountId', e.target.value)}>
             <option value="">— Không chọn —</option>
             {accounts.map((a) => <option key={a.id} value={a.id}>{accountLabel(a)}</option>)}

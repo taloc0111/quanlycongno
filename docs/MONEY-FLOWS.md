@@ -172,3 +172,166 @@ numeric như các API hiện có. Ngày 'YYYY-MM-DD'.
 - PaymentModal: chọn "Vào tài khoản" (danh sách TK chưa lưu trữ) và hình thức "Trừ ví" (hiện số dư ví của khách).
 - Chi tiết khách hàng: khối Ví trả trước (số dư, nạp/hoàn, lịch sử).
 - Dashboard: thẻ "Nợ nhà cung cấp", "Tiền đang ở TK người khác", "Ví khách"; việc cần làm thêm "Chưa đủ giá vốn" và "Sắp đến hạn trả NCC".
+
+---
+
+# v3.1 — bổ sung (2026-11-27): chuyển TK, thu nhiều vé, huỷ/hoàn/đổi vé, trả thừa, thu chi khác, sao kê
+
+Nguyên tắc giữ nguyên: chỉ thêm bảng/cột; mọi thao tác tiền phải **hoàn tác được** (xoá thao tác → số liệu về như trước).
+Các bảng v3 CHƯA lên production nên được phép nới ràng buộc của chúng (supplier_payments.amount).
+
+## Schema bổ sung
+```sql
+-- Chuyển tiền giữa 2 tài khoản (vd TK chị Lan trả về TCB, rút tiền mặt). fee = phí chuyển, trừ ở TK nguồn.
+CREATE TABLE IF NOT EXISTS account_transfers (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  from_account_id INTEGER NOT NULL REFERENCES money_accounts(id) ON DELETE CASCADE,
+  to_account_id INTEGER NOT NULL REFERENCES money_accounts(id) ON DELETE CASCADE,
+  amount DECIMAL(15,2) NOT NULL CHECK (amount > 0),
+  fee DECIMAL(15,2) NOT NULL DEFAULT 0 CHECK (fee >= 0),
+  transfer_date DATE NOT NULL DEFAULT CURRENT_DATE,
+  reconciled_from BOOLEAN NOT NULL DEFAULT FALSE,
+  reconciled_to BOOLEAN NOT NULL DEFAULT FALSE,
+  notes TEXT,
+  created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT chk_transfer_accounts CHECK (from_account_id <> to_account_id)
+);
+
+-- Thu chi khác ngoài vé (phí ngân hàng, văn phòng, lương, rút tiền riêng, góp vốn...)
+CREATE TABLE IF NOT EXISTS account_entries (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  account_id INTEGER NOT NULL REFERENCES money_accounts(id) ON DELETE CASCADE,
+  direction VARCHAR(3) NOT NULL CHECK (direction IN ('in','out')),
+  amount DECIMAL(15,2) NOT NULL CHECK (amount > 0),
+  entry_date DATE NOT NULL DEFAULT CURRENT_DATE,
+  category VARCHAR(50) NOT NULL DEFAULT 'Khác',
+  reconciled BOOLEAN NOT NULL DEFAULT FALSE,
+  notes TEXT,
+  created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Phiếu thu: 1 lần khách chuyển khoản, chia cho nhiều dịch vụ (+ phần thừa vào ví)
+CREATE TABLE IF NOT EXISTS receipts (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  customer_id INTEGER REFERENCES customers(id) ON DELETE SET NULL,
+  account_id INTEGER REFERENCES money_accounts(id) ON DELETE SET NULL,
+  amount DECIMAL(15,2) NOT NULL CHECK (amount > 0),
+  receipt_date DATE NOT NULL DEFAULT CURRENT_DATE,
+  method VARCHAR(30),
+  payment_target VARCHAR(20) NOT NULL DEFAULT 'self',
+  reconciled BOOLEAN NOT NULL DEFAULT FALSE,
+  notes TEXT,
+  created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+ALTER TABLE payments       ADD COLUMN IF NOT EXISTS receipt_id INTEGER REFERENCES receipts(id) ON DELETE CASCADE;
+ALTER TABLE payments       ADD COLUMN IF NOT EXISTS kind VARCHAR(20) NOT NULL DEFAULT 'payment'; -- payment | refund (hoàn tiền khách, amount ÂM)
+ALTER TABLE wallet_entries ADD COLUMN IF NOT EXISTS receipt_id INTEGER REFERENCES receipts(id) ON DELETE CASCADE;
+-- wallet_entries.kind thêm giá trị 'credit' (+): hoàn vé vào ví (gắn payment_id của dòng hoàn); không có tiền thật đi qua TK.
+ALTER TABLE cost_items     ADD COLUMN IF NOT EXISTS kind VARCHAR(20) NOT NULL DEFAULT 'cost'; -- cost | refund (NCC hoàn, amount ÂM) | change (phí đổi)
+-- supplier_payments: cho phép amount ÂM = NCC trả lại tiền cho mình (tiền VÀO tài khoản).
+ALTER TABLE supplier_payments DROP CONSTRAINT IF EXISTS supplier_payments_amount_check;
+ALTER TABLE supplier_payments DROP CONSTRAINT IF EXISTS chk_supplier_payment_amount;
+ALTER TABLE supplier_payments ADD CONSTRAINT chk_supplier_payment_amount CHECK (amount <> 0);
+-- Trạng thái huỷ trên 3 bảng chưa có trạng thái (tours dùng tours.status = 'cancelled' sẵn có)
+ALTER TABLE debts         ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'active'; -- active | cancelled
+ALTER TABLE passports     ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'active';
+ALTER TABLE train_tickets ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'active';
+-- Cả 4 bảng (debts, passports, train_tickets, tours): giá bán gốc trước khi huỷ + ngày/ghi chú huỷ
+--   ADD COLUMN IF NOT EXISTS original_amount DECIMAL(15,2), cancelled_at DATE, cancel_note TEXT
+-- + index: account_transfers(from_account_id), (to_account_id); account_entries(account_id); receipts(customer_id), (account_id);
+--   payments(receipt_id); wallet_entries(receipt_id)
+```
+
+## Công thức số dư tài khoản (thay công thức v3)
+```
+balance = opening_balance
+        + Σ payments.amount            (method ≠ 'wallet', account_id = TK; dòng refund âm tự trừ)
+        + Σ wallet_entries topup       (account_id = TK)
+        − Σ |wallet_entries refund|    (account_id = TK)
+        − Σ supplier_payments.amount   (account_id = TK; âm = NCC trả lại → cộng)
+        + Σ transfers.amount           (to_account_id = TK)
+        − Σ (transfers.amount + fee)   (from_account_id = TK)
+        + Σ account_entries in − Σ account_entries out
+total_in / total_out: cộng theo chiều thực tế của từng dòng (tiền vào / tiền ra).
+```
+
+## Ledger `GET /api/accounts/:id/ledger` — kind mới
+`receipt` (1 phiếu thu = 1 dòng, amount = receipts.amount, description liệt kê các vé + "vào ví X"), `customer_refund`
+(payment kind refund, out), `supplier_refund` (supplier_payment âm, in), `transfer_in`, `transfer_out` (amount + fee; fee ghi
+trong description), `entry_in`, `entry_out` (description = category + notes). Payments thuộc receipt KHÔNG hiện riêng. Mỗi dòng giữ
+`{ kind, id, date, direction, amount, description, reconciled, ref }`.
+`PUT /api/accounts/reconcile` nhận thêm kind: `receipt` (đánh dấu receipt + mọi con), `transfer_in`, `transfer_out`, `entry`.
+`PUT /api/accounts/reconcile-batch` `{ items:[{kind,id,reconciled}] }` → `{ updated }` (dùng cho khớp sao kê).
+
+## API mới
+### Chuyển tiền & thu chi khác
+- `GET /api/accounts/transfers?accountId=` · `POST /api/accounts/transfers` `{ fromAccountId*, toAccountId*, amount*>0, fee=0, transferDate, notes }` · `DELETE /api/accounts/transfers/:id`
+- `GET /api/accounts/entries?accountId=&from=&to=&category=` · `POST /api/accounts/entries` `{ accountId*, direction*('in'|'out'), amount*>0, entryDate, category, notes }` · `PUT /api/accounts/entries/:id` · `DELETE /api/accounts/entries/:id`
+- Danh mục gợi ý (FE): chi — Phí ngân hàng, Văn phòng, Lương, Quảng cáo, Điện nước, Rút tiền riêng, Khác; thu — Góp vốn, Lãi ngân hàng, Thu khác.
+  "Rút tiền riêng" và "Góp vốn" KHÔNG tính vào lãi/lỗ (chỉ là dòng tiền của chủ).
+
+### Phiếu thu nhiều vé — `/api/receipts`
+- `POST /api/receipts` `{ accountId, receiptDate, method (≠ 'wallet'), paymentTarget, notes, customerId?, amount*>0, allocations:[{ type:'debt'|'passport'|'train'|'tour', id, amount>0 }] }`
+  - Σ allocations ≤ amount; mỗi allocation ≤ số còn nợ của dịch vụ (400 nếu vượt). Dịch vụ phải của mình, không bị huỷ.
+  - Phần thừa (amount − Σ allocations) > 0 → bắt buộc `customerId` (của mình) → wallet_entries topup (account_id = TK phiếu, receipt_id). Không có khách → 400.
+  - Tạo payments (receipt_id, account_id, method, payment_target) cho từng allocation; recompute paid. Một transaction.
+  - Trả `{ receipt, payments, walletTopup }`.
+- `GET /api/receipts?customerId=` (scope) → `[{ ...receipt, account_name, customer_name, allocations:[{ type, id, label, amount }], wallet_amount }]`
+- `DELETE /api/receipts/:id` → xoá phiếu + payments + topup (CASCADE), recompute paid; nếu ví khách sẽ âm → 400.
+- `GET /api/customers/:id/outstanding` → `[{ type, id, label, issue_date, due_date, total, paid, remaining }]` các dịch vụ còn nợ (chưa huỷ), cũ nhất trước.
+
+### Trả thừa
+`POST /api/payments` (không phải wallet): nếu amount > số còn nợ và dịch vụ có customer_id → tự tạo receipt: phần = còn nợ vào
+dịch vụ, phần thừa vào ví (topup). Response thêm `{ overflowToWallet, receiptId }`. Dịch vụ không có khách → giữ hành vi cũ.
+Body `noOverflow: true` → giữ hành vi cũ. Dịch vụ đã huỷ → 400.
+
+### Huỷ / hoàn vé (cả 4 loại) — `POST /api/{debts|passports|train-tickets|tours}/:id/cancel`
+```
+{ cancelDate, note,
+  finalAmount,                          // số tiền khách CHỊU sau huỷ (phí huỷ/hoàn). Mặc định 0.
+  customerRefund: { amount, to:'wallet'|'account', accountId },   // mặc định amount = max(0, đã trả − finalAmount), to = 'wallet' nếu có khách
+  supplierRefunds: [{ supplierId, amount>0, receivedNow?:bool, accountId? }] }  // NCC (F1) hoàn lại cho mình
+```
+Server (1 transaction):
+1. `original_amount` = giá bán hiện tại (nếu chưa có); giá bán (`ticket_amount`/`total_amount`/`sell_amount`) = finalAmount;
+   status = 'cancelled' (tours: 'cancelled'), cancelled_at, cancel_note.
+2. customerRefund.amount > 0 → payments `{ kind:'refund', amount: −X, method: to==='wallet' ? 'wallet' : 'bank_transfer', account_id }`;
+   to = wallet → wallet_entries `{ kind:'credit', amount:+X, payment_id }`. Recompute paid. Không hoàn quá số đã trả (400).
+3. Dịch vụ chưa có cost items mà cost_amount > 0 → tạo 1 dòng "Giá vốn" = cost_amount (supplier NULL) để giữ nguyên giá trị.
+   Mỗi supplierRefund → cost_items `{ kind:'refund', label:'Hoàn từ <tên NCC>', amount: −amount, supplier_id }`;
+   receivedNow → supplier_payments `{ amount: −amount, cost_item_id, account_id }`. Đồng bộ cost_amount = Σ items.
+4. Đã huỷ rồi → 400. Kết quả: lãi = phí khách chịu − giá vốn không được hoàn.
+- `POST /api/{…}/:id/uncancel` → hoàn tác TOÀN BỘ (xoá payments kind refund + credit ví (400 nếu ví sẽ âm), xoá cost items kind
+  refund + supplier_payments gắn chúng, giá bán = original_amount, status 'active' / tours 'deposited', xoá cancelled_at/cancel_note).
+- Huỷ/hoàn tác ghi audit. Dịch vụ đã huỷ: không nhận thanh toán mới (400); không vào "quá hạn"/"đến hạn".
+
+### Đổi vé (vé máy bay) — `POST /api/debts/:id/change`
+`{ changeDate, customerFee≥0, supplierFee≥0, supplierId?, newFlightDate?, newRoute?, newTicketCode?, note }`
+→ ticket_amount += customerFee; supplierFee > 0 → cost item `{ kind:'change', label:'Phí đổi vé', amount, supplier_id }`
+(tạo dòng "Giá vốn" từ cost_amount trước nếu chưa có items); cập nhật ngày bay/hành trình/mã vé nếu gửi; nối vào notes
+"[dd/mm/yyyy] Đổi vé: …". Audit.
+
+### NCC
+- Balance âm = NCC đang giữ tiền của mình → FE hiện "Đang giữ của mình X".
+- `POST /api/suppliers/:id/payments` thêm `direction: 'out' (mặc định) | 'in'` — 'in' = NCC trả lại, lưu amount âm.
+
+### Stats bổ sung
+`otherIncome`, `otherExpense` (account_entries trong scope, bỏ "Góp vốn"/"Rút tiền riêng"), `netProfit = totalProfit + otherIncome − otherExpense`;
+`monthly[].otherExpense`, `monthly[].netProfit`; `counts.cancelled`.
+
+## Frontend v3.1
+- Bảng dịch vụ: badge "Đã huỷ" (mờ dòng; hiện giá gốc gạch ngang + giá còn lại), bộ lọc trạng thái (Đang hiệu lực/Đã huỷ/Tất cả);
+  thao tác "Huỷ / hoàn" (modal: phí khách chịu, tiền trả khách tự tính + chọn ví/TK, các dòng NCC hoàn + nhận ngay + TK, xem trước lãi/lỗ),
+  "Hoàn tác huỷ", (vé máy bay) "Đổi vé". Chọn nhiều dòng cùng 1 khách → "Thu tiền các vé đã chọn" mở ReceiptModal.
+- PaymentModal: số tiền > còn nợ và có khách → "Phần thừa X sẽ vào ví khách".
+- `ReceiptModal` (`src/modules/money/ReceiptModal.jsx`, props `{ open, onClose, onDone, customerId, preselect: [{type,id}] }`):
+  số tiền khách chuyển + TK + ngày + hình thức; danh sách còn nợ (GET /customers/:id/outstanding) có ô nhập số chia + "Chia tự động
+  (cũ trước)"; hiện phần thừa vào ví. Mở từ Chi tiết khách ("Thu tiền nhiều vé") và từ bảng dịch vụ.
+- Tài khoản: "Chuyển tiền", "Thu/chi khác" trên trang TK và sổ; ledger hiện kind mới; trang "Thu chi khác" (`#expenses`, lọc danh mục/tháng);
+  "Khớp sao kê": tải Excel/CSV → map cột (ngày, số tiền hoặc ghi có/ghi nợ, nội dung) → gợi ý khớp dòng chưa đối soát (cùng chiều,
+  cùng số tiền, lệch ≤ 3 ngày) → xác nhận → reconcile-batch; dòng không khớp cho tạo nhanh "Thu/chi khác".
+- NCC: số dư âm hiện "Đang giữ của mình"; modal trả tiền có chiều "NCC trả lại cho mình".
+- Dashboard: thẻ "Lãi ròng", biểu đồ tháng thêm đường lãi ròng; việc cần làm bỏ qua dịch vụ đã huỷ.

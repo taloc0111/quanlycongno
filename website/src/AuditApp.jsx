@@ -100,6 +100,7 @@ export default function AuditApp() {
   return (
     <div>
       <PageHeader
+        help="audit"
         icon={History}
         title="Nhật ký thao tác"
         description="Ai đã thêm, sửa, xoá, thanh toán hay đăng nhập — và khi nào. Hiện 200 bản ghi mới nhất."

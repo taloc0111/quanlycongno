@@ -41,6 +41,33 @@ test('schema chạy lại 2 lần không lỗi; dòng cũ giữ nguyên cost_amo
   r = await h.pool.query('SELECT cost_amount, cost_pending FROM passports WHERE id = $1', [pass.rows[0].id]);
   assert.equal(N(r.rows[0].cost_amount), 456);
 
+  // v3.1: dòng cũ nhận mặc định trạng thái 'active', chưa có giá gốc/ngày huỷ; bảng mới có đủ.
+  r = await h.pool.query('SELECT status, original_amount, cancelled_at, cancel_note, ticket_amount FROM debts WHERE id = $1', [id]);
+  assert.deepEqual(r.rows[0], { status: 'active', original_amount: null, cancelled_at: null, cancel_note: null, ticket_amount: '500000.00' });
+  r = await h.pool.query('SELECT status FROM passports WHERE id = $1', [pass.rows[0].id]);
+  assert.equal(r.rows[0].status, 'active');
+  const tables = (await h.pool.query(
+    "SELECT table_name FROM information_schema.tables WHERE table_name IN ('account_transfers','account_entries','receipts') ORDER BY 1"
+  )).rows.map((x) => x.table_name);
+  assert.deepEqual(tables, ['account_entries', 'account_transfers', 'receipts']);
+  const cols = (await h.pool.query(
+    `SELECT table_name || '.' || column_name AS c, column_default FROM information_schema.columns
+      WHERE (table_name, column_name) IN (('payments','kind'),('payments','receipt_id'),('wallet_entries','receipt_id'),('cost_items','kind'),
+                                          ('train_tickets','status'),('tours','original_amount'))
+      ORDER BY 1`
+  )).rows.map((x) => x.c);
+  assert.deepEqual(cols, ['cost_items.kind', 'payments.kind', 'payments.receipt_id', 'tours.original_amount', 'train_tickets.status', 'wallet_entries.receipt_id']);
+  // supplier_payments: ràng buộc mới amount <> 0 (âm = NCC trả lại), chỉ 1 ràng buộc amount sau 2 lần chạy.
+  const cons = (await h.pool.query(
+    `SELECT conname FROM pg_constraint WHERE conrelid = 'supplier_payments'::regclass AND contype = 'c' ORDER BY 1`
+  )).rows.map((x) => x.conname);
+  assert.deepEqual(cons, ['chk_supplier_payment_amount']);
+  const sup = await h.pool.query("INSERT INTO suppliers (user_id, name) VALUES ($1, 'NCC schema') RETURNING id", [U.child.id]);
+  await h.pool.query('INSERT INTO supplier_payments (user_id, supplier_id, amount) VALUES ($1, $2, -1000)', [U.child.id, sup.rows[0].id]);
+  await assert.rejects(h.pool.query('INSERT INTO supplier_payments (user_id, supplier_id, amount) VALUES ($1, $2, 0)', [U.child.id, sup.rows[0].id]));
+  await h.pool.query('DELETE FROM suppliers WHERE id = $1', [sup.rows[0].id]);
+  await h.pool.query(sql); // lần 3 sau khi có dữ liệu âm vẫn OK
+
   // Sửa KHÔNG gửi costItems và KHÔNG gửi costAmount → giữ 123.
   let u = await api.put(`/api/debts/${id}`, { customerName: 'Khách cũ', phoneNumber: '0900', ticketAmount: 500000, issueDate: '2026-10-01', notes: 'sửa' });
   assert.equal(u.status, 200);

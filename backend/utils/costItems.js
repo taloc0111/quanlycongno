@@ -54,7 +54,11 @@ function parseCostItems(body) {
     }
     const supplierId = v.int(it.supplierId, { min: 1, label: `${p}: nhà cung cấp` });
     const label = v.str(it.label, { max: 100, required: true, label: `${p}: tên khoản` });
-    const amount = v.amount(it.amount, { required: true, label: `${p}: số tiền` });
+    // Dòng cũ (có id) được phép mang số âm: FE gửi lại nguyên dòng "Hoàn từ NCC" (kind refund) khi sửa
+    // dịch vụ đã huỷ — saveCostItems bỏ qua dòng đó và chặn số âm ở dòng thường.
+    const amount = id !== null
+      ? v.num(it.amount, { required: true, label: `${p}: số tiền` })
+      : v.amount(it.amount, { required: true, label: `${p}: số tiền` });
     const dueDate = v.dateStr(it.dueDate, { label: `${p}: hạn trả` });
     let payNow = null;
     if (it.payNow === true) payNow = {};
@@ -113,7 +117,7 @@ async function recomputeCostItemPaid(client, costItemId) {
 async function saveCostItems(client, userId, targetType, targetId, items) {
   const t = target(targetType);
   const existing = await client.query(
-    `SELECT id, supplier_id FROM cost_items WHERE ${t.col} = $1 AND user_id = $2 FOR UPDATE`,
+    `SELECT id, supplier_id, kind FROM cost_items WHERE ${t.col} = $1 AND user_id = $2 FOR UPDATE`,
     [targetId, userId]
   );
   const byId = new Map(existing.rows.map((r) => [r.id, r]));
@@ -121,6 +125,12 @@ async function saveCostItems(client, userId, targetType, targetId, items) {
   // 1) Kiểm tra mọi id ngoại trước khi ghi.
   for (const it of items) {
     if (it.id !== null && !byId.has(it.id)) throw new v.ValidationError('Dòng giá vốn không hợp lệ');
+  }
+  // Dòng "NCC hoàn" (kind refund) do Huỷ/hoàn tạo — chỉ Hoàn tác huỷ mới gỡ: bỏ qua nếu FE gửi lại,
+  // và không xoá dù FE không gửi (giữ khớp với supplier_payments âm đã nhận).
+  items = items.filter((it) => it.id === null || byId.get(it.id).kind !== 'refund');
+  for (const it of items) {
+    if (it.amount < 0) throw new v.ValidationError(`Dòng giá vốn "${it.label}": số tiền phải ≥ 0`);
   }
   const supplierIds = [...new Set(items.map((it) => it.supplierId).filter((x) => x !== null))];
   for (const sid of supplierIds) {
@@ -132,7 +142,7 @@ async function saveCostItems(client, userId, targetType, targetId, items) {
   // 2) Xoá dòng không còn trong mảng (supplier_payments giữ lại, cost_item_id → NULL qua FK).
   const keep = items.filter((it) => it.id !== null).map((it) => it.id);
   const del = await client.query(
-    `DELETE FROM cost_items WHERE ${t.col} = $1 AND user_id = $2 AND NOT (id = ANY($3::int[])) RETURNING id`,
+    `DELETE FROM cost_items WHERE ${t.col} = $1 AND user_id = $2 AND kind <> 'refund' AND NOT (id = ANY($3::int[])) RETURNING id`,
     [targetId, userId, keep]
   );
 
@@ -209,7 +219,8 @@ function costItemsSelectSql(targetType, alias) {
     COALESCE((
       SELECT json_agg(json_build_object(
                'id', ci.id, 'supplier_id', ci.supplier_id, 'supplier_name', s.name, 'label', ci.label,
-               'amount', ci.amount::text, 'paid_amount', ci.paid_amount::text, 'due_date', ci.due_date
+               'amount', ci.amount::text, 'paid_amount', ci.paid_amount::text, 'due_date', ci.due_date,
+               'kind', ci.kind
              ) ORDER BY ci.position, ci.id)
         FROM cost_items ci LEFT JOIN suppliers s ON s.id = ci.supplier_id
        WHERE ci.${t.col} = ${alias}.id

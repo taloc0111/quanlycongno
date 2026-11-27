@@ -97,6 +97,7 @@ export default function NotesApp() {
   return (
     <div>
       <PageHeader
+        help="notes"
         icon={StickyNote}
         title="Ghi chú"
         description={notes.length ? `${notes.length} ghi chú · ${pinnedCount} đã ghim · tự lưu khi gõ` : 'Nhắc việc nhanh, riêng tư, tự lưu khi gõ.'}
