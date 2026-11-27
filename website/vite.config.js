@@ -26,6 +26,9 @@ export default defineConfig({
     },
   },
   test: {
+    // Chỉ chạy test của website (không quét lên backend/ hay thư mục khác).
+    dir: 'src',
+    include: ['**/*.test.{js,jsx}'],
     environment: 'jsdom',
     globals: true,
     setupFiles: ['./src/test/setup.js'],
