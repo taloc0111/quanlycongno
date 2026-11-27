@@ -222,6 +222,7 @@ function CustomerList() {
   return (
     <div>
       <PageHeader
+        help="customers"
         icon={Users}
         title="Khách hàng"
         description="Danh bạ khách, công nợ gộp 4 dịch vụ và bảng kê in được."

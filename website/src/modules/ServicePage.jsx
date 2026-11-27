@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Plus, Download, Upload, Columns3, Trash2, Pencil, Wallet, RefreshCw, Users, Landmark,
-  TrendingUp, Receipt, AlertTriangle, PiggyBank, CheckCircle2, Eye, RotateCcw,
+  TrendingUp, Receipt, AlertTriangle, PiggyBank, CheckCircle2, Eye, RotateCcw, ListPlus, Truck, Hourglass,
+  MoreHorizontal, Ban, Undo2, Repeat, HandCoins,
 } from 'lucide-react';
 import { useAuth } from '../auth/AuthContext';
 import { useNavigation } from '../hooks/useNavigation.jsx';
@@ -9,11 +10,19 @@ import { useFeedback } from '../ui/FeedbackContext';
 import { useTableState } from '../hooks/useTableState';
 import { api, qs } from '../services/client';
 import { formatCurrency, formatDate, formatMonth, monthOf, today, num, daysUntil } from '../utils/format';
-import { payState } from './payState';
+import {
+  payState, isCostPending, costUnpaid, costTotal, newCostItem, downTemplate,
+  activeAccounts, defaultAccountId, rememberAccount, isCancelled, originalAmount,
+} from './payState';
+import { accountsApi, suppliersApi, accountLabel, invalidateMoneyCache, serviceActionsApi } from '../services/money';
+import CostItemsEditor from './CostItemsEditor';
+import CancelModal from './CancelModal';
+import ChangeTicketModal from './ChangeTicketModal';
+import ReceiptModal from './money/ReceiptModal';
 import { exportWorkbook } from '../utils/excel';
 import {
   Button, IconButton, Field, Input, Select, MoneyField, DateField, SearchInput, Textarea,
-  Modal, Dropdown, MenuItem, Badge, PageHeader, StatCard, DataTable, ErrorBanner,
+  Modal, Dropdown, MenuItem, Badge, PageHeader, StatCard, DataTable, ErrorBanner, Segmented, Switch,
 } from '../ui';
 import AgencyFilter from '../components/AgencyFilter';
 import PaymentModal from '../components/PaymentModal';
@@ -24,6 +33,13 @@ const PAY_FILTER = [
   { value: 'unpaid', label: 'Còn nợ' },
   { value: 'overdue', label: 'Quá hạn' },
   { value: 'paid', label: 'Đã trả đủ' },
+];
+
+// Trạng thái hiệu lực (huỷ / chưa huỷ) — mặc định ẩn dịch vụ đã huỷ. Tour có bộ lọc tiến độ riêng nên không dùng.
+const LIFE_FILTER = [
+  { value: 'active', label: 'Đang hiệu lực' },
+  { value: 'cancelled', label: 'Đã huỷ' },
+  { value: 'all', label: 'Trạng thái: Tất cả' },
 ];
 
 const STATUS_BADGE = {
@@ -38,6 +54,48 @@ export function PayBadge({ row, cfg }) {
   const b = STATUS_BADGE[s.status];
   return <Badge tone={b.tone} dot>{b.label}</Badge>;
 }
+
+/** Badge "Đã huỷ" (null nếu dịch vụ còn hiệu lực). */
+export function CancelledBadge({ row }) {
+  if (!isCancelled(row)) return null;
+  return <span title={row.cancel_note || undefined}><Badge tone="gray" icon={Ban}>Đã huỷ</Badge></span>;
+}
+
+/** Ô giá bán: dịch vụ đã huỷ hiện giá gốc gạch ngang + giá còn lại. */
+export function AmountCell({ row, cfg, amountKey }) {
+  const key = amountKey || cfg.amountKey;
+  const orig = originalAmount(row, { ...cfg, amountKey: key });
+  return (
+    <span className="font-semibold">
+      {orig !== null && <s className="mr-1.5 text-xs font-normal text-ink-faint" title="Giá bán gốc trước khi huỷ">{formatCurrency(orig)}</s>}
+      {formatCurrency(row[key])}
+    </span>
+  );
+}
+
+const COST_FILTER = [
+  { value: 'all', label: 'Giá vốn: Tất cả' },
+  { value: 'pending', label: 'Chưa đủ giá vốn' },
+  { value: 'owed', label: 'Còn nợ NCC' },
+];
+const TICKET_KINDS = [{ value: 'normal', label: 'Vé thường' }, { value: 'down', label: 'Vé down' }];
+
+/** Badge giá vốn của 1 dòng: Vé down / Chưa đủ giá vốn / Nợ NCC. */
+export function CostBadges({ row }) {
+  const owed = costUnpaid(row);
+  return (
+    <>
+      {row.ticket_kind === 'down' && <Badge tone="purple">Vé down</Badge>}
+      {isCostPending(row) && <Badge tone="warning" icon={Hourglass}>Chưa đủ giá vốn</Badge>}
+      {owed > 0 && <span title="Còn nợ nhà cung cấp"><Badge tone="outline" icon={Truck} className="tabular">Nợ NCC {formatCurrency(owed)}</Badge></span>}
+    </>
+  );
+}
+
+/** Gợi ý "Chưa đủ giá vốn": tổng giá vốn = 0, hoặc còn dòng giá vốn chưa nhập tiền. */
+const suggestPending = (f) => (f.costItems?.length ? f.costItems.some((it) => num(it.amount) <= 0) : num(f.costAmount) <= 0);
+/** Khi tạo mới và người dùng chưa tự bật/tắt công tắc: tự gợi ý theo giá vốn. */
+const withAutoPending = (f) => (f.id || f.__costPendingTouched ? f : { ...f, costPending: suggestPending(f) });
 
 /**
  * Trang nghiệp vụ dùng chung cho vé máy bay / vé tàu / hộ chiếu / tour.
@@ -57,12 +115,17 @@ export default function ServicePage({ config: cfg }) {
   const [companies, setCompanies] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [lists, setLists] = useState({});           // dữ liệu phụ (routes, airlines…) do config.loadLists cung cấp
+  const [accounts, setAccounts] = useState([]);     // tài khoản tiền (trả trước / trả NCC ngay)
+  const [suppliers, setSuppliers] = useState([]);   // nhà cung cấp (dòng giá vốn)
   const [form, setForm] = useState(null);           // null = đóng modal; { ...fields, id? }
   const [saving, setSaving] = useState(false);
   const [paying, setPaying] = useState(null);
   const [importOpen, setImportOpen] = useState(false);
   const [showDebtors, setShowDebtors] = useState(false);
   const [extraOpen, setExtraOpen] = useState(null); // modal phụ (routes/companies) do config cung cấp
+  const [cancelling, setCancelling] = useState(null); // dòng đang mở modal Huỷ / hoàn
+  const [changing, setChanging] = useState(null);     // dòng đang mở modal Đổi vé
+  const [receiptOpen, setReceiptOpen] = useState(false);
 
   const t = useTableState({
     storageKey: cfg.storageKey,
@@ -73,6 +136,9 @@ export default function ServicePage({ config: cfg }) {
   const { filters, setFilter } = t;
   const month = filters.month || '';
   const pay = filters.pay || 'all';
+  const costFilter = filters.cost || 'all';
+  const hasLifeFilter = cfg.lifecycleFilter !== false;
+  const life = hasLifeFilter ? (filters.life || 'active') : 'all';
 
   // ---------- Tải dữ liệu ----------
   const load = useCallback(async ({ silent = false } = {}) => {
@@ -91,12 +157,16 @@ export default function ServicePage({ config: cfg }) {
   useEffect(() => { load(); }, [load]);
 
   const loadAux = useCallback(async () => {
-    const [cs, cu] = await Promise.all([
+    const [cs, cu, ac, su] = await Promise.all([
       api.get('/companies').catch(() => []),
       api.get('/customers').catch(() => []),
+      accountsApi.list().catch(() => []),
+      suppliersApi.list().catch(() => []),
     ]);
     setCompanies(cs);
     setCustomers(cu);
+    setAccounts(Array.isArray(ac) ? ac : []);
+    setSuppliers(Array.isArray(su) ? su : []);
     if (cfg.loadLists) {
       try { setLists(await cfg.loadLists()); } catch { /* bỏ qua */ }
     }
@@ -110,11 +180,14 @@ export default function ServicePage({ config: cfg }) {
   // ---------- Ngữ cảnh truyền cho config ----------
   const companyById = useCallback((id) => companies.find((c) => String(c.id) === String(id)), [companies]);
   const sources = useMemo(() => [...new Set(rows.map((r) => r[cfg.sourceKey]).filter(Boolean))].sort(), [rows, cfg.sourceKey]);
+  const reloadSuppliers = useCallback(async () => {
+    setSuppliers(await suppliersApi.list({ fresh: true }).catch(() => []));
+  }, []);
   const ctx = useMemo(() => ({
-    companies, customers, lists, sources, companyById, currentUserId, user, navigate,
+    companies, customers, lists, sources, companyById, currentUserId, user, navigate, accounts, suppliers,
     reloadLists: async () => { if (cfg.loadLists) setLists(await cfg.loadLists()); },
     reloadCompanies: async () => setCompanies(await api.get('/companies').catch(() => [])),
-  }), [companies, customers, lists, sources, companyById, currentUserId, user, navigate, cfg]);
+  }), [companies, customers, lists, sources, companyById, currentUserId, user, navigate, accounts, suppliers, cfg]);
 
   // ---------- Lọc / sắp xếp / phân trang ----------
   const months = useMemo(() => [...new Set(rows.map((r) => monthOf(r[cfg.dateKey])).filter(Boolean))].sort().reverse(), [rows, cfg.dateKey]);
@@ -133,6 +206,10 @@ export default function ServicePage({ config: cfg }) {
         if (pay === 'overdue') return s.overdue;
         return true;
       } : null,
+      life === 'active' ? (row) => !isCancelled(row) : null,
+      life === 'cancelled' ? (row) => isCancelled(row) : null,
+      costFilter === 'pending' ? (row) => isCostPending(row) : null,
+      costFilter === 'owed' ? (row) => costUnpaid(row) > 0 : null,
       ...extraFilterFns,
     ],
     sortValue: (row, key) => {
@@ -145,14 +222,17 @@ export default function ServicePage({ config: cfg }) {
   const { filtered, sorted, paged, totalPages, page } = result;
 
   // ---------- Thống kê theo bộ lọc ----------
+  // Lợi nhuận bỏ qua dòng "Chưa đủ giá vốn" (cost_pending); doanh số / đã thu / còn nợ vẫn tính đủ.
   const stats = useMemo(() => {
-    let total = 0; let cost = 0; let paid = 0; let overdueAmt = 0; let overdueCount = 0;
+    let total = 0; let cost = 0; let paid = 0; let overdueAmt = 0; let overdueCount = 0; let profit = 0; let pendingCount = 0;
     for (const r of filtered) {
       const s = payState(r, cfg);
-      total += s.total; cost += num(r[cfg.costKey]); paid += s.paid;
+      total += s.total; paid += s.paid;
+      if (isCostPending(r)) pendingCount += 1;
+      else { cost += num(r[cfg.costKey]); profit += s.total - num(r[cfg.costKey]); }
       if (s.overdue) { overdueAmt += s.remaining; overdueCount += 1; }
     }
-    return { total, cost, paid, profit: total - cost, remaining: total - paid, overdueAmt, overdueCount, count: filtered.length };
+    return { total, cost, paid, profit, pendingCount, remaining: total - paid, overdueAmt, overdueCount, count: filtered.length };
   }, [filtered, cfg]);
 
   const debtors = useMemo(() => {
@@ -172,9 +252,17 @@ export default function ServicePage({ config: cfg }) {
   const selectableIds = sorted.filter(owned).map((r) => r.id);
   const allSelected = selectableIds.length > 0 && selectableIds.every((id) => t.selected.includes(id));
   const toggleAll = () => t.setSelected(allSelected ? [] : selectableIds);
+  // Thu tiền nhiều vé: chỉ khi mọi dòng chọn cùng 1 khách (customer_id) và chưa huỷ.
+  const selectedRows = rows.filter((r) => t.selected.includes(r.id));
+  const selCustomerIds = [...new Set(selectedRows.map((r) => r.customer_id ?? null))];
+  const selCustomerId = selCustomerIds.length === 1 ? selCustomerIds[0] : null;
+  const receiptBlockedReason = !selectedRows.length ? ''
+    : selCustomerId === null ? 'Chỉ thu chung được cho cùng 1 khách'
+      : selectedRows.some((r) => isCancelled(r) && payState(r, cfg).remaining <= 0) ? 'Có dịch vụ đã huỷ và hết nợ trong các dòng đã chọn'
+        : '';
 
   // ---------- CRUD ----------
-  const openAdd = () => setForm({ ...cfg.emptyForm, [cfg.form.dateField || 'issueDate']: today() });
+  const openAdd = () => setForm({ ...cfg.emptyForm, [cfg.form.dateField || 'issueDate']: today(), accountId: defaultAccountId(accounts) });
   const openEdit = (row) => setForm({ ...cfg.toForm(row), id: row.id });
   const closeForm = () => setForm(null);
 
@@ -186,6 +274,12 @@ export default function ServicePage({ config: cfg }) {
       const body = cfg.toPayload(form, { editing: !!form.id });
       if (form.id) await api.put(`${cfg.endpoint}/${form.id}`, body);
       else await api.post(cfg.endpoint, body);
+      if (body.accountId) rememberAccount(body.accountId);
+      if (body.costItems) {
+        // Trả NCC ngay / đổi dòng giá vốn làm thay đổi số dư NCC + tài khoản.
+        invalidateMoneyCache();
+        reloadSuppliers();
+      }
       toast.success(form.id ? 'Đã cập nhật' : `Đã thêm ${cfg.itemLabel}`);
       setForm(null);
       await load({ silent: true });
@@ -225,7 +319,62 @@ export default function ServicePage({ config: cfg }) {
     } catch (err) { toast.error(err.message); }
   };
 
-  const setField = (key, value) => setForm((f) => ({ ...f, [key]: value }));
+  // ---------- Huỷ / hoàn tác huỷ / đổi vé / thu nhiều vé ----------
+  const afterMoneyAction = async () => {
+    invalidateMoneyCache();
+    reloadSuppliers();
+    await load({ silent: true });
+    notifyChanged();
+  };
+
+  const uncancel = async (row) => {
+    const ok = await confirm({
+      title: 'Hoàn tác huỷ',
+      message: `Khôi phục ${cfg.itemLabel} của "${row.customer_name}"? Giá bán về như trước khi huỷ, các khoản hoàn tiền khách / NCC hoàn ghi lúc huỷ sẽ bị xoá.`,
+      confirmText: 'Hoàn tác huỷ',
+    });
+    if (!ok) return;
+    try {
+      await serviceActionsApi.uncancel(cfg.endpoint, row.id);
+      toast.success('Đã hoàn tác huỷ');
+      await afterMoneyAction();
+    } catch (err) { toast.error(err.message); }
+  };
+
+  const onCancelDone = async () => { setCancelling(null); await afterMoneyAction(); };
+  const onChangeDone = async () => { setChanging(null); await afterMoneyAction(); };
+  const onReceiptDone = async () => { setReceiptOpen(false); t.clearSelection(); await afterMoneyAction(); };
+
+  const moreMenu = (row) => {
+    const cancelled = isCancelled(row);
+    return (
+      <Dropdown trigger={<IconButton icon={MoreHorizontal} title="Thao tác khác" />} width="w-48">
+        {!cancelled && <MenuItem icon={Ban} danger onClick={() => setCancelling(row)}>Huỷ / hoàn</MenuItem>}
+        {cancelled && <MenuItem icon={Undo2} onClick={() => uncancel(row)}>Hoàn tác huỷ</MenuItem>}
+        {cfg.changeTicket && !cancelled && <MenuItem icon={Repeat} onClick={() => setChanging(row)}>Đổi vé</MenuItem>}
+      </Dropdown>
+    );
+  };
+
+  const setField = (key, value) => setForm((f) => withAutoPending({ ...f, [key]: value }));
+
+  // ---------- Giá vốn ----------
+  const setCostItems = (items) => setForm((f) => withAutoPending({
+    ...f,
+    costItems: items,
+    // Có dòng → giá gốc = tổng các dòng (server cũng tính lại). Xoá hết dòng → về ô giá gốc đơn.
+    costAmount: items.length ? String(costTotal(items)) : '',
+  }));
+  const splitCost = () => {
+    const cur = num(form.costAmount);
+    setCostItems([newCostItem({ amount: cur > 0 ? String(Math.round(cur)) : '' })]);
+  };
+  const setTicketKind = (kind) => setForm((f) => {
+    const next = { ...f, ticketKind: kind };
+    if (kind !== 'down' || f.costItems?.length) return next;
+    const items = downTemplate(suppliers);
+    return withAutoPending({ ...next, costItems: items, costAmount: String(costTotal(items)) });
+  });
 
   // ---------- Export ----------
   const exportXlsx = async () => {
@@ -237,17 +386,19 @@ export default function ServicePage({ config: cfg }) {
     for (const r of filtered) {
       const m = monthOf(r[cfg.dateKey]) || 'Không rõ';
       const s = payState(r, cfg);
-      const x = byMonth[m] || (byMonth[m] = { count: 0, total: 0, cost: 0, paid: 0 });
+      const x = byMonth[m] || (byMonth[m] = { count: 0, total: 0, cost: 0, profit: 0, paid: 0, pending: 0 });
       x.count += 1; x.total += s.total; x.cost += num(r[cfg.costKey]); x.paid += s.paid;
+      // Lợi nhuận không tính dòng "Chưa đủ giá vốn".
+      if (isCostPending(r)) x.pending += 1; else x.profit += s.total - num(r[cfg.costKey]);
     }
     const ms = Object.keys(byMonth).sort();
-    const sumRows = ms.map((m) => { const x = byMonth[m]; return [m, x.count, x.total, x.cost, x.total - x.cost, x.paid, x.total - x.paid]; });
-    const tot = ms.reduce((a, m) => { const x = byMonth[m]; a.count += x.count; a.total += x.total; a.cost += x.cost; a.paid += x.paid; return a; }, { count: 0, total: 0, cost: 0, paid: 0 });
-    sumRows.push(['TỔNG CỘNG', tot.count, tot.total, tot.cost, tot.total - tot.cost, tot.paid, tot.total - tot.paid]);
+    const sumRows = ms.map((m) => { const x = byMonth[m]; return [m, x.count, x.total, x.cost, x.profit, x.paid, x.total - x.paid, x.pending]; });
+    const tot = ms.reduce((a, m) => { const x = byMonth[m]; a.count += x.count; a.total += x.total; a.cost += x.cost; a.profit += x.profit; a.paid += x.paid; a.pending += x.pending; return a; }, { count: 0, total: 0, cost: 0, profit: 0, paid: 0, pending: 0 });
+    sumRows.push(['TỔNG CỘNG', tot.count, tot.total, tot.cost, tot.profit, tot.paid, tot.total - tot.paid, tot.pending]);
     try {
       await exportWorkbook(`${cfg.exportName}-${today()}.xlsx`, [
         { name: cfg.title, aoa: [headers, ...data], colWidths: cols.map((c) => c.width || 14), moneyCols },
-        { name: 'Tổng kết tháng', aoa: [['Tháng', 'Số lượng', 'Doanh số', 'Giá gốc', 'Lợi nhuận', 'Đã thu', 'Còn nợ'], ...sumRows], colWidths: [12, 10, 16, 16, 16, 16, 16], moneyCols: [2, 3, 4, 5, 6] },
+        { name: 'Tổng kết tháng', aoa: [['Tháng', 'Số lượng', 'Doanh số', 'Giá gốc', 'Lợi nhuận', 'Đã thu', 'Còn nợ', 'Chưa đủ giá vốn (không tính lãi)'], ...sumRows], colWidths: [12, 10, 16, 16, 16, 16, 16, 18], moneyCols: [2, 3, 4, 5, 6] },
       ]);
     } catch { toast.error('Lỗi khi xuất Excel'); }
   };
@@ -266,12 +417,13 @@ export default function ServicePage({ config: cfg }) {
 
   // ---------- Cột ----------
   const actionCol = {
-    key: '__actions', label: '', align: 'right', width: 110,
+    key: '__actions', label: '', align: 'right', width: 140,
     render: (row) => owned(row) ? (
       <div className="flex justify-end gap-0.5 opacity-70 group-hover:opacity-100 transition">
-        <IconButton icon={Wallet} title="Thanh toán" variant="success" onClick={(e) => { e.stopPropagation(); setPaying(row); }} />
+        {(!isCancelled(row) || payState(row, cfg).remaining > 0) && <IconButton icon={Wallet} title="Thanh toán" variant="success" onClick={(e) => { e.stopPropagation(); setPaying(row); }} />}
         <IconButton icon={Pencil} title="Sửa" variant="primary" onClick={(e) => { e.stopPropagation(); openEdit(row); }} />
         <IconButton icon={Trash2} title="Xoá" variant="danger" onClick={(e) => { e.stopPropagation(); remove(row); }} />
+        {moreMenu(row)}
       </div>
     ) : <Badge tone="outline" icon={Eye}>Chỉ xem</Badge>,
   };
@@ -281,8 +433,53 @@ export default function ServicePage({ config: cfg }) {
   ];
 
   const Icon = cfg.icon;
+  const renderCostSection = (f) => {
+    const items = form.costItems || [];
+    return (
+      <div key={f.key} className="sm:col-span-2 lg:col-span-3 rounded-xl border border-surface-border bg-surface-muted p-3 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-[13px] font-semibold text-ink">Giá vốn</p>
+          {cfg.form.ticketKind && (
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-ink-muted">Loại vé</span>
+              <Segmented value={form.ticketKind || 'normal'} onChange={setTicketKind} options={TICKET_KINDS} />
+            </div>
+          )}
+        </div>
+        {cfg.form.ticketKind && (
+          <p className="text-xs text-ink-faint -mt-1.5">Vé down = vé xuất giảm: giá vốn gồm phí bên down + giá vé F1 + phí F1</p>
+        )}
+        {items.length > 0 ? (
+          <CostItemsEditor
+            value={items}
+            onChange={setCostItems}
+            suppliers={suppliers}
+            accounts={accounts}
+            readOnlyPaid
+            onSupplierCreated={reloadSuppliers}
+          />
+        ) : (
+          <div className="flex flex-wrap items-end gap-2">
+            <Field label={f.label} htmlFor="f-costAmount" className="w-full sm:w-64">
+              <MoneyField id="f-costAmount" value={form.costAmount ?? ''} placeholder={f.placeholder} onChange={(v) => setField('costAmount', v)} />
+            </Field>
+            <Button size="sm" variant="soft" icon={ListPlus} onClick={splitCost} title="Giá vốn gồm nhiều khoản, mỗi khoản trả cho 1 nhà cung cấp">
+              Chia nhiều khoản
+            </Button>
+          </div>
+        )}
+        <Switch
+          checked={!!form.costPending}
+          onChange={(v) => setForm((fm) => ({ ...fm, costPending: v, __costPendingTouched: true }))}
+          label="Chưa đủ giá vốn (chưa tính lãi)"
+        />
+      </div>
+    );
+  };
+
   const renderField = (f) => {
     if (f.showWhen && !f.showWhen(form, ctx)) return null;
+    if (f.type === 'cost') return renderCostSection(f);
     const val = form[f.key] ?? '';
     const common = { id: `f-${f.key}`, value: val, placeholder: f.placeholder };
     let control;
@@ -300,6 +497,16 @@ export default function ServicePage({ config: cfg }) {
           </Select>
         );
         break;
+      case 'account': {
+        const accs = activeAccounts(accounts);
+        control = (
+          <Select {...common} onChange={(e) => setField(f.key, e.target.value)}>
+            <option value="">— Chưa chọn tài khoản —</option>
+            {accs.map((a) => <option key={a.id} value={String(a.id)}>{accountLabel(a)}</option>)}
+          </Select>
+        );
+        break;
+      }
       case 'company':
         control = (
           <Select {...common} onChange={(e) => setField(f.key, e.target.value)}>
@@ -353,23 +560,27 @@ export default function ServicePage({ config: cfg }) {
   const mobileCard = (row) => {
     const s = payState(row, cfg);
     return (
-      <div className="flex flex-col gap-1.5">
+      <div className={`flex flex-col gap-1.5 ${s.cancelled ? 'opacity-60' : ''}`}>
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
             <p className="font-semibold text-ink truncate">{row.customer_name}</p>
             <p className="text-xs text-ink-muted truncate">{cfg.mobileSubtitle(row, ctx)}</p>
           </div>
-          <PayBadge row={row} cfg={cfg} />
+          <div className="flex flex-wrap justify-end gap-1"><CancelledBadge row={row} /><PayBadge row={row} cfg={cfg} /></div>
         </div>
+        {(row.ticket_kind === 'down' || isCostPending(row) || costUnpaid(row) > 0) && (
+          <div className="flex flex-wrap gap-1"><CostBadges row={row} /></div>
+        )}
         <div className="flex items-center justify-between text-sm">
-          <span className="text-ink-muted">Giá bán <b className="text-ink tabular">{formatCurrency(s.total)}</b></span>
+          <span className="text-ink-muted">Giá bán <span className="text-ink tabular"><AmountCell row={row} cfg={cfg} /></span></span>
           <span className={`font-bold tabular ${s.isPaid ? 'text-success-600' : 'text-danger-600'}`}>{s.isPaid ? 'Đã trả đủ' : `Nợ ${formatCurrency(s.remaining)}`}</span>
         </div>
         {owned(row) && (
-          <div className="flex gap-2 pt-1">
-            <Button size="xs" variant="soft" icon={Wallet} onClick={() => setPaying(row)}>Thanh toán</Button>
+          <div className="flex flex-wrap items-center gap-2 pt-1">
+            {(!s.cancelled || s.remaining > 0) && <Button size="xs" variant="soft" icon={Wallet} onClick={() => setPaying(row)}>Thanh toán</Button>}
             <Button size="xs" variant="secondary" icon={Pencil} onClick={() => openEdit(row)}>Sửa</Button>
             <Button size="xs" variant="ghost" icon={Trash2} className="text-danger-600" onClick={() => remove(row)}>Xoá</Button>
+            {moreMenu(row)}
           </div>
         )}
       </div>
@@ -380,6 +591,7 @@ export default function ServicePage({ config: cfg }) {
     <div>
       <PageHeader
         icon={Icon}
+        help={cfg.helpTopic}
         title={cfg.title}
         description={cfg.description}
         actions={(
@@ -395,7 +607,14 @@ export default function ServicePage({ config: cfg }) {
       {/* Thẻ số liệu theo bộ lọc */}
       <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3 mb-5">
         <StatCard icon={Receipt} label="Doanh số" value={formatCurrency(stats.total)} sub={`${stats.count} ${cfg.itemLabel}`} tone="brand" />
-        <StatCard icon={TrendingUp} label="Lợi nhuận" value={formatCurrency(stats.profit)} sub={`Giá gốc ${formatCurrency(stats.cost)}`} tone={stats.profit >= 0 ? 'success' : 'danger'} />
+        <StatCard
+          icon={TrendingUp}
+          label="Lợi nhuận"
+          value={formatCurrency(stats.profit)}
+          sub={stats.pendingCount > 0 ? `Không tính ${stats.pendingCount} dòng chưa đủ giá vốn` : `Giá gốc ${formatCurrency(stats.cost)}`}
+          tone={stats.profit >= 0 ? 'success' : 'danger'}
+          onClick={stats.pendingCount > 0 ? () => setFilter('cost', costFilter === 'pending' ? 'all' : 'pending') : undefined}
+        />
         <StatCard icon={PiggyBank} label="Đã thu" value={formatCurrency(stats.paid)} sub={stats.total ? `${Math.round((stats.paid / stats.total) * 100)}% doanh số` : ''} tone="purple" />
         <StatCard icon={Landmark} label="Còn nợ" value={formatCurrency(stats.remaining)} tone="warning" onClick={() => setShowDebtors((v) => !v)} sub={showDebtors ? 'Bấm để ẩn danh sách' : 'Bấm xem ai còn nợ'} />
         <StatCard icon={AlertTriangle} label="Quá hạn" value={formatCurrency(stats.overdueAmt)} sub={`${stats.overdueCount} ${cfg.itemLabel}`} tone="danger" onClick={() => setFilter('pay', pay === 'overdue' ? 'all' : 'overdue')} />
@@ -437,6 +656,14 @@ export default function ServicePage({ config: cfg }) {
           <Select size="sm" value={pay} onChange={(e) => setFilter('pay', e.target.value)} className="w-36">
             {PAY_FILTER.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
           </Select>
+          {hasLifeFilter && (
+            <Select size="sm" value={life} onChange={(e) => setFilter('life', e.target.value)} className="w-44" title="Lọc theo trạng thái huỷ" aria-label="Trạng thái">
+              {LIFE_FILTER.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </Select>
+          )}
+          <Select size="sm" value={costFilter} onChange={(e) => setFilter('cost', e.target.value)} className="w-44" title="Lọc theo giá vốn" aria-label="Lọc giá vốn">
+            {COST_FILTER.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </Select>
           {(cfg.extraFilters || []).map((f) => (
             <Select key={f.key} size="sm" value={filters[f.key] || 'all'} onChange={(e) => setFilter(f.key, e.target.value)} className="w-36">
               <option value="all">{f.label}</option>
@@ -444,7 +671,7 @@ export default function ServicePage({ config: cfg }) {
             </Select>
           ))}
           <AgencyFilter value={agencyId} onChange={setAgencyId} />
-          {(t.search || month || pay !== 'all' || Object.values(filters).some((v) => v && v !== 'all')) && (
+          {(t.search || month || pay !== 'all' || Object.entries(filters).some(([k, v]) => v && v !== 'all' && !(k === 'life' && v === 'active'))) && (
             <Button size="sm" variant="ghost" icon={RotateCcw} onClick={() => { t.setSearch(''); t.setFilters({}); }}>Xoá lọc</Button>
           )}
         </div>
@@ -469,10 +696,15 @@ export default function ServicePage({ config: cfg }) {
 
       {/* Thanh xoá hàng loạt */}
       {t.selected.length > 0 && (
-        <div className="mb-3 flex items-center justify-between gap-3 rounded-xl border border-danger-100 bg-danger-50 px-4 py-2.5 animate-fade-in">
-          <span className="text-sm font-medium text-danger-700">Đã chọn {t.selected.length} {cfg.itemLabel}</span>
-          <div className="flex gap-2">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-brand-100 bg-brand-50 px-4 py-2.5 animate-fade-in">
+          <span className="text-sm font-medium text-brand-700">Đã chọn {t.selected.length} {cfg.itemLabel}</span>
+          <div className="flex flex-wrap gap-2">
             <Button size="sm" variant="secondary" onClick={t.clearSelection}>Bỏ chọn</Button>
+            <span title={receiptBlockedReason || undefined}>
+              <Button size="sm" variant="success" icon={HandCoins} disabled={!!receiptBlockedReason} title={receiptBlockedReason || undefined} onClick={() => setReceiptOpen(true)}>
+                Thu tiền các vé đã chọn
+              </Button>
+            </span>
             <Button size="sm" variant="danger" icon={Trash2} onClick={bulkDelete}>Xoá đã chọn</Button>
           </div>
         </div>
@@ -492,7 +724,7 @@ export default function ServicePage({ config: cfg }) {
         onToggleAll={toggleAll}
         allSelected={allSelected}
         canSelect={owned}
-        rowClassName={(row) => (payState(row, cfg).overdue ? 'bg-danger-50/40' : '')}
+        rowClassName={(row) => (isCancelled(row) ? 'opacity-60' : payState(row, cfg).overdue ? 'bg-danger-50/40' : '')}
         emptyIcon={Icon}
         emptyTitle={rows.length ? 'Không có dòng nào khớp bộ lọc' : `Chưa có ${cfg.itemLabel} nào`}
         emptyDescription={rows.length ? 'Thử đổi tháng, trạng thái hoặc từ khoá tìm kiếm.' : `Bấm "${cfg.addLabel}" để bắt đầu, hoặc Import từ Excel.`}
@@ -523,9 +755,13 @@ export default function ServicePage({ config: cfg }) {
             {cfg.form.profitPreview !== false && (
               <div className="sm:col-span-2 lg:col-span-3 flex flex-wrap items-center gap-x-5 gap-y-1 rounded-xl bg-surface-subtle px-4 py-2.5 text-sm">
                 <span className="text-ink-muted">Lợi nhuận dự kiến:</span>
-                <b className={`tabular ${num(form[cfg.form.amountField]) - num(form.costAmount) >= 0 ? 'text-success-600' : 'text-danger-600'}`}>
-                  {formatCurrency(num(form[cfg.form.amountField]) - num(form.costAmount))}
-                </b>
+                {form.costPending ? (
+                  <b className="text-warning-700">Chưa tính (chưa đủ giá vốn)</b>
+                ) : (
+                  <b className={`tabular ${num(form[cfg.form.amountField]) - num(form.costAmount) >= 0 ? 'text-success-600' : 'text-danger-600'}`}>
+                    {formatCurrency(num(form[cfg.form.amountField]) - num(form.costAmount))}
+                  </b>
+                )}
                 {!form.id && num(form.paid) > 0 && (
                   <span className="text-ink-muted">Còn nợ sau trả trước: <b className="text-danger-600 tabular">{formatCurrency(num(form[cfg.form.amountField]) - num(form.paid))}</b></span>
                 )}
@@ -538,9 +774,23 @@ export default function ServicePage({ config: cfg }) {
 
       {paying && (
         <PaymentModal
-          target={{ type: cfg.paymentType, id: paying.id, name: cfg.paymentLabel(paying), total: paying[cfg.amountKey], paid: paying[cfg.paidKey] }}
+          target={{ type: cfg.paymentType, id: paying.id, name: cfg.paymentLabel(paying), total: paying[cfg.amountKey], paid: paying[cfg.paidKey], customerId: paying.customer_id, cancelled: isCancelled(paying) }}
           onClose={() => setPaying(null)}
           onChanged={() => { load({ silent: true }); notifyChanged(); }}
+        />
+      )}
+
+      <CancelModal open={!!cancelling} row={cancelling} cfg={cfg} onClose={() => setCancelling(null)} onDone={onCancelDone} />
+      {cfg.changeTicket && (
+        <ChangeTicketModal open={!!changing} row={changing} cfg={cfg} onClose={() => setChanging(null)} onDone={onChangeDone} />
+      )}
+      {receiptOpen && selCustomerId !== null && (
+        <ReceiptModal
+          open
+          onClose={() => setReceiptOpen(false)}
+          onDone={onReceiptDone}
+          customerId={selCustomerId}
+          preselect={selectedRows.map((r) => ({ type: cfg.paymentType, id: r.id }))}
         />
       )}
 

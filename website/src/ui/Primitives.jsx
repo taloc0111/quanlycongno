@@ -1,4 +1,5 @@
-import { Inbox } from 'lucide-react';
+import { Inbox, HelpCircle } from 'lucide-react';
+import { IconButton } from './Button';
 
 /** Thẻ nền trắng. */
 export function Card({ className = '', children, padded = true, ...rest }) {
@@ -65,8 +66,11 @@ export function TableSkeleton({ rows = 6, cols = 6 }) {
   );
 }
 
-/** Tiêu đề trang + mô tả + vùng nút bên phải. */
-export function PageHeader({ icon: Icon, title, description, actions, className = '' }) {
+/**
+ * Tiêu đề trang + mô tả + vùng nút bên phải.
+ * help: id chủ đề trong src/help/topics.js → hiện nút "?" mở #help/<id> (trang Hướng dẫn sử dụng).
+ */
+export function PageHeader({ icon: Icon, title, description, actions, help, className = '' }) {
   return (
     <div className={`mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between ${className}`}>
       <div className="flex items-center gap-3 min-w-0">
@@ -76,7 +80,18 @@ export function PageHeader({ icon: Icon, title, description, actions, className 
           </span>
         )}
         <div className="min-w-0">
-          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-ink">{title}</h1>
+          <div className="flex items-center gap-1">
+            <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-ink">{title}</h1>
+            {help && (
+              <IconButton
+                icon={HelpCircle}
+                title="Hướng dẫn trang này"
+                size={17}
+                className="h-7 w-7 shrink-0"
+                onClick={() => { window.location.hash = `#help/${help}`; }}
+              />
+            )}
+          </div>
           {description && <p className="text-sm text-ink-muted mt-0.5">{description}</p>}
         </div>
       </div>

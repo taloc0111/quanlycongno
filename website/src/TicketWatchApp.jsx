@@ -351,7 +351,7 @@ export default function TicketWatchApp() {
   if (disabled) {
     return (
       <div>
-        <PageHeader icon={PlaneTakeoff} title="Canh vé" description="Theo dõi giá vé cho khách và báo khi tới giá mong muốn." />
+        <PageHeader help="fare-watch" icon={PlaneTakeoff} title="Canh vé" description="Theo dõi giá vé cho khách và báo khi tới giá mong muốn." />
         <Card>
           <EmptyState icon={Lock} title="Tính năng Canh vé chưa được bật cho tài khoản này" description="Liên hệ quản trị viên để bật tính năng." />
         </Card>
@@ -362,6 +362,7 @@ export default function TicketWatchApp() {
   return (
     <div>
       <PageHeader
+        help="fare-watch"
         icon={PlaneTakeoff}
         title="Canh vé"
         description="Theo dõi giá vé cho khách và báo khi tới giá mong muốn."

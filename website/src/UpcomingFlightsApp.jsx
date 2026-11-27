@@ -105,6 +105,7 @@ export default function UpcomingFlightsApp() {
   return (
     <div>
       <PageHeader
+        help="upcoming"
         icon={PlaneTakeoff}
         title="Sắp bay"
         description="Theo dõi ngày bay trong Công nợ vé để nhắc khách check-in đúng hạn."

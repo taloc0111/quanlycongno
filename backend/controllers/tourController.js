@@ -6,6 +6,8 @@ const { todayLocal } = require('../utils/dates');
 const { assertOwns } = require('../utils/ownership');
 const { logAudit } = require('../utils/audit');
 const v = require('../utils/validate');
+const ci = require('../utils/costItems');
+const { assertNoRefunds } = require('../utils/services');
 
 const STATUSES = ['consulting', 'deposited', 'completed', 'cancelled'];
 const PAYMENT_TARGETS = ['self', 'agency'];
@@ -29,6 +31,7 @@ function parseTourBody(body) {
     notes: v.str(body.notes, { label: 'Ghi chú' }),
     companyId: v.int(body.companyId, { min: 1, label: 'Công ty' }),
     paymentTarget: v.oneOf(body.paymentTarget, PAYMENT_TARGETS, { label: 'Tài khoản nhận', fallback: 'self' }),
+    ...ci.parseMoneyFields(body), // Dòng tiền v3: costPending, costItems, accountId
   };
 }
 
@@ -40,7 +43,8 @@ const getTours = async (req, res) => {
       : req.scope.userIds;
     const result = await pool.query(
       `SELECT t.*, u.full_name AS owner_name, u.username AS owner_username,
-              COALESCE((SELECT SUM(p.amount) FROM payments p WHERE p.tour_id = t.id AND p.payment_target = 'agency'), 0) AS agency_paid
+              COALESCE((SELECT SUM(p.amount) FROM payments p WHERE p.tour_id = t.id AND p.payment_target = 'agency'), 0) AS agency_paid,
+              ${ci.costItemsSelectSql('tour', 't')}
        FROM tours t JOIN users u ON u.id = t.user_id
        WHERE t.user_id = ANY($1)
        ORDER BY t.issue_date DESC, t.id DESC`,
@@ -63,33 +67,37 @@ const createTour = async (req, res) => {
       await client.query('ROLLBACK');
       return res.status(400).json({ error: 'Công ty không hợp lệ' });
     }
+    await ci.assertAccount(client, t.accountId, req.user.id);
     const customerId = await upsertCustomer(client, req.user.id, { name: t.customerName, phone: t.phoneNumber, type: 'individual' });
     const issueDate = t.issueDate || todayLocal();
     const result = await client.query(
       `INSERT INTO tours (
         user_id, customer_id, customer_name, phone_number, tour_name, depart_date, return_date, pax,
-        issue_date, due_date, source, sell_amount, cost_amount, paid, status, notes, company_id
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+        issue_date, due_date, source, sell_amount, cost_amount, paid, status, notes, company_id, cost_pending
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
       RETURNING *`,
       [
         req.user.id, customerId, t.customerName, t.phoneNumber || '', t.tourName || '', t.departDate, t.returnDate,
         t.pax, issueDate, t.dueDate, t.source,
-        t.sellAmount, t.costAmount, t.paid, t.status || 'deposited', t.notes || '', t.companyId,
+        t.sellAmount, t.costAmount, t.paid, t.status || 'deposited', t.notes || '', t.companyId, t.costPending === true,
       ]
     );
     if (t.paid > 0) {
       await client.query(
-        `INSERT INTO payments (user_id, tour_id, amount, payment_date, method, payment_target)
-         VALUES ($1, $2, $3, $4, 'cash', $5)`,
-        [req.user.id, result.rows[0].id, t.paid, issueDate, t.paymentTarget]
+        `INSERT INTO payments (user_id, tour_id, amount, payment_date, method, payment_target, account_id)
+         VALUES ($1, $2, $3, $4, 'cash', $5, $6)`,
+        [req.user.id, result.rows[0].id, t.paid, issueDate, t.paymentTarget, t.accountId]
       );
     }
+    const costSummary = await ci.applyCostItems(client, req.user.id, 'tour', result.rows[0].id, t.costItems);
+    const row = await ci.loadServiceRow(client, 'tour', result.rows[0].id);
     await client.query('COMMIT');
-    const row = result.rows[0];
     logAudit(req, { action: 'create', entity: 'tour', entityId: row.id, summary: `Tạo tour ${row.tour_name || ''} cho ${row.customer_name}`, details: { sellAmount: t.sellAmount, paid: t.paid } });
+    ci.auditCostItems(req, 'tour', row.id, costSummary);
     res.status(201).json(row);
   } catch (error) {
     await client.query('ROLLBACK');
+    if (error instanceof v.ValidationError) return res.status(400).json({ error: error.message });
     logger.error('Create tour error:', error.message);
     res.status(500).json({ error: 'Failed to create tour' });
   } finally {
@@ -108,31 +116,44 @@ const updateTour = async (req, res) => {
       await client.query('ROLLBACK');
       return res.status(400).json({ error: 'Công ty không hợp lệ' });
     }
+    // Dòng tiền v3.1: tour đã huỷ qua "Huỷ / hoàn" (có cancelled_at) chỉ được mở lại bằng "Hoàn tác huỷ"
+    // để tiền hoàn khách / NCC được gỡ đúng — không cho đổi status trực tiếp.
+    if (t.status && t.status !== 'cancelled') {
+      const cur = await client.query('SELECT status, cancelled_at FROM tours WHERE id = $1 AND user_id = $2', [id, req.user.id]);
+      if (cur.rows[0] && cur.rows[0].status === 'cancelled' && cur.rows[0].cancelled_at) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'Tour đã huỷ — hãy dùng "Hoàn tác huỷ" để mở lại' });
+      }
+    }
     const customerId = await upsertCustomer(client, req.user.id, { name: t.customerName, phone: t.phoneNumber, type: 'individual' });
     // Không đụng cột paid/payments — tiền trả thêm ghi qua màn Thanh toán.
     const result = await client.query(
       `UPDATE tours SET
         customer_id = $2, customer_name = $3, phone_number = $4, tour_name = $5, depart_date = $6, return_date = $7,
-        pax = $8, issue_date = $9, due_date = $10, source = $11, sell_amount = $12, cost_amount = $13,
-        status = COALESCE($14, status), notes = $15, company_id = $16
+        pax = $8, issue_date = $9, due_date = $10, source = $11, sell_amount = $12, cost_amount = COALESCE($13, cost_amount),
+        status = COALESCE($14, status), notes = $15, company_id = $16, cost_pending = COALESCE($18, cost_pending)
       WHERE id = $1 AND user_id = $17
-      RETURNING *`,
+      RETURNING id`,
       [
         id, customerId, t.customerName, t.phoneNumber, t.tourName || '', t.departDate, t.returnDate,
         t.pax, t.issueDate, t.dueDate, t.source,
-        t.sellAmount, t.costAmount,
-        t.status, t.notes, t.companyId, req.user.id,
+        t.sellAmount, t.costAmountSent ? t.costAmount : null,
+        t.status, t.notes, t.companyId, req.user.id, t.costPending,
       ]
     );
     if (result.rows.length === 0) {
       await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Tour not found' });
     }
+    const costSummary = await ci.applyCostItems(client, req.user.id, 'tour', id, t.costItems);
+    const row = await ci.loadServiceRow(client, 'tour', id);
     await client.query('COMMIT');
     logAudit(req, { action: 'update', entity: 'tour', entityId: id, summary: `Sửa tour ${t.tourName || ''} của ${t.customerName}` });
-    res.json(result.rows[0]);
+    ci.auditCostItems(req, 'tour', id, costSummary);
+    res.json(row);
   } catch (error) {
     await client.query('ROLLBACK');
+    if (error instanceof v.ValidationError) return res.status(400).json({ error: error.message });
     logger.error('Update tour error:', error.message);
     res.status(500).json({ error: 'Failed to update tour' });
   } finally {
@@ -142,6 +163,8 @@ const updateTour = async (req, res) => {
 
 const deleteTour = async (req, res) => {
   const id = v.idParam(req.params.id);
+  // Dòng tiền v3.1: dịch vụ đã huỷ có hoàn tiền khách → phải hoàn tác huỷ trước (không mất tiền ví/sổ TK).
+  await assertNoRefunds(pool, 'tour', id, req.user.id);
   try {
     const result = await pool.query('DELETE FROM tours WHERE id = $1 AND user_id = $2 RETURNING id, customer_name, tour_name', [id, req.user.id]);
     if (result.rows.length === 0) return res.status(404).json({ error: 'Tour not found' });
@@ -158,6 +181,7 @@ const bulkDeleteTours = async (req, res) => {
   try {
     const { ids } = req.body;
     if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: 'Không có bản ghi nào để xóa' });
+    await assertNoRefunds(pool, 'tour', ids.map(Number).filter(Number.isInteger), req.user.id);
     const result = await pool.query(
       'DELETE FROM tours WHERE id = ANY($1) AND user_id = $2 RETURNING id',
       [ids.map(Number).filter(Number.isFinite), req.user.id]
@@ -167,6 +191,7 @@ const bulkDeleteTours = async (req, res) => {
     }
     res.json({ deleted: result.rows.length });
   } catch (error) {
+    if (error instanceof v.ValidationError) return res.status(400).json({ error: error.message });
     logger.error('Bulk delete tours error:', error.message);
     res.status(500).json({ error: 'Failed to delete tours' });
   }

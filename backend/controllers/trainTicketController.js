@@ -6,6 +6,8 @@ const { todayLocal } = require('../utils/dates');
 const { assertOwns } = require('../utils/ownership');
 const { logAudit } = require('../utils/audit');
 const v = require('../utils/validate');
+const ci = require('../utils/costItems');
+const { assertNoRefunds } = require('../utils/services');
 
 const PAYMENT_TARGETS = ['self', 'agency'];
 
@@ -27,6 +29,7 @@ function parseTrainBody(body) {
     notes: v.str(body.notes, { label: 'Ghi chú' }),
     companyId: v.int(body.companyId, { min: 1, label: 'Công ty' }),
     paymentTarget: v.oneOf(body.paymentTarget, PAYMENT_TARGETS, { label: 'Tài khoản nhận', fallback: 'self' }),
+    ...ci.parseMoneyFields(body), // Dòng tiền v3: costPending, costItems, accountId
   };
 }
 
@@ -38,7 +41,8 @@ const getTrainTickets = async (req, res) => {
       : req.scope.userIds;
     const result = await pool.query(
       `SELECT t.*, u.full_name AS owner_name, u.username AS owner_username,
-              COALESCE((SELECT SUM(p.amount) FROM payments p WHERE p.train_ticket_id = t.id AND p.payment_target = 'agency'), 0) AS agency_paid
+              COALESCE((SELECT SUM(p.amount) FROM payments p WHERE p.train_ticket_id = t.id AND p.payment_target = 'agency'), 0) AS agency_paid,
+              ${ci.costItemsSelectSql('train', 't')}
        FROM train_tickets t JOIN users u ON u.id = t.user_id
        WHERE t.user_id = ANY($1)
        ORDER BY t.issue_date DESC, t.id DESC`,
@@ -61,6 +65,7 @@ const createTrainTicket = async (req, res) => {
       await client.query('ROLLBACK');
       return res.status(400).json({ error: 'Công ty không hợp lệ' });
     }
+    await ci.assertAccount(client, t.accountId, req.user.id);
     const customerId = await upsertCustomer(client, req.user.id, {
       name: t.customerName, phone: t.phoneNumber, type: 'individual',
     });
@@ -68,30 +73,34 @@ const createTrainTicket = async (req, res) => {
     const result = await client.query(
       `INSERT INTO train_tickets (
         user_id, customer_id, customer_name, phone_number, train_no, route, seat_class,
-        depart_date, issue_date, due_date, ticket_source, ticket_amount, cost_amount, paid, notes, company_id
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+        depart_date, issue_date, due_date, ticket_source, ticket_amount, cost_amount, paid, notes, company_id,
+        cost_pending
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
       RETURNING *`,
       [
         req.user.id, customerId, t.customerName, t.phoneNumber || '', t.trainNo || '', t.route || '', t.seatClass || '',
         t.departDate, issueDate, t.dueDate,
         t.ticketSource, t.ticketAmount, t.costAmount, t.paid, t.notes || '',
-        t.companyId,
+        t.companyId, t.costPending === true,
       ]
     );
-    // Khoản trả trước → tạo 1 payment để có audit trail + track payment_target.
+    // Khoản trả trước → tạo 1 payment để có audit trail + track payment_target + tài khoản nhận.
     if (t.paid > 0) {
       await client.query(
-        `INSERT INTO payments (user_id, train_ticket_id, amount, payment_date, method, payment_target)
-         VALUES ($1, $2, $3, $4, 'cash', $5)`,
-        [req.user.id, result.rows[0].id, t.paid, issueDate, t.paymentTarget]
+        `INSERT INTO payments (user_id, train_ticket_id, amount, payment_date, method, payment_target, account_id)
+         VALUES ($1, $2, $3, $4, 'cash', $5, $6)`,
+        [req.user.id, result.rows[0].id, t.paid, issueDate, t.paymentTarget, t.accountId]
       );
     }
+    const costSummary = await ci.applyCostItems(client, req.user.id, 'train', result.rows[0].id, t.costItems);
+    const row = await ci.loadServiceRow(client, 'train', result.rows[0].id);
     await client.query('COMMIT');
-    const row = result.rows[0];
     logAudit(req, { action: 'create', entity: 'train_ticket', entityId: row.id, summary: `Tạo vé tàu ${row.train_no || ''} cho ${row.customer_name}`, details: { ticketAmount: t.ticketAmount, paid: t.paid } });
+    ci.auditCostItems(req, 'train', row.id, costSummary);
     res.status(201).json(row);
   } catch (error) {
     await client.query('ROLLBACK');
+    if (error instanceof v.ValidationError) return res.status(400).json({ error: error.message });
     logger.error('Create train ticket error:', error.message);
     res.status(500).json({ error: 'Failed to create train ticket' });
   } finally {
@@ -118,24 +127,29 @@ const updateTrainTicket = async (req, res) => {
       `UPDATE train_tickets SET
         customer_id = $2, customer_name = $3, phone_number = $4, train_no = $5, route = $6, seat_class = $7,
         depart_date = $8, issue_date = $9, due_date = $10, ticket_source = $11,
-        ticket_amount = $12, cost_amount = $13, notes = $14, company_id = $15
+        ticket_amount = $12, cost_amount = COALESCE($13, cost_amount), notes = $14, company_id = $15,
+        cost_pending = COALESCE($17, cost_pending)
       WHERE id = $1 AND user_id = $16
-      RETURNING *`,
+      RETURNING id`,
       [
         id, customerId, t.customerName, t.phoneNumber, t.trainNo || '', t.route, t.seatClass || '',
         t.departDate, t.issueDate, t.dueDate, t.ticketSource,
-        t.ticketAmount, t.costAmount, t.notes, t.companyId, req.user.id,
+        t.ticketAmount, t.costAmountSent ? t.costAmount : null, t.notes, t.companyId, req.user.id, t.costPending,
       ]
     );
     if (result.rows.length === 0) {
       await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Train ticket not found' });
     }
+    const costSummary = await ci.applyCostItems(client, req.user.id, 'train', id, t.costItems);
+    const row = await ci.loadServiceRow(client, 'train', id);
     await client.query('COMMIT');
     logAudit(req, { action: 'update', entity: 'train_ticket', entityId: id, summary: `Sửa vé tàu ${t.trainNo || ''} của ${t.customerName}` });
-    res.json(result.rows[0]);
+    ci.auditCostItems(req, 'train', id, costSummary);
+    res.json(row);
   } catch (error) {
     await client.query('ROLLBACK');
+    if (error instanceof v.ValidationError) return res.status(400).json({ error: error.message });
     logger.error('Update train ticket error:', error.message);
     res.status(500).json({ error: 'Failed to update train ticket' });
   } finally {
@@ -145,6 +159,8 @@ const updateTrainTicket = async (req, res) => {
 
 const deleteTrainTicket = async (req, res) => {
   const id = v.idParam(req.params.id);
+  // Dòng tiền v3.1: dịch vụ đã huỷ có hoàn tiền khách → phải hoàn tác huỷ trước (không mất tiền ví/sổ TK).
+  await assertNoRefunds(pool, 'train', id, req.user.id);
   try {
     const result = await pool.query(
       'DELETE FROM train_tickets WHERE id = $1 AND user_id = $2 RETURNING id, customer_name, train_no',
@@ -166,6 +182,7 @@ const bulkDeleteTrainTickets = async (req, res) => {
     if (!Array.isArray(ids) || ids.length === 0) {
       return res.status(400).json({ error: 'Không có bản ghi nào để xóa' });
     }
+    await assertNoRefunds(pool, 'train', ids.map(Number).filter(Number.isInteger), req.user.id);
     const result = await pool.query(
       'DELETE FROM train_tickets WHERE id = ANY($1) AND user_id = $2 RETURNING id',
       [ids.map(Number).filter(Number.isFinite), req.user.id]
@@ -175,6 +192,7 @@ const bulkDeleteTrainTickets = async (req, res) => {
     }
     res.json({ deleted: result.rows.length });
   } catch (error) {
+    if (error instanceof v.ValidationError) return res.status(400).json({ error: error.message });
     logger.error('Bulk delete train tickets error:', error.message);
     res.status(500).json({ error: 'Failed to delete train tickets' });
   }

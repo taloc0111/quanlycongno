@@ -188,6 +188,7 @@ export default function DepositApp() {
   return (
     <div>
       <PageHeader
+        help="deposits"
         icon={Landmark}
         title="Nộp quỹ"
         description="Ghi lại các lần nộp tiền lên cấp trên. Cấp 1 xem được các lần nộp của đại lý cấp dưới."

@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
-import { ChevronLeft, ChevronRight, LogOut, Menu, Sparkles, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, LogOut, Menu, Monitor, Moon, Sparkles, Sun, X } from 'lucide-react';
 import { ZALO_URL, ZALO_ENABLED } from '../utils/contact';
 import { storage } from '../services/client';
+import { THEMES, useTheme } from '../theme';
 
 const ROLE_LABEL = { admin: 'Quản trị viên', agency: 'Đại lý cấp 1', user: 'Đại lý cấp 2' };
 
@@ -61,10 +62,30 @@ function Brand({ collapsed }) {
   );
 }
 
+/** Nút chuyển Sáng → Tối → Theo máy. */
+function ThemeSwitch({ collapsed }) {
+  const { pref, cycle } = useTheme();
+  const Icon = pref === 'dark' ? Moon : pref === 'light' ? Sun : Monitor;
+  const label = THEMES.find((t) => t.value === pref)?.label || '';
+  return (
+    <button
+      type="button"
+      onClick={cycle}
+      title={`Giao diện: ${label} (bấm để đổi)`}
+      aria-label={`Giao diện: ${label}. Bấm để đổi`}
+      className={`mb-2 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-[13px] text-slate-300 hover:bg-white/5 hover:text-white transition ${collapsed ? 'justify-center' : ''}`}
+    >
+      <Icon size={16} />
+      {!collapsed && <span>Giao diện: <b className="font-semibold text-white">{label}</b></span>}
+    </button>
+  );
+}
+
 function UserBox({ user, onLogout, collapsed }) {
   const initials = (user?.fullName || user?.username || '?').trim().charAt(0).toUpperCase();
   return (
     <div className="border-t border-white/10 p-3">
+      <ThemeSwitch collapsed={collapsed} />
       <div className={`flex items-center gap-3 ${collapsed ? 'justify-center' : ''}`}>
         <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-500/30 text-brand-100 font-bold">
           {initials}

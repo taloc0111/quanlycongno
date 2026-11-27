@@ -12,9 +12,12 @@ export default {
         mono: ['"JetBrains Mono"', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
       },
       colors: {
+        // Màu đổi theo theme lấy từ biến CSS (src/index.css): đổi sáng/tối chỉ bằng class .dark trên <html>.
+        // brand/success/warning/danger: 50/100 (nền nhạt) đổi theo theme; sắc 700+ giữ cố định (dùng cả cho nền nút),
+        // chữ 700/800 được làm sáng riêng trong chế độ tối ở src/index.css.
         brand: {
-          50: '#eef4ff',
-          100: '#dbe6ff',
+          50: 'rgb(var(--c-brand-50) / <alpha-value>)',
+          100: 'rgb(var(--c-brand-100) / <alpha-value>)',
           200: '#bfd2ff',
           300: '#93b3ff',
           400: '#6089ff',
@@ -26,20 +29,20 @@ export default {
           950: '#141c47',
         },
         ink: {
-          DEFAULT: '#0f172a',
-          soft: '#334155',
-          muted: '#64748b',
-          faint: '#94a3b8',
+          DEFAULT: 'rgb(var(--c-ink) / <alpha-value>)',
+          soft: 'rgb(var(--c-ink-soft) / <alpha-value>)',
+          muted: 'rgb(var(--c-ink-muted) / <alpha-value>)',
+          faint: 'rgb(var(--c-ink-faint) / <alpha-value>)',
         },
         surface: {
-          DEFAULT: '#ffffff',
-          muted: '#f8fafc',
-          subtle: '#f1f5f9',
-          border: '#e2e8f0',
+          DEFAULT: 'rgb(var(--c-surface) / <alpha-value>)',
+          muted: 'rgb(var(--c-surface-muted) / <alpha-value>)',
+          subtle: 'rgb(var(--c-surface-subtle) / <alpha-value>)',
+          border: 'rgb(var(--c-surface-border) / <alpha-value>)',
         },
-        success: { 50: '#ecfdf5', 100: '#d1fae5', 500: '#10b981', 600: '#059669', 700: '#047857' },
-        warning: { 50: '#fffbeb', 100: '#fef3c7', 500: '#f59e0b', 600: '#d97706', 700: '#b45309' },
-        danger: { 50: '#fef2f2', 100: '#fee2e2', 500: '#ef4444', 600: '#dc2626', 700: '#b91c1c' },
+        success: { 50: 'rgb(var(--c-success-50) / <alpha-value>)', 100: 'rgb(var(--c-success-100) / <alpha-value>)', 500: '#10b981', 600: '#059669', 700: '#047857' },
+        warning: { 50: 'rgb(var(--c-warning-50) / <alpha-value>)', 100: 'rgb(var(--c-warning-100) / <alpha-value>)', 500: '#f59e0b', 600: '#d97706', 700: '#b45309' },
+        danger: { 50: 'rgb(var(--c-danger-50) / <alpha-value>)', 100: 'rgb(var(--c-danger-100) / <alpha-value>)', 500: '#ef4444', 600: '#dc2626', 700: '#b91c1c' },
       },
       boxShadow: {
         card: '0 1px 2px 0 rgb(15 23 42 / 0.04), 0 1px 3px 1px rgb(15 23 42 / 0.05)',

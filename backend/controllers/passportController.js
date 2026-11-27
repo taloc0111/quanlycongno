@@ -5,6 +5,8 @@ const { parseAmount, parseDate, upsertCustomer } = require('../utils/importHelpe
 const { assertOwns } = require('../utils/ownership');
 const { logAudit } = require('../utils/audit');
 const v = require('../utils/validate');
+const ci = require('../utils/costItems');
+const { assertNoRefunds } = require('../utils/services');
 
 const PAYMENT_TARGETS = ['self', 'agency'];
 
@@ -23,6 +25,7 @@ function parsePassportBody(body) {
     notes: v.str(body.notes, { label: 'Ghi chú' }),
     companyId: v.int(body.companyId, { min: 1, label: 'Công ty' }),
     paymentTarget: v.oneOf(body.paymentTarget, PAYMENT_TARGETS, { label: 'Tài khoản nhận', fallback: 'self' }),
+    ...ci.parseMoneyFields(body), // Dòng tiền v3: costPending, costItems, accountId
   };
 }
 
@@ -35,7 +38,8 @@ const getPassports = async (req, res) => {
       : req.scope.userIds;
     const result = await pool.query(
       `SELECT p.*, u.full_name AS owner_name, u.username AS owner_username,
-              COALESCE((SELECT SUM(pay.amount) FROM payments pay WHERE pay.passport_id = p.id AND pay.payment_target = 'agency'), 0) AS agency_paid
+              COALESCE((SELECT SUM(pay.amount) FROM payments pay WHERE pay.passport_id = p.id AND pay.payment_target = 'agency'), 0) AS agency_paid,
+              ${ci.costItemsSelectSql('passport', 'p')}
        FROM passports p JOIN users u ON u.id = p.user_id
        WHERE p.user_id = ANY($1)
        ORDER BY p.service_date DESC, p.created_at DESC`,
@@ -59,35 +63,39 @@ const createPassport = async (req, res) => {
       await client.query('ROLLBACK');
       return res.status(400).json({ error: 'Công ty không hợp lệ' });
     }
+    await ci.assertAccount(client, p.accountId, req.user.id);
     const customerId = await upsertCustomer(client, req.user.id, {
       name: p.customerName, phone: p.phoneNumber, address: p.address, type: 'individual',
     });
     const result = await client.query(
       `INSERT INTO passports (
         user_id, customer_id, passport_number, customer_name, phone_number, address, service_date, due_date,
-        total_amount, cost_amount, paid_amount, notes, company_id
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        total_amount, cost_amount, paid_amount, notes, company_id, cost_pending
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
       RETURNING *`,
       [
         req.user.id, customerId,
         p.passportNumber || '', p.customerName, p.phoneNumber, p.address || '', p.serviceDate, p.dueDate,
-        p.totalAmount, p.costAmount, p.paidAmount, p.notes || '', p.companyId,
+        p.totalAmount, p.costAmount, p.paidAmount, p.notes || '', p.companyId, p.costPending === true,
       ]
     );
     // Khoản trả trước → 1 dòng payments (sổ thanh toán = nguồn sự thật của paid_amount).
     if (p.paidAmount > 0) {
       await client.query(
-        `INSERT INTO payments (user_id, passport_id, amount, payment_date, method, payment_target)
-         VALUES ($1, $2, $3, $4, 'cash', $5)`,
-        [req.user.id, result.rows[0].id, p.paidAmount, p.serviceDate, p.paymentTarget]
+        `INSERT INTO payments (user_id, passport_id, amount, payment_date, method, payment_target, account_id)
+         VALUES ($1, $2, $3, $4, 'cash', $5, $6)`,
+        [req.user.id, result.rows[0].id, p.paidAmount, p.serviceDate, p.paymentTarget, p.accountId]
       );
     }
+    const costSummary = await ci.applyCostItems(client, req.user.id, 'passport', result.rows[0].id, p.costItems);
+    const row = await ci.loadServiceRow(client, 'passport', result.rows[0].id);
     await client.query('COMMIT');
-    const row = result.rows[0];
     logAudit(req, { action: 'create', entity: 'passport', entityId: row.id, summary: `Tạo hộ chiếu cho ${row.customer_name}`, details: { totalAmount: p.totalAmount, paidAmount: p.paidAmount } });
+    ci.auditCostItems(req, 'passport', row.id, costSummary);
     res.status(201).json(row);
   } catch (error) {
     await client.query('ROLLBACK');
+    if (error instanceof v.ValidationError) return res.status(400).json({ error: error.message });
     logger.error('Create passport error:', error.message);
     res.status(500).json({ error: 'Failed to create passport' });
   } finally {
@@ -114,25 +122,29 @@ const updatePassport = async (req, res) => {
     const result = await client.query(
       `UPDATE passports SET
         customer_id = $2, passport_number = $3, customer_name = $4, phone_number = $5, address = $6,
-        service_date = $7, due_date = $8, total_amount = $9, cost_amount = $10,
-        notes = $11, company_id = $12
+        service_date = $7, due_date = $8, total_amount = $9, cost_amount = COALESCE($10, cost_amount),
+        notes = $11, company_id = $12, cost_pending = COALESCE($14, cost_pending)
       WHERE id = $1 AND user_id = $13
-      RETURNING *`,
+      RETURNING id`,
       [
         id, customerId,
         p.passportNumber || '', p.customerName, p.phoneNumber, p.address || '', p.serviceDate, p.dueDate,
-        p.totalAmount, p.costAmount, p.notes || '', p.companyId, req.user.id,
+        p.totalAmount, p.costAmountSent ? p.costAmount : null, p.notes || '', p.companyId, req.user.id, p.costPending,
       ]
     );
     if (result.rows.length === 0) {
       await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Passport not found' });
     }
+    const costSummary = await ci.applyCostItems(client, req.user.id, 'passport', id, p.costItems);
+    const row = await ci.loadServiceRow(client, 'passport', id);
     await client.query('COMMIT');
     logAudit(req, { action: 'update', entity: 'passport', entityId: id, summary: `Sửa hộ chiếu của ${p.customerName}` });
-    res.json(result.rows[0]);
+    ci.auditCostItems(req, 'passport', id, costSummary);
+    res.json(row);
   } catch (error) {
     await client.query('ROLLBACK');
+    if (error instanceof v.ValidationError) return res.status(400).json({ error: error.message });
     logger.error('Update passport error:', error.message);
     res.status(500).json({ error: 'Failed to update passport' });
   } finally {
@@ -143,6 +155,8 @@ const updatePassport = async (req, res) => {
 // Delete passport
 const deletePassport = async (req, res) => {
   const id = v.idParam(req.params.id);
+  // Dòng tiền v3.1: dịch vụ đã huỷ có hoàn tiền khách → phải hoàn tác huỷ trước (không mất tiền ví/sổ TK).
+  await assertNoRefunds(pool, 'passport', id, req.user.id);
   try {
     const result = await pool.query(
       'DELETE FROM passports WHERE id = $1 AND user_id = $2 RETURNING id, customer_name',
@@ -168,6 +182,7 @@ const bulkDeletePassports = async (req, res) => {
     if (!Array.isArray(ids) || ids.length === 0) {
       return res.status(400).json({ error: 'Không có bản ghi nào để xóa' });
     }
+    await assertNoRefunds(pool, 'passport', ids.map(Number).filter(Number.isInteger), req.user.id);
     const result = await pool.query(
       'DELETE FROM passports WHERE id = ANY($1) AND user_id = $2 RETURNING id',
       [ids.map(Number).filter(Number.isFinite), req.user.id]
@@ -177,6 +192,7 @@ const bulkDeletePassports = async (req, res) => {
     }
     res.json({ deleted: result.rows.length });
   } catch (error) {
+    if (error instanceof v.ValidationError) return res.status(400).json({ error: error.message });
     logger.error('Bulk delete passports error:', error.message);
     res.status(500).json({ error: 'Failed to delete passports' });
   }

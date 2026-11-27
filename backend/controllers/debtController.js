@@ -6,8 +6,11 @@ const { todayLocal } = require('../utils/dates');
 const { assertOwns } = require('../utils/ownership');
 const { logAudit } = require('../utils/audit');
 const v = require('../utils/validate');
+const ci = require('../utils/costItems');
+const { assertNoRefunds } = require('../utils/services');
 
 const PAYMENT_TARGETS = ['self', 'agency'];
+const TICKET_KINDS = ['normal', 'down']; // down = vé đạo / vé xuất giảm
 
 // Kiểm tra + chuẩn hoá body tạo/sửa vé. Ném ValidationError (→ 400) khi sai.
 function parseDebtBody(body) {
@@ -27,6 +30,9 @@ function parseDebtBody(body) {
     notes: v.str(body.notes, { label: 'Ghi chú' }),
     companyId: v.int(body.companyId, { min: 1, label: 'Công ty' }),
     paymentTarget: v.oneOf(body.paymentTarget, PAYMENT_TARGETS, { label: 'Tài khoản nhận', fallback: 'self' }),
+    // Dòng tiền v3: null = không gửi (sửa: giữ nguyên).
+    ticketKind: v.oneOf(body.ticketKind, TICKET_KINDS, { label: 'Loại vé' }),
+    ...ci.parseMoneyFields(body),
   };
 }
 
@@ -40,7 +46,8 @@ const getDebts = async (req, res) => {
       : req.scope.userIds;
     const result = await pool.query(
       `SELECT d.*, u.full_name AS owner_name, u.username AS owner_username,
-              COALESCE((SELECT SUM(p.amount) FROM payments p WHERE p.debt_id = d.id AND p.payment_target = 'agency'), 0) AS agency_paid
+              COALESCE((SELECT SUM(p.amount) FROM payments p WHERE p.debt_id = d.id AND p.payment_target = 'agency'), 0) AS agency_paid,
+              ${ci.costItemsSelectSql('debt', 'd')}
        FROM debts d JOIN users u ON u.id = d.user_id
        WHERE d.user_id = ANY($1)
        ORDER BY d.issue_date DESC`,
@@ -64,6 +71,7 @@ const createDebt = async (req, res) => {
       await client.query('ROLLBACK');
       return res.status(400).json({ error: 'Công ty không hợp lệ' });
     }
+    await ci.assertAccount(client, d.accountId, req.user.id);
     const customerId = await upsertCustomer(client, req.user.id, {
       name: d.customerName, phone: d.phoneNumber, type: 'individual',
     });
@@ -71,30 +79,34 @@ const createDebt = async (req, res) => {
     const result = await client.query(
       `INSERT INTO debts (
         user_id, customer_id, customer_name, phone_number, ticket_code, airline, route,
-        flight_date, issue_date, due_date, ticket_source, ticket_amount, cost_amount, paid, notes, company_id
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+        flight_date, issue_date, due_date, ticket_source, ticket_amount, cost_amount, paid, notes, company_id,
+        ticket_kind, cost_pending
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
       RETURNING *`,
       [
         req.user.id, customerId, d.customerName, d.phoneNumber || '', d.ticketCode || '', d.airline || '', d.route || '',
         d.flightDate, issueDate, d.dueDate,
         d.ticketSource, d.ticketAmount, d.costAmount, d.paid, d.notes || '',
-        d.companyId,
+        d.companyId, d.ticketKind || 'normal', d.costPending === true,
       ]
     );
-    // Tạo payment record nếu có số tiền đã trả (để track payment_target).
+    // Tạo payment record nếu có số tiền đã trả (để track payment_target + tài khoản nhận).
     if (d.paid > 0) {
       await client.query(
-        `INSERT INTO payments (user_id, debt_id, amount, payment_date, method, payment_target)
-         VALUES ($1, $2, $3, $4, 'cash', $5)`,
-        [req.user.id, result.rows[0].id, d.paid, issueDate, d.paymentTarget]
+        `INSERT INTO payments (user_id, debt_id, amount, payment_date, method, payment_target, account_id)
+         VALUES ($1, $2, $3, $4, 'cash', $5, $6)`,
+        [req.user.id, result.rows[0].id, d.paid, issueDate, d.paymentTarget, d.accountId]
       );
     }
+    const costSummary = await ci.applyCostItems(client, req.user.id, 'debt', result.rows[0].id, d.costItems);
+    const row = await ci.loadServiceRow(client, 'debt', result.rows[0].id);
     await client.query('COMMIT');
-    const row = result.rows[0];
     logAudit(req, { action: 'create', entity: 'debt', entityId: row.id, summary: `Tạo vé ${row.ticket_code || ''} cho ${row.customer_name}`, details: { ticketAmount: d.ticketAmount, paid: d.paid } });
+    ci.auditCostItems(req, 'debt', row.id, costSummary);
     res.status(201).json(row);
   } catch (error) {
     await client.query('ROLLBACK');
+    if (error instanceof v.ValidationError) return res.status(400).json({ error: error.message });
     logger.error('Create debt error:', error.message);
     res.status(500).json({ error: 'Failed to create debt' });
   } finally {
@@ -120,27 +132,36 @@ const updateDebt = async (req, res) => {
     // KHÔNG cập nhật cột `paid` và KHÔNG đụng bảng payments ở đây:
     // `paid` là tổng suy ra từ payments (xem recomputePaid). Tiền trả thêm
     // được ghi nhận qua màn hình Thanh toán để giữ nguyên lịch sử/audit trail.
+    // cost_amount: không gửi khoá costAmount → giữ nguyên (không vô tình về 0);
+    // ticket_kind / cost_pending: không gửi → giữ nguyên. Có dòng giá vốn thì
+    // applyCostItems ghi đè cost_amount = tổng các dòng.
     const result = await client.query(
       `UPDATE debts SET
         customer_id = $2, customer_name = $3, phone_number = $4, ticket_code = $5,
         airline = $6, route = $7, flight_date = $8, issue_date = $9, due_date = $10,
-        ticket_source = $11, ticket_amount = $12, cost_amount = $13, notes = $14, company_id = $15
+        ticket_source = $11, ticket_amount = $12, cost_amount = COALESCE($13, cost_amount), notes = $14, company_id = $15,
+        ticket_kind = COALESCE($17, ticket_kind), cost_pending = COALESCE($18, cost_pending)
       WHERE id = $1 AND user_id = $16
-      RETURNING *`,
+      RETURNING id`,
       [
         id, customerId, d.customerName, d.phoneNumber, d.ticketCode, d.airline || '', d.route, d.flightDate,
-        d.issueDate, d.dueDate, d.ticketSource, d.ticketAmount, d.costAmount, d.notes, d.companyId, req.user.id,
+        d.issueDate, d.dueDate, d.ticketSource, d.ticketAmount, d.costAmountSent ? d.costAmount : null, d.notes, d.companyId, req.user.id,
+        d.ticketKind, d.costPending,
       ]
     );
     if (result.rows.length === 0) {
       await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Debt not found' });
     }
+    const costSummary = await ci.applyCostItems(client, req.user.id, 'debt', id, d.costItems);
+    const row = await ci.loadServiceRow(client, 'debt', id);
     await client.query('COMMIT');
     logAudit(req, { action: 'update', entity: 'debt', entityId: id, summary: `Sửa vé ${d.ticketCode || ''} của ${d.customerName}` });
-    res.json(result.rows[0]);
+    ci.auditCostItems(req, 'debt', id, costSummary);
+    res.json(row);
   } catch (error) {
     await client.query('ROLLBACK');
+    if (error instanceof v.ValidationError) return res.status(400).json({ error: error.message });
     logger.error('Update debt error:', error.message);
     res.status(500).json({ error: 'Failed to update debt' });
   } finally {
@@ -151,6 +172,8 @@ const updateDebt = async (req, res) => {
 // Delete debt
 const deleteDebt = async (req, res) => {
   const id = v.idParam(req.params.id);
+  // Dòng tiền v3.1: dịch vụ đã huỷ có hoàn tiền khách → phải hoàn tác huỷ trước (không mất tiền ví/sổ TK).
+  await assertNoRefunds(pool, 'debt', id, req.user.id);
   try {
     const result = await pool.query(
       'DELETE FROM debts WHERE id = $1 AND user_id = $2 RETURNING id, customer_name, ticket_code',
@@ -194,6 +217,7 @@ const bulkDeleteDebts = async (req, res) => {
     if (!Array.isArray(ids) || ids.length === 0) {
       return res.status(400).json({ error: 'Không có bản ghi nào để xóa' });
     }
+    await assertNoRefunds(pool, 'debt', ids.map(Number).filter(Number.isInteger), req.user.id);
     const result = await pool.query(
       'DELETE FROM debts WHERE id = ANY($1) AND user_id = $2 RETURNING id',
       [ids.map(Number).filter(Number.isFinite), req.user.id]
@@ -203,6 +227,7 @@ const bulkDeleteDebts = async (req, res) => {
     }
     res.json({ deleted: result.rows.length });
   } catch (error) {
+    if (error instanceof v.ValidationError) return res.status(400).json({ error: error.message });
     logger.error('Bulk delete debts error:', error.message);
     res.status(500).json({ error: 'Failed to delete debts' });
   }

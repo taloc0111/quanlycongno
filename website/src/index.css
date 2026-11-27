@@ -4,10 +4,50 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ==========================================================================
+   THEME — biến màu dạng "R G B" (dùng trong tailwind.config.js: rgb(var(--c-x) / alpha)).
+   Chế độ tối = class .dark trên <html> (đặt bởi src/theme.js, kể cả trước khi React chạy).
+   ========================================================================== */
 @layer base {
   :root {
     color-scheme: light;
+    --c-ink: 15 23 42;
+    --c-ink-soft: 51 65 85;
+    --c-ink-muted: 100 116 139;
+    --c-ink-faint: 148 163 184;
+    --c-surface: 255 255 255;
+    --c-surface-muted: 248 250 252;
+    --c-surface-subtle: 241 245 249;
+    --c-surface-border: 226 232 240;
+    --c-brand-50: 238 244 255;
+    --c-brand-100: 219 230 255;
+    --c-success-50: 236 253 245;
+    --c-success-100: 209 250 229;
+    --c-warning-50: 255 251 235;
+    --c-warning-100: 254 243 199;
+    --c-danger-50: 254 242 242;
+    --c-danger-100: 254 226 226;
   }
+  .dark {
+    color-scheme: dark;
+    --c-ink: 226 232 240;
+    --c-ink-soft: 203 213 225;
+    --c-ink-muted: 148 163 184;
+    --c-ink-faint: 107 121 143;
+    --c-surface: 23 31 47;
+    --c-surface-muted: 13 18 30;
+    --c-surface-subtle: 32 43 62;
+    --c-surface-border: 46 59 80;
+    --c-brand-50: 28 38 78;
+    --c-brand-100: 37 52 107;
+    --c-success-50: 14 46 38;
+    --c-success-100: 17 66 52;
+    --c-warning-50: 54 39 12;
+    --c-warning-100: 77 55 14;
+    --c-danger-50: 58 22 26;
+    --c-danger-100: 84 28 33;
+  }
+
   html {
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
@@ -15,18 +55,22 @@
   }
   body {
     @apply bg-surface-muted text-ink font-sans text-[14px] leading-relaxed;
+    transition: background-color .2s ease, color .2s ease;
   }
   /* Số tiền căn phải dùng chữ số đều nhau cho thẳng cột. */
   .tabular {
     font-variant-numeric: tabular-nums;
   }
   ::selection {
-    @apply bg-brand-100 text-brand-900;
+    @apply bg-brand-100 text-ink;
   }
   /* Thanh cuộn mảnh, nhẹ nhàng. */
   * {
     scrollbar-width: thin;
     scrollbar-color: #cbd5e1 transparent;
+  }
+  .dark * {
+    scrollbar-color: #3b4a63 transparent;
   }
   *::-webkit-scrollbar {
     width: 8px;
@@ -34,6 +78,9 @@
   }
   *::-webkit-scrollbar-thumb {
     @apply bg-slate-300 rounded-full;
+  }
+  .dark *::-webkit-scrollbar-thumb {
+    background-color: #3b4a63;
   }
   *::-webkit-scrollbar-track {
     background: transparent;
@@ -43,7 +90,7 @@
 @layer components {
   /* Ô nhập chuẩn — dùng cho input/select/textarea để đồng bộ toàn app. */
   .input {
-    @apply w-full rounded-lg border border-surface-border bg-white px-3 py-2 text-sm text-ink placeholder:text-ink-faint
+    @apply w-full rounded-lg border border-surface-border bg-surface px-3 py-2 text-sm text-ink placeholder:text-ink-faint
       shadow-sm transition focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20
       disabled:cursor-not-allowed disabled:bg-surface-subtle disabled:text-ink-muted;
   }
@@ -55,7 +102,7 @@
   }
   /* Thẻ (card) nền trắng viền mảnh. */
   .card {
-    @apply rounded-2xl border border-surface-border bg-white shadow-card;
+    @apply rounded-2xl border border-surface-border bg-surface shadow-card;
   }
   /* Link dạng chữ. */
   .link {
@@ -63,17 +110,91 @@
   }
 }
 
+/* ==========================================================================
+   CHẾ ĐỘ TỐI — phủ các lớp màu viết cứng (bg-white, slate-*, chữ sắc 700…) để mọi trang,
+   kể cả trang cũ, tự đổi màu mà không phải sửa từng file.
+   ========================================================================== */
+.dark .bg-white { background-color: rgb(var(--c-surface)); }
+.dark .bg-slate-50, .dark .bg-gray-50 { background-color: rgb(var(--c-surface-muted)); }
+.dark .bg-slate-100, .dark .bg-gray-100 { background-color: rgb(var(--c-surface-subtle)); }
+.dark .bg-slate-200, .dark .bg-gray-200, .dark .bg-slate-200\/70 { background-color: rgb(var(--c-surface-border)); }
+.dark .border-slate-200, .dark .border-slate-300, .dark .border-gray-200, .dark .border-gray-300 { border-color: rgb(var(--c-surface-border)); }
+.dark .text-slate-900, .dark .text-gray-900, .dark .text-slate-800 { color: rgb(var(--c-ink)); }
+.dark .text-slate-700, .dark .text-gray-700, .dark .text-slate-600, .dark .text-gray-600 { color: rgb(var(--c-ink-soft)); }
+.dark .text-slate-500, .dark .text-gray-500 { color: rgb(var(--c-ink-muted)); }
+.dark .divide-slate-200 > * + *, .dark .divide-gray-200 > * + * { border-color: rgb(var(--c-surface-border)); }
+
+/* Chữ đậm trên nền nhạt (sắc 700/800) → sáng hơn để đọc được trên nền tối */
+.dark .text-brand-700, .dark .text-brand-800 { color: #a5c0ff; }
+.dark .text-success-700 { color: #6ee7b7; }
+.dark .text-warning-700 { color: #fcd34d; }
+.dark .text-danger-700 { color: #fca5a5; }
+.dark .text-success-600 { color: #34d399; }
+.dark .text-danger-600 { color: #f87171; }
+.dark .text-warning-600 { color: #fbbf24; }
+.dark .text-brand-600 { color: #8eaaff; }
+.dark .text-red-600, .dark .text-red-700 { color: #f87171; }
+.dark .text-purple-600, .dark .text-purple-700 { color: #c4b5fd; }
+.dark .text-blue-600 { color: #93c5fd; }
+.dark .bg-purple-50 { background-color: rgb(46 32 82); }
+.dark .bg-red-100 { background-color: rgb(var(--c-danger-100)); }
+.dark .bg-blue-100 { background-color: rgb(var(--c-brand-100)); }
+/* Nút nền đậm giữ chữ trắng dù có lớp text-* bị đổi ở trên */
+.dark .bg-brand-600, .dark .bg-danger-600, .dark .bg-success-600, .dark .bg-warning-600 { color: #fff; }
+
+/* Thẻ ghi chú màu pastel → bản tối dịu mắt */
+.dark .bg-amber-50 { background-color: rgb(58 45 14); }
+.dark .bg-emerald-50 { background-color: rgb(14 52 41); }
+.dark .bg-sky-50 { background-color: rgb(14 44 66); }
+.dark .bg-violet-50 { background-color: rgb(43 31 78); }
+.dark .bg-pink-50 { background-color: rgb(70 24 48); }
+.dark .border-amber-200, .dark .border-emerald-200, .dark .border-sky-200, .dark .border-violet-200, .dark .border-pink-200 { border-color: rgb(255 255 255 / 0.08); }
+
+/* Bóng đổ trên nền tối: đậm hơn để thẻ vẫn tách nền */
+.dark .shadow-card { box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.35), 0 0 0 1px rgb(255 255 255 / 0.02); }
+.dark .shadow-pop { box-shadow: 0 16px 40px -12px rgb(0 0 0 / 0.6); }
+
+/* Recharts: màu trục/lưới/tooltip viết cứng trong SVG → phủ bằng CSS */
+.dark .recharts-cartesian-grid line { stroke: rgb(var(--c-surface-border)); }
+.dark .recharts-cartesian-axis-line { stroke: rgb(var(--c-surface-border)); }
+.dark .recharts-cartesian-axis-tick-value, .dark .recharts-text, .dark .recharts-legend-item-text { fill: rgb(var(--c-ink-muted)); }
+.dark .recharts-tooltip-cursor { fill: rgb(var(--c-surface-subtle)); }
+.dark .recharts-dot { fill: rgb(var(--c-surface)); }
+.dark .recharts-pie-sector path { stroke: rgb(var(--c-surface)); }
+
 /* react-datepicker: khớp với .input */
 .react-datepicker-wrapper { width: 100%; }
 .react-datepicker__close-icon::after { background-color: #94a3b8 !important; }
-.react-datepicker { font-family: inherit !important; border-color: #e2e8f0 !important; border-radius: 12px !important; box-shadow: 0 10px 30px -10px rgb(15 23 42 / 0.25); }
-.react-datepicker__header { background: #f8fafc !important; border-bottom-color: #e2e8f0 !important; border-radius: 12px 12px 0 0 !important; }
+.react-datepicker { font-family: inherit !important; border-color: rgb(var(--c-surface-border)) !important; border-radius: 12px !important; box-shadow: 0 10px 30px -10px rgb(15 23 42 / 0.25); background: rgb(var(--c-surface)) !important; color: rgb(var(--c-ink)) !important; }
+.react-datepicker__header { background: rgb(var(--c-surface-muted)) !important; border-bottom-color: rgb(var(--c-surface-border)) !important; border-radius: 12px 12px 0 0 !important; }
+.react-datepicker__current-month, .react-datepicker__day-name, .react-datepicker__day, .react-datepicker-year-header { color: rgb(var(--c-ink)) !important; }
+.react-datepicker__day--outside-month, .react-datepicker__day--disabled { color: rgb(var(--c-ink-faint)) !important; }
+.react-datepicker__day:hover { border-radius: 8px !important; background: rgb(var(--c-surface-subtle)) !important; }
 .react-datepicker__day--selected, .react-datepicker__day--keyboard-selected { background: #3b63f6 !important; color: white !important; border-radius: 8px !important; }
-.react-datepicker__day:hover { border-radius: 8px !important; }
+.react-datepicker__year-dropdown, .react-datepicker__month-dropdown { background: rgb(var(--c-surface)) !important; border-color: rgb(var(--c-surface-border)) !important; }
+.react-datepicker__triangle { display: none; }
+
+/* Vùng in (bảng kê, hoá đơn, mã QR) luôn là giấy trắng chữ đen, kể cả đang ở chế độ tối */
+.print-area {
+  --c-ink: 15 23 42; --c-ink-soft: 51 65 85; --c-ink-muted: 100 116 139; --c-ink-faint: 148 163 184;
+  --c-surface: 255 255 255; --c-surface-muted: 248 250 252; --c-surface-subtle: 241 245 249; --c-surface-border: 226 232 240;
+  color-scheme: light;
+}
+.dark .print-area, .dark .print-area .bg-white { background-color: #fff; color: #0f172a; }
+.dark .print-area .text-slate-500 { color: #64748b; }
+.dark .print-area .text-slate-600 { color: #475569; }
+.dark .print-area .border-slate-300 { border-color: #cbd5e1; }
+.dark .print-area .bg-slate-100 { background-color: #f1f5f9; }
+.dark .print-area .text-red-700 { color: #b91c1c; }
 
 /* In bảng kê công nợ: chỉ in vùng .print-area */
 @media print {
+  :root, .dark { color-scheme: light; }
   body { background: white !important; }
   .no-print { display: none !important; }
   .print-area { position: absolute; inset: 0; padding: 0; }
 }
+
+/* Sidebar ở chế độ tối: đậm hơn nền trang một chút + viền tách */
+.dark aside.bg-slate-900, .dark .bg-slate-900 { background-color: #0a0f1b; }
+.dark aside.bg-slate-900 { border-right: 1px solid rgb(var(--c-surface-border)); }

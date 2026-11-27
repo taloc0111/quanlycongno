@@ -1,6 +1,8 @@
 import { StrictMode, Component } from 'react';
 import { createRoot } from 'react-dom/client';
 import './index.css';
+import { applyTheme } from './theme';
+applyTheme(); // đồng bộ class .dark với lựa chọn đã lưu (index.html đã đặt sẵn trước khi tải)
 import { AuthProvider } from './auth/AuthContext.jsx';
 import { NavigationProvider } from './hooks/useNavigation.jsx';
 import { FeedbackProvider } from './ui/FeedbackContext.jsx';

@@ -238,6 +238,7 @@ export default function AgencyApp() {
   return (
     <div>
       <PageHeader
+        help="agency"
         icon={Network}
         title="Đại lý"
         description={isAdmin ? 'Quản lý mọi tài khoản: vai trò, dùng thử, mật khẩu và tính năng Canh vé.' : 'Các đại lý cấp dưới bạn quản lý. Bạn xem được công nợ của họ (chỉ xem).'}

@@ -67,7 +67,8 @@ test('stats: counts/byType/monthly 12 tháng/todo', async () => {
   assert.equal(r.status, 200);
   const s = r.body;
   // counts: 4 debts + 1 passport + 1 train (import) + 2 tours (import + quá hạn)
-  assert.deepEqual(s.counts, { debts: 4, passports: 1, trainTickets: 1, tours: 2, customers: s.counts.customers });
+  // v3.1: counts.cancelled (số dịch vụ đã huỷ)
+  assert.deepEqual(s.counts, { debts: 4, passports: 1, trainTickets: 1, tours: 2, customers: s.counts.customers, cancelled: 0 });
   assert.ok(s.counts.customers >= 7);
   assert.equal(s.byType.debts.count, 4);
   assert.equal(s.byType.debts.amount, 1000000 + 500000 + 700000 + 100000);

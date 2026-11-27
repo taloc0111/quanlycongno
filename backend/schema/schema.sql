@@ -402,6 +402,174 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 );
 
 -- ============================================================================
+-- DÒNG TIỀN v3 (docs/MONEY-FLOWS.md) — tài khoản, nhà cung cấp, giá vốn nhiều
+-- khoản, ví trả trước. CHỈ THÊM bảng/cột (IF NOT EXISTS), không đụng dữ liệu cũ:
+-- cost_amount giữ nguyên với các dòng chưa có cost_items.
+-- ============================================================================
+
+-- Tài khoản tiền (ngân hàng / ví / TK người khác giữ hộ)
+CREATE TABLE IF NOT EXISTS money_accounts (
+  id              SERIAL PRIMARY KEY,
+  user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name            VARCHAR(100) NOT NULL,                 -- "TCB chính", "VIB", "TK chị Lan"
+  bank            VARCHAR(50),                           -- TCB / VIB / ACB / MoMo / Tiền mặt ...
+  account_number  VARCHAR(50),
+  holder_name     VARCHAR(255),                          -- chủ tài khoản
+  is_own          BOOLEAN NOT NULL DEFAULT TRUE,         -- FALSE = TK người khác giữ hộ (tiền cần thu về)
+  opening_balance DECIMAL(15,2) NOT NULL DEFAULT 0,
+  archived        BOOLEAN NOT NULL DEFAULT FALSE,
+  notes           TEXT,
+  created_at      TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+  updated_at      TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Nhà cung cấp: F1, người làm down, khác
+CREATE TABLE IF NOT EXISTS suppliers (
+  id         SERIAL PRIMARY KEY,
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name       VARCHAR(255) NOT NULL,
+  kind       VARCHAR(20) NOT NULL DEFAULT 'other',      -- f1 | down | other
+  phone      VARCHAR(20),
+  notes      TEXT,
+  created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Dòng giá vốn của 1 dịch vụ (gắn đúng 1 trong 4 bảng, giống payments)
+CREATE TABLE IF NOT EXISTS cost_items (
+  id              SERIAL PRIMARY KEY,
+  user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  debt_id         INTEGER REFERENCES debts(id) ON DELETE CASCADE,
+  passport_id     INTEGER REFERENCES passports(id) ON DELETE CASCADE,
+  train_ticket_id INTEGER REFERENCES train_tickets(id) ON DELETE CASCADE,
+  tour_id         INTEGER REFERENCES tours(id) ON DELETE CASCADE,
+  supplier_id     INTEGER REFERENCES suppliers(id) ON DELETE SET NULL,
+  label           VARCHAR(100) NOT NULL,                 -- "Giá vé F1", "Phí F1", "Phí down", "Khác"
+  amount          DECIMAL(15,2) NOT NULL DEFAULT 0,
+  paid_amount     DECIMAL(15,2) NOT NULL DEFAULT 0,      -- = SUM(supplier_payments gắn với dòng này), server tính
+  due_date        DATE,                                  -- hạn trả NCC (tuỳ chọn)
+  position        INTEGER NOT NULL DEFAULT 0,
+  created_at      TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT chk_cost_item_target CHECK (
+    (debt_id IS NOT NULL)::int + (passport_id IS NOT NULL)::int + (train_ticket_id IS NOT NULL)::int + (tour_id IS NOT NULL)::int = 1
+  )
+);
+
+-- Tiền trả ra cho nhà cung cấp (có thể gắn 1 dòng giá vốn, hoặc trả gộp)
+CREATE TABLE IF NOT EXISTS supplier_payments (
+  id           SERIAL PRIMARY KEY,
+  user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  supplier_id  INTEGER NOT NULL REFERENCES suppliers(id) ON DELETE CASCADE,
+  cost_item_id INTEGER REFERENCES cost_items(id) ON DELETE SET NULL,   -- xoá dòng giá vốn: tiền đã trả vẫn còn (thành trả gộp)
+  account_id   INTEGER REFERENCES money_accounts(id) ON DELETE SET NULL,
+  amount       DECIMAL(15,2) NOT NULL CHECK (amount > 0),
+  pay_date     DATE NOT NULL DEFAULT CURRENT_DATE,
+  reconciled   BOOLEAN NOT NULL DEFAULT FALSE,
+  notes        TEXT,
+  created_at   TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Ví trả trước theo khách (đại lý cấp dưới cũng là 1 khách)
+CREATE TABLE IF NOT EXISTS wallet_entries (
+  id          SERIAL PRIMARY KEY,
+  user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+  kind        VARCHAR(20) NOT NULL,                      -- topup (+) | charge (−) | refund (−) | adjust (±)
+  amount      DECIMAL(15,2) NOT NULL,                    -- có dấu: nạp dương, trừ âm
+  entry_date  DATE NOT NULL DEFAULT CURRENT_DATE,
+  account_id  INTEGER REFERENCES money_accounts(id) ON DELETE SET NULL,  -- topup/refund: tiền vào/ra TK nào
+  payment_id  INTEGER REFERENCES payments(id) ON DELETE CASCADE,         -- charge: dòng payments đã tạo
+  reconciled  BOOLEAN NOT NULL DEFAULT FALSE,
+  notes       TEXT,
+  created_at  TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+ALTER TABLE payments      ADD COLUMN IF NOT EXISTS account_id   INTEGER REFERENCES money_accounts(id) ON DELETE SET NULL;
+ALTER TABLE payments      ADD COLUMN IF NOT EXISTS reconciled   BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE debts         ADD COLUMN IF NOT EXISTS ticket_kind  VARCHAR(10) NOT NULL DEFAULT 'normal'; -- normal | down
+ALTER TABLE debts         ADD COLUMN IF NOT EXISTS cost_pending BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE passports     ADD COLUMN IF NOT EXISTS cost_pending BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE train_tickets ADD COLUMN IF NOT EXISTS cost_pending BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE tours         ADD COLUMN IF NOT EXISTS cost_pending BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- ============================================================================
+-- DÒNG TIỀN v3.1 (docs/MONEY-FLOWS.md) — chuyển TK, thu chi khác, phiếu thu nhiều vé,
+-- huỷ/hoàn/đổi vé, trả thừa vào ví. CHỈ THÊM bảng/cột; riêng supplier_payments (bảng v3,
+-- chưa lên production) được nới ràng buộc amount > 0 thành amount <> 0 (âm = NCC trả lại).
+-- ============================================================================
+
+-- Chuyển tiền giữa 2 tài khoản (vd TK chị Lan trả về TCB, rút tiền mặt). fee = phí chuyển, trừ ở TK nguồn.
+CREATE TABLE IF NOT EXISTS account_transfers (
+  id              SERIAL PRIMARY KEY,
+  user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  from_account_id INTEGER NOT NULL REFERENCES money_accounts(id) ON DELETE CASCADE,
+  to_account_id   INTEGER NOT NULL REFERENCES money_accounts(id) ON DELETE CASCADE,
+  amount          DECIMAL(15,2) NOT NULL CHECK (amount > 0),
+  fee             DECIMAL(15,2) NOT NULL DEFAULT 0 CHECK (fee >= 0),
+  transfer_date   DATE NOT NULL DEFAULT CURRENT_DATE,
+  reconciled_from BOOLEAN NOT NULL DEFAULT FALSE,
+  reconciled_to   BOOLEAN NOT NULL DEFAULT FALSE,
+  notes           TEXT,
+  created_at      TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT chk_transfer_accounts CHECK (from_account_id <> to_account_id)
+);
+
+-- Thu chi khác ngoài vé (phí ngân hàng, văn phòng, lương, rút tiền riêng, góp vốn...)
+CREATE TABLE IF NOT EXISTS account_entries (
+  id         SERIAL PRIMARY KEY,
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  account_id INTEGER NOT NULL REFERENCES money_accounts(id) ON DELETE CASCADE,
+  direction  VARCHAR(3) NOT NULL CHECK (direction IN ('in','out')),
+  amount     DECIMAL(15,2) NOT NULL CHECK (amount > 0),
+  entry_date DATE NOT NULL DEFAULT CURRENT_DATE,
+  category   VARCHAR(50) NOT NULL DEFAULT 'Khác',
+  reconciled BOOLEAN NOT NULL DEFAULT FALSE,
+  notes      TEXT,
+  created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Phiếu thu: 1 lần khách chuyển khoản, chia cho nhiều dịch vụ (+ phần thừa vào ví)
+CREATE TABLE IF NOT EXISTS receipts (
+  id             SERIAL PRIMARY KEY,
+  user_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  customer_id    INTEGER REFERENCES customers(id) ON DELETE SET NULL,
+  account_id     INTEGER REFERENCES money_accounts(id) ON DELETE SET NULL,
+  amount         DECIMAL(15,2) NOT NULL CHECK (amount > 0),
+  receipt_date   DATE NOT NULL DEFAULT CURRENT_DATE,
+  method         VARCHAR(30),
+  payment_target VARCHAR(20) NOT NULL DEFAULT 'self',
+  reconciled     BOOLEAN NOT NULL DEFAULT FALSE,
+  notes          TEXT,
+  created_at     TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+ALTER TABLE payments       ADD COLUMN IF NOT EXISTS receipt_id INTEGER REFERENCES receipts(id) ON DELETE CASCADE;
+ALTER TABLE payments       ADD COLUMN IF NOT EXISTS kind VARCHAR(20) NOT NULL DEFAULT 'payment'; -- payment | refund (hoàn tiền khách, amount ÂM)
+ALTER TABLE wallet_entries ADD COLUMN IF NOT EXISTS receipt_id INTEGER REFERENCES receipts(id) ON DELETE CASCADE;
+-- wallet_entries.kind thêm giá trị 'credit' (+): hoàn vé vào ví (gắn payment_id của dòng hoàn); không có tiền thật đi qua TK.
+ALTER TABLE cost_items     ADD COLUMN IF NOT EXISTS kind VARCHAR(20) NOT NULL DEFAULT 'cost'; -- cost | refund (NCC hoàn, amount ÂM) | change (phí đổi)
+-- supplier_payments: cho phép amount ÂM = NCC trả lại tiền cho mình (tiền VÀO tài khoản).
+ALTER TABLE supplier_payments DROP CONSTRAINT IF EXISTS supplier_payments_amount_check;
+ALTER TABLE supplier_payments DROP CONSTRAINT IF EXISTS chk_supplier_payment_amount;
+ALTER TABLE supplier_payments ADD CONSTRAINT chk_supplier_payment_amount CHECK (amount <> 0);
+-- Trạng thái huỷ trên 3 bảng chưa có trạng thái (tours dùng tours.status = 'cancelled' sẵn có)
+ALTER TABLE debts         ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'active'; -- active | cancelled
+ALTER TABLE passports     ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'active';
+ALTER TABLE train_tickets ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'active';
+-- Giá bán gốc trước khi huỷ + ngày/ghi chú huỷ (cả 4 bảng)
+ALTER TABLE debts         ADD COLUMN IF NOT EXISTS original_amount DECIMAL(15,2);
+ALTER TABLE debts         ADD COLUMN IF NOT EXISTS cancelled_at DATE;
+ALTER TABLE debts         ADD COLUMN IF NOT EXISTS cancel_note TEXT;
+ALTER TABLE passports     ADD COLUMN IF NOT EXISTS original_amount DECIMAL(15,2);
+ALTER TABLE passports     ADD COLUMN IF NOT EXISTS cancelled_at DATE;
+ALTER TABLE passports     ADD COLUMN IF NOT EXISTS cancel_note TEXT;
+ALTER TABLE train_tickets ADD COLUMN IF NOT EXISTS original_amount DECIMAL(15,2);
+ALTER TABLE train_tickets ADD COLUMN IF NOT EXISTS cancelled_at DATE;
+ALTER TABLE train_tickets ADD COLUMN IF NOT EXISTS cancel_note TEXT;
+ALTER TABLE tours         ADD COLUMN IF NOT EXISTS original_amount DECIMAL(15,2);
+ALTER TABLE tours         ADD COLUMN IF NOT EXISTS cancelled_at DATE;
+ALTER TABLE tours         ADD COLUMN IF NOT EXISTS cancel_note TEXT;
+
+-- ============================================================================
 -- INDEXES
 -- ============================================================================
 CREATE INDEX IF NOT EXISTS idx_users_parent_id       ON users(parent_id);
@@ -447,6 +615,35 @@ CREATE INDEX IF NOT EXISTS idx_train_tickets_due_date ON train_tickets(due_date)
 CREATE INDEX IF NOT EXISTS idx_tours_due_date         ON tours(due_date);
 CREATE INDEX IF NOT EXISTS idx_payments_user_target   ON payments(user_id, payment_target);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_user_time   ON audit_logs(user_id, created_at DESC);
+-- Dòng tiền v3
+CREATE INDEX IF NOT EXISTS idx_money_accounts_user_id     ON money_accounts(user_id);
+CREATE INDEX IF NOT EXISTS idx_suppliers_user_id          ON suppliers(user_id);
+CREATE INDEX IF NOT EXISTS idx_cost_items_user_id         ON cost_items(user_id);
+CREATE INDEX IF NOT EXISTS idx_cost_items_debt_id         ON cost_items(debt_id);
+CREATE INDEX IF NOT EXISTS idx_cost_items_passport_id     ON cost_items(passport_id);
+CREATE INDEX IF NOT EXISTS idx_cost_items_train_ticket_id ON cost_items(train_ticket_id);
+CREATE INDEX IF NOT EXISTS idx_cost_items_tour_id         ON cost_items(tour_id);
+CREATE INDEX IF NOT EXISTS idx_cost_items_supplier_id     ON cost_items(supplier_id);
+CREATE INDEX IF NOT EXISTS idx_supplier_payments_user_id  ON supplier_payments(user_id);
+CREATE INDEX IF NOT EXISTS idx_supplier_payments_supplier ON supplier_payments(supplier_id);
+CREATE INDEX IF NOT EXISTS idx_supplier_payments_account  ON supplier_payments(account_id);
+CREATE INDEX IF NOT EXISTS idx_supplier_payments_item     ON supplier_payments(cost_item_id);
+CREATE INDEX IF NOT EXISTS idx_wallet_entries_user_id     ON wallet_entries(user_id);
+CREATE INDEX IF NOT EXISTS idx_wallet_entries_customer    ON wallet_entries(customer_id);
+CREATE INDEX IF NOT EXISTS idx_wallet_entries_account     ON wallet_entries(account_id);
+CREATE INDEX IF NOT EXISTS idx_wallet_entries_payment     ON wallet_entries(payment_id);
+CREATE INDEX IF NOT EXISTS idx_payments_account_id        ON payments(account_id);
+-- Dòng tiền v3.1
+CREATE INDEX IF NOT EXISTS idx_account_transfers_user_id ON account_transfers(user_id);
+CREATE INDEX IF NOT EXISTS idx_account_transfers_from    ON account_transfers(from_account_id);
+CREATE INDEX IF NOT EXISTS idx_account_transfers_to      ON account_transfers(to_account_id);
+CREATE INDEX IF NOT EXISTS idx_account_entries_user_id   ON account_entries(user_id);
+CREATE INDEX IF NOT EXISTS idx_account_entries_account   ON account_entries(account_id);
+CREATE INDEX IF NOT EXISTS idx_receipts_user_id          ON receipts(user_id);
+CREATE INDEX IF NOT EXISTS idx_receipts_customer         ON receipts(customer_id);
+CREATE INDEX IF NOT EXISTS idx_receipts_account          ON receipts(account_id);
+CREATE INDEX IF NOT EXISTS idx_payments_receipt_id       ON payments(receipt_id);
+CREATE INDEX IF NOT EXISTS idx_wallet_entries_receipt    ON wallet_entries(receipt_id);
 
 -- ============================================================================
 -- TRIGGER tự cập nhật updated_at — best practice, đỡ phải set tay trong code
@@ -463,7 +660,7 @@ DO $$
 DECLARE
   t TEXT;
 BEGIN
-  FOREACH t IN ARRAY ARRAY['users','companies','customers','debts','passports','invoices','sticky_notes','ticket_watches','airlines','train_tickets','tours']
+  FOREACH t IN ARRAY ARRAY['users','companies','customers','debts','passports','invoices','sticky_notes','ticket_watches','airlines','train_tickets','tours','money_accounts','suppliers']
   LOOP
     EXECUTE format('DROP TRIGGER IF EXISTS trg_%I_updated_at ON %I;', t, t);
     EXECUTE format(
