@@ -1,149 +1,237 @@
-import React, { useEffect, useState } from 'react';
-import { Plus, Trash2, Pin, PinOff, StickyNote } from 'lucide-react';
-import { apiGet, apiSend } from './services/client';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Plus, Trash2, Pin, PinOff, StickyNote, RefreshCw } from 'lucide-react';
+import { api } from './services/client';
+import { useFeedback } from './ui/FeedbackContext';
+import { formatDateTime } from './utils/format';
+import { Button, IconButton, Badge, EmptyState, Skeleton, PageHeader, ErrorBanner, Card } from './ui';
 
-// Bảng màu sticky — phải để class đầy đủ (Tailwind không nhận class ghép động).
+// Bảng màu sticky pastel — để class đầy đủ vì Tailwind không nhận class ghép động.
 const COLORS = {
-  yellow: { card: 'bg-yellow-100 border-yellow-300', dot: 'bg-yellow-300' },
-  green: { card: 'bg-green-100 border-green-300', dot: 'bg-green-300' },
-  pink: { card: 'bg-pink-100 border-pink-300', dot: 'bg-pink-300' },
-  blue: { card: 'bg-blue-100 border-blue-300', dot: 'bg-blue-300' },
-  purple: { card: 'bg-purple-100 border-purple-300', dot: 'bg-purple-300' },
+  yellow: { card: 'bg-amber-50 border-amber-200', dot: 'bg-amber-300', label: 'Vàng' },
+  green: { card: 'bg-emerald-50 border-emerald-200', dot: 'bg-emerald-300', label: 'Xanh lá' },
+  pink: { card: 'bg-pink-50 border-pink-200', dot: 'bg-pink-300', label: 'Hồng' },
+  blue: { card: 'bg-sky-50 border-sky-200', dot: 'bg-sky-300', label: 'Xanh dương' },
+  purple: { card: 'bg-violet-50 border-violet-200', dot: 'bg-violet-300', label: 'Tím' },
 };
 const COLOR_KEYS = Object.keys(COLORS);
+const AUTOSAVE_MS = 800;
+
+/** Ghim lên đầu, giữ nguyên thứ tự còn lại (khớp ORDER BY của server). */
+const sortNotes = (list) => [...list].sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned));
 
 export default function NotesApp() {
+  const { toast, confirm } = useFeedback();
   const [notes, setNotes] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
+  const [adding, setAdding] = useState(false);
+  const [focusId, setFocusId] = useState(null);
 
-  const load = async () => {
-    setLoading(true);
+  const load = useCallback(async ({ silent = false } = {}) => {
+    if (silent) setRefreshing(true); else setLoading(true);
     setError('');
     try {
-      setNotes(await apiGet('/notes'));
+      setNotes(await api.get('/notes'));
     } catch (err) {
       setError(err.message);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
-  };
-  useEffect(() => { load(); }, []);
+  }, []);
+  useEffect(() => { load(); }, [load]);
 
   const addNote = async () => {
+    setAdding(true);
     try {
-      const created = await apiSend('POST', '/notes', { content: '', color: 'yellow' });
-      setNotes((prev) => [created, ...prev]);
+      const created = await api.post('/notes', { content: '', color: 'yellow' });
+      setNotes((prev) => sortNotes([created, ...prev]));
+      setFocusId(created.id);
     } catch (err) {
-      alert('Lỗi: ' + err.message);
+      toast.error(err.message);
+    } finally {
+      setAdding(false);
     }
   };
 
-  // Cập nhật cục bộ ngay (optimistic), gửi server ngầm.
-  const patch = async (id, fields) => {
-    setNotes((prev) => prev.map((n) => (n.id === id ? { ...n, ...fields } : n)));
+  // Cập nhật cục bộ ngay (optimistic), gửi server ngầm; lỗi thì tải lại.
+  const patch = useCallback(async (id, fields, { quiet = false } = {}) => {
+    setNotes((prev) => {
+      const next = prev.map((n) => (n.id === id ? { ...n, ...fields } : n));
+      return 'pinned' in fields ? sortNotes(next) : next;
+    });
     try {
-      await apiSend('PUT', `/notes/${id}`, fields);
-      if ('pinned' in fields) await load(); // ghim → sắp xếp lại
+      const saved = await api.put(`/notes/${id}`, fields);
+      setNotes((prev) => prev.map((n) => (n.id === id ? { ...n, updated_at: saved?.updated_at ?? n.updated_at } : n)));
+      if (!quiet) toast.success('Đã lưu');
+      return true;
     } catch (err) {
-      alert('Lỗi lưu ghi chú: ' + err.message);
-      load();
+      toast.error(`Lỗi lưu ghi chú: ${err.message}`);
+      load({ silent: true });
+      return false;
     }
-  };
+  }, [toast, load]);
 
-  const remove = async (id) => {
-    if (!confirm('Xóa ghi chú này?')) return;
+  const remove = async (note) => {
+    const preview = (note.content || '').trim().slice(0, 60);
+    const ok = await confirm({
+      title: 'Xoá ghi chú',
+      message: preview ? `Xoá ghi chú "${preview}${note.content.trim().length > 60 ? '…' : ''}"?` : 'Xoá ghi chú trống này?',
+      confirmText: 'Xoá',
+    });
+    if (!ok) return;
     const prev = notes;
-    setNotes((p) => p.filter((n) => n.id !== id));
+    setNotes((p) => p.filter((n) => n.id !== note.id));
     try {
-      await apiSend('DELETE', `/notes/${id}`);
+      await api.del(`/notes/${note.id}`);
+      toast.success('Đã xoá ghi chú');
     } catch (err) {
-      alert('Lỗi: ' + err.message);
+      toast.error(err.message);
       setNotes(prev);
     }
   };
 
+  const pinnedCount = notes.filter((n) => n.pinned).length;
+
   return (
-    <div className="p-4 sm:p-6 max-w-6xl mx-auto">
-      <div className="flex items-center justify-between mb-5">
-        <h1 className="text-xl sm:text-2xl font-bold flex items-center gap-2 text-gray-800">
-          <StickyNote className="text-amber-500" /> Ghi chú
-        </h1>
-        <button
-          onClick={addNote}
-          className="flex items-center gap-1.5 px-4 py-2 bg-amber-500 text-white rounded-lg hover:bg-amber-600 transition font-semibold text-sm shadow"
-        >
-          <Plus size={18} /> Thêm ghi chú
-        </button>
-      </div>
+    <div>
+      <PageHeader
+        icon={StickyNote}
+        title="Ghi chú"
+        description={notes.length ? `${notes.length} ghi chú · ${pinnedCount} đã ghim · tự lưu khi gõ` : 'Nhắc việc nhanh, riêng tư, tự lưu khi gõ.'}
+        actions={(
+          <>
+            <Button variant="secondary" icon={RefreshCw} loading={refreshing} onClick={() => load({ silent: true })}>Làm mới</Button>
+            <Button icon={Plus} loading={adding} onClick={addNote}>Thêm ghi chú</Button>
+          </>
+        )}
+      />
 
-      {loading && <p className="text-gray-500">Đang tải…</p>}
-      {error && <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-red-700">{error}</div>}
+      <ErrorBanner message={error} onRetry={() => load()} />
 
-      {!loading && !error && notes.length === 0 && (
-        <div className="text-center text-gray-400 py-16">
-          <StickyNote size={48} className="mx-auto mb-3 opacity-40" />
-          <p>Chưa có ghi chú nào. Bấm <b>Thêm ghi chú</b> để tạo nhắc nhở nhanh.</p>
+      {loading ? (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Card key={i} className="min-h-[180px] p-4 space-y-2">
+              <Skeleton className="h-3 w-24" />
+              <Skeleton className="h-4 w-full" />
+              <Skeleton className="h-4 w-5/6" />
+              <Skeleton className="h-4 w-2/3" />
+            </Card>
+          ))}
+        </div>
+      ) : !error && notes.length === 0 ? (
+        <Card padded={false}>
+          <EmptyState
+            icon={StickyNote}
+            title="Chưa có ghi chú nào"
+            description="Tạo nhắc nhở nhanh: khách cần gọi lại, việc cần làm hôm nay… Ghi chú tự lưu khi bạn gõ."
+            action={<Button icon={Plus} loading={adding} onClick={addNote}>Thêm ghi chú</Button>}
+          />
+        </Card>
+      ) : (
+        <div className="columns-1 sm:columns-2 lg:columns-3 xl:columns-4 gap-4">
+          {notes.map((note) => (
+            <NoteCard
+              key={note.id}
+              note={note}
+              autoFocus={note.id === focusId}
+              onPatch={patch}
+              onRemove={() => remove(note)}
+            />
+          ))}
         </div>
       )}
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-        {notes.map((note) => (
-          <NoteCard key={note.id} note={note} onPatch={patch} onRemove={remove} />
-        ))}
-      </div>
     </div>
   );
 }
 
-function NoteCard({ note, onPatch, onRemove }) {
+function NoteCard({ note, autoFocus, onPatch, onRemove }) {
   const [text, setText] = useState(note.content || '');
+  const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
+  // Đồng bộ khi nội dung từ ngoài đổi (vd tải lại sau lỗi) và người dùng không đang sửa dở.
+  const [seenContent, setSeenContent] = useState(note.content || '');
+  if ((note.content || '') !== seenContent) {
+    setSeenContent(note.content || '');
+    if (!dirty) setText(note.content || '');
+  }
+
+  const timerRef = useRef(null);
+  const textareaRef = useRef(null);
   const color = COLORS[note.color] || COLORS.yellow;
 
-  // Đồng bộ khi note đổi từ ngoài (vd reload sau khi ghim).
-  useEffect(() => { setText(note.content || ''); }, [note.content]);
+  const commit = useCallback(async (value) => {
+    clearTimeout(timerRef.current);
+    timerRef.current = null;
+    if (value === (note.content || '')) { setDirty(false); return; }
+    setSaving(true);
+    const ok = await onPatch(note.id, { content: value });
+    setSaving(false);
+    if (ok) setDirty(false);
+  }, [note.id, note.content, onPatch]);
 
-  const saveText = () => {
-    if (text !== (note.content || '')) onPatch(note.id, { content: text });
+  // Textarea tự giãn theo nội dung.
+  const autosize = (el) => {
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.max(96, el.scrollHeight)}px`;
+  };
+  useEffect(() => { autosize(textareaRef.current); }, [text]);
+  useEffect(() => () => clearTimeout(timerRef.current), []);
+
+  const onChange = (e) => {
+    const value = e.target.value;
+    setText(value);
+    setDirty(true);
+    clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => commit(value), AUTOSAVE_MS);
   };
 
   return (
-    <div className={`rounded-xl border shadow-sm p-3 flex flex-col min-h-[180px] ${color.card}`}>
-      <div className="flex items-center justify-between mb-2">
-        <div className="flex gap-1.5">
+    <div className={`break-inside-avoid mb-4 rounded-2xl border shadow-card p-3 flex flex-col transition ${color.card} ${note.pinned ? 'ring-1 ring-amber-300/60' : ''}`}>
+      <div className="flex items-center justify-between gap-2 mb-1.5">
+        <div className="flex items-center gap-1.5" role="radiogroup" aria-label="Màu ghi chú">
           {COLOR_KEYS.map((c) => (
             <button
               key={c}
-              onClick={() => onPatch(note.id, { color: c })}
-              title={c}
-              className={`w-4 h-4 rounded-full border border-black/10 ${COLORS[c].dot} ${note.color === c ? 'ring-2 ring-gray-500 ring-offset-1' : ''}`}
+              type="button"
+              role="radio"
+              aria-checked={note.color === c}
+              title={COLORS[c].label}
+              onClick={() => note.color !== c && onPatch(note.id, { color: c }, { quiet: true })}
+              className={`h-4 w-4 rounded-full border border-black/10 transition ${COLORS[c].dot} ${note.color === c ? 'ring-2 ring-ink/40 ring-offset-1 ring-offset-transparent scale-110' : 'hover:scale-110'}`}
             />
           ))}
         </div>
-        <div className="flex gap-1">
-          <button
-            onClick={() => onPatch(note.id, { pinned: !note.pinned })}
+        <div className="flex items-center gap-0.5">
+          {note.pinned && <Badge tone="warning" className="mr-1">Ghim</Badge>}
+          <IconButton
+            icon={note.pinned ? Pin : PinOff}
+            size={15}
             title={note.pinned ? 'Bỏ ghim' : 'Ghim lên đầu'}
-            className={`p-1 rounded hover:bg-black/10 ${note.pinned ? 'text-amber-700' : 'text-gray-400'}`}
-          >
-            {note.pinned ? <Pin size={15} fill="currentColor" /> : <PinOff size={15} />}
-          </button>
-          <button
-            onClick={() => onRemove(note.id)}
-            title="Xóa"
-            className="p-1 rounded text-gray-400 hover:bg-black/10 hover:text-red-600"
-          >
-            <Trash2 size={15} />
-          </button>
+            variant={note.pinned ? 'warning' : 'ghost'}
+            onClick={() => onPatch(note.id, { pinned: !note.pinned }, { quiet: true })}
+            className="hover:bg-black/5"
+          />
+          <IconButton icon={Trash2} size={15} title="Xoá ghi chú" variant="danger" onClick={onRemove} className="hover:bg-black/5" />
         </div>
       </div>
       <textarea
+        ref={textareaRef}
         value={text}
-        onChange={(e) => setText(e.target.value)}
-        onBlur={saveText}
+        autoFocus={autoFocus}
+        onChange={onChange}
+        onBlur={() => { if (dirty) commit(text); }}
         placeholder="Nhập ghi chú…"
-        className="flex-1 w-full bg-transparent resize-none outline-none text-sm text-gray-800 placeholder-gray-400/70"
+        rows={4}
+        className="w-full resize-none bg-transparent text-sm text-ink leading-relaxed placeholder:text-ink-faint/70 focus:outline-none"
       />
+      <div className="mt-2 flex items-center justify-between text-[11px] text-ink-faint">
+        <span>{saving ? 'Đang lưu…' : dirty ? 'Chưa lưu' : note.updated_at ? `Sửa ${formatDateTime(note.updated_at)}` : ''}</span>
+        <span className="tabular">{text.length ? `${text.length} ký tự` : ''}</span>
+      </div>
     </div>
   );
 }

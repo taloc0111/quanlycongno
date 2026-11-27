@@ -6,6 +6,9 @@ const pool = require('../config/database');
 const env = require('../config/env');
 const logger = require('../config/logger');
 const { sendMail } = require('../config/email');
+const { resolveFeatures } = require('../utils/features');
+const { logAudit } = require('../utils/audit');
+const v = require('../utils/validate');
 
 const sha256 = (s) => crypto.createHash('sha256').update(s).digest('hex');
 
@@ -52,6 +55,7 @@ const login = async (req, res) => {
     }
 
     const token = signToken(user);
+    logAudit(null, { action: 'login', entity: 'user', entityId: user.id, summary: `Đăng nhập ${user.username}`, userId: user.id, username: user.username });
     res.json({
       token,
       username: user.username,
@@ -59,6 +63,7 @@ const login = async (req, res) => {
       fullName: user.full_name || null,
       role: user.role || 'user',
       trialEndsAt: user.trial_ends_at || null,
+      features: resolveFeatures(user),
     });
   } catch (error) {
     logger.error('Login error:', error.message);
@@ -68,26 +73,25 @@ const login = async (req, res) => {
 
 const register = async (req, res) => {
   try {
-    const { username, password, fullName, email } = req.body;
-
-    if (!username || !password) {
-      return res.status(400).json({ error: 'Username and password required' });
-    }
-    if (password.length < 6) {
-      return res.status(400).json({ error: 'Password phải có ít nhất 6 ký tự' });
-    }
+    const username = v.str(req.body.username, { max: 50, required: true, label: 'Tên đăng nhập' });
+    if (username.length < 3) throw new v.ValidationError('Tên đăng nhập phải có ít nhất 3 ký tự');
+    const password = v.str(req.body.password, { required: true, label: 'Mật khẩu', trim: false });
+    if (password.length < 6) throw new v.ValidationError('Mật khẩu phải có ít nhất 6 ký tự');
+    const fullName = v.str(req.body.fullName, { max: 255, label: 'Họ tên' });
+    const email = v.str(req.body.email, { max: 255, label: 'Email' });
 
     const hashed = await bcrypt.hash(password, 10);
     // Tài khoản mới = dùng thử 14 ngày kể từ lúc đăng ký.
     const result = await pool.query(
       `INSERT INTO users (username, password_hash, full_name, email, trial_ends_at)
        VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP + INTERVAL '14 days')
-       RETURNING id, username, full_name, role, trial_ends_at`,
-      [username, hashed, fullName || null, email || null]
+       RETURNING id, username, full_name, role, trial_ends_at, features`,
+      [username, hashed, fullName, email]
     );
 
     const user = result.rows[0];
     const token = signToken(user);
+    logAudit(null, { action: 'create', entity: 'user', entityId: user.id, summary: `Đăng ký tài khoản ${user.username}`, userId: user.id, username: user.username });
     res.status(201).json({
       token,
       username: user.username,
@@ -95,8 +99,10 @@ const register = async (req, res) => {
       fullName: user.full_name,
       role: user.role,
       trialEndsAt: user.trial_ends_at || null,
+      features: resolveFeatures(user),
     });
   } catch (error) {
+    if (error instanceof v.ValidationError) return res.status(400).json({ error: error.message });
     if (error.code === '23505') {
       return res.status(409).json({ error: 'Username đã tồn tại' });
     }
@@ -108,13 +114,14 @@ const register = async (req, res) => {
 const getProfile = async (req, res) => {
   try {
     const result = await pool.query(
-      'SELECT id, username, full_name, email, role, created_at FROM users WHERE id = $1',
+      'SELECT id, username, full_name, email, role, parent_id, trial_ends_at, created_at, features FROM users WHERE id = $1',
       [req.user.id]
     );
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'User not found' });
     }
-    res.json(result.rows[0]);
+    const row = result.rows[0];
+    res.json({ ...row, features: resolveFeatures(row) });
   } catch (error) {
     logger.error('Get profile error:', error.message);
     res.status(500).json({ error: 'Failed to fetch profile' });
@@ -124,14 +131,17 @@ const getProfile = async (req, res) => {
 // Cập nhật hồ sơ của chính mình (họ tên, email).
 const updateProfile = async (req, res) => {
   try {
-    const { fullName, email } = req.body;
+    const fullName = v.str(req.body.fullName, { max: 255, label: 'Họ tên' });
+    const email = v.str(req.body.email, { max: 255, label: 'Email' });
     const result = await pool.query(
       `UPDATE users SET full_name = $2, email = $3 WHERE id = $1
-       RETURNING id, username, full_name, email, role`,
-      [req.user.id, fullName || null, email || null]
+       RETURNING id, username, full_name, email, role, features`,
+      [req.user.id, fullName, email]
     );
-    res.json(result.rows[0]);
+    const row = result.rows[0];
+    res.json({ ...row, features: resolveFeatures(row) });
   } catch (error) {
+    if (error instanceof v.ValidationError) return res.status(400).json({ error: error.message });
     logger.error('Update profile error:', error.message);
     res.status(500).json({ error: 'Failed to update profile' });
   }
@@ -170,9 +180,18 @@ const forgotPassword = async (req, res) => {
     const { email } = req.body;
     if (!email) return res.status(400).json({ error: 'Vui lòng nhập email' });
 
-    const found = await pool.query('SELECT id, username FROM users WHERE email = $1 LIMIT 1', [email.trim()]);
+    // Email không UNIQUE trong users. Nếu nhiều tài khoản dùng chung email: chọn tài khoản
+    // TẠO GẦN NHẤT (thường là tài khoản đang dùng) và ghi warn để admin rà soát — không gửi
+    // nhiều link trong 1 email để tránh nhầm lẫn/lộ danh sách tài khoản.
+    const found = await pool.query(
+      'SELECT id, username FROM users WHERE email = $1 ORDER BY created_at DESC, id DESC',
+      [email.trim()]
+    );
     const user = found.rows[0];
     if (!user) return res.json(generic); // không lộ
+    if (found.rows.length > 1) {
+      logger.warn(`forgotPassword: email dùng chung bởi ${found.rows.length} tài khoản, chọn #${user.id} (${user.username})`);
+    }
 
     const token = crypto.randomBytes(32).toString('hex');
     await pool.query(

@@ -1,62 +1,75 @@
 # Debt Management Backend API
 
-## Setup Instructions
+Node 24 · Express 5 · PostgreSQL (`pg`). Entry: `server.js` (listen + worker) → `app.js` (Express app).
 
-### 1. Install PostgreSQL
-Download and install PostgreSQL from: https://www.postgresql.org/download/
+## Setup
 
-### 2. Create Database
+1. Cài PostgreSQL, tạo database.
+2. `cp .env.example .env` rồi điền `DATABASE_URL` (hoặc `DB_*`) + `JWT_SECRET` (≥ 32 ký tự).
+3. `npm install`
+4. Schema tự áp khi khởi động (`schema/schema.sql`, idempotent). Tắt bằng `AUTO_MIGRATE=false` và chạy tay `npm run migrate`.
+5. `npm run dev` (nodemon) hoặc `npm start`.
+6. Tài khoản demo: `npm run seed`.
+
+## Test
+
 ```bash
-# Login to PostgreSQL
-psql -U postgres
-
-# Run the database.sql file
-\i /path/to/database.sql
+npm test
 ```
 
-### 3. Configure Environment
-Copy `.env.example` to `.env` and update with your database credentials
+Dùng Node test runner, chạy trên Postgres **local** (mặc định `postgresql://postgres@127.0.0.1:5499/qlcn_test`, ghi đè bằng `DATABASE_URL`). `test/helpers.js` từ chối DB không phải localhost và **xoá sạch mọi bảng** trước khi chạy.
 
-### 4. Install Dependencies
-```bash
-npm install
-```
+## Quy ước chung
 
-### 5. Run Server
-```bash
-# Development
-npm run dev
+- Mọi route trừ `/api/auth/login|register|forgot-password|reset-password` cần `Authorization: Bearer <jwt>`.
+- Phân cấp: `admin` thấy tất cả; `agency`/`user` thấy mình + đại lý con (đệ quy `parent_id`). Ghi (tạo/sửa/xóa) luôn giới hạn ở dữ liệu của chính mình; `?agencyId=` lọc 1 đại lý trong phạm vi.
+- Lỗi: `400` validate (`{ error }`), `401` thiếu/sai token hoặc tài khoản không tồn tại, `403` hết hạn dùng thử / không có quyền / tính năng chưa bật (`{ error, featureDisabled }`), `404` không thấy, `409` trùng, `413` body quá lớn, `429` rate-limit.
+- Cột `DATE` trả về chuỗi `YYYY-MM-DD`; "hôm nay" tính theo `TZ_OFFSET_HOURS` (mặc định 7).
+- Cột `paid` / `paid_amount` là tổng từ bảng `payments` — không sửa trực tiếp.
 
-# Production
-npm start
-```
+## API
 
-## API Endpoints
+### Auth — `/api/auth`
+- `POST /login`, `POST /register` → `{ token, username, userId, fullName, role, trialEndsAt, features }`
+- `GET /profile` → `{ id, username, full_name, email, role, parent_id, trial_ends_at, created_at, features }`
+- `PUT /profile`, `PUT /password`, `POST /forgot-password`, `POST /reset-password`
 
-### Authentication
-- POST `/api/auth/login` - Login
-- POST `/api/auth/register` - Register new user
-- GET `/api/auth/profile` - Get user profile (requires auth)
+### Users — `/api/users`
+- `GET /` (kèm `outstanding` + `features`), `POST /`, `PUT /:id`, `DELETE /:id` (400 nếu còn đại lý con)
+- `PUT /:id/trial` `{ action: extend|unlimited|revoke, days }`
+- `PUT /:id/features` `{ fareWatch: boolean }` — **admin**
+- `POST /:id/password` `{ newPassword }` — admin hoặc đại lý cha
 
-### Debts
-- GET `/api/debts` - Get all debts (with filters)
-- POST `/api/debts` - Create new debt
-- POST `/api/debts/bulk` - Create multiple debts
-- PUT `/api/debts/:id` - Update debt
-- DELETE `/api/debts/:id` - Delete debt
+### Dịch vụ (cùng khuôn)
+`/api/debts` (vé máy bay) · `/api/passports` · `/api/train-tickets` · `/api/tours`
+- `GET /`, `POST /`, `PUT /:id`, `DELETE /:id`, `POST /bulk-delete { ids }`, `POST /import { rows }` → `{ inserted, failed, errors }`
+- `PUT /api/debts/:id/checkin { checkedIn }`
+- `companyId` phải thuộc về người tạo; `paid`/`paidAmount` khi tạo sẽ sinh 1 dòng `payments` (`paymentTarget: self|agency`).
 
-### Companies
-- GET `/api/companies` - Get all companies
-- POST `/api/companies` - Create company
-- PUT `/api/companies/:id` - Update company
-- DELETE `/api/companies/:id` - Delete company
-- GET `/api/companies/:id/debts` - Get company debt summary
+### Khách hàng — `/api/customers`
+- `GET /` (kèm `outstanding` 4 loại), `POST /`, `PUT /:id`, `DELETE /:id`, `POST /bulk-delete`, `POST /import`
+- `GET /:id/detail?from=&to=` → `{ customer, debts, passports, trainTickets, tours, payments[{type, target_label}], totals: { sold, cost, paid, outstanding } }`
 
-### Routes
-- GET `/api/routes` - Get all routes
-- POST `/api/routes` - Create route
-- DELETE `/api/routes/:id` - Delete route
+### Thanh toán — `/api/payments`
+- `GET /?debtId=|passportId=|trainTicketId=|tourId=`, `POST /` (đúng 1 target, `amount > 0`), `DELETE /:id`
 
-## Default Login
-Username: `admin`
-Password: `admin123`
+### Hóa đơn — `/api/invoices`
+- `GET /`, `GET /:id` (kèm `items`), `POST /`, `PUT /:id` (từng phần; `items` thay toàn bộ dòng), `DELETE /:id`
+
+### Nộp quỹ — `/api/deposits`
+- `GET /`, `POST /`, `PUT /:id`, `DELETE /:id`, `POST /bulk-delete`, `GET /balance`
+
+### Thống kê — `GET /api/stats`
+`{ totalAmount, totalPaid, outstanding, totalProfit, overdue, counts{debts,passports,trainTickets,tours,customers}, byType, topDebtors, monthly (12 tháng), todo{ flightsTomorrow, dueSoon, overdue, fareHits } }`
+
+### Canh vé (cần cờ `fareWatch`)
+- `/api/ticket-watches`: `GET /`, `POST /`, `PUT /:id` (từng phần), `DELETE /:id`, `GET /:id/snapshots`, `POST /:id/check-now` (3 lần/phút/user)
+- `POST /api/fares/quote { route, date, returnDate?, pax }`
+
+### Khác
+- `/api/companies`, `/api/routes`, `/api/airlines`, `/api/notes`: CRUD riêng theo user.
+- `GET /api/audit?limit=&userId=` → `{ rows }` nhật ký thao tác trong phạm vi.
+- `GET /api/health`
+
+## Worker canh giá
+`npm run fare-watch` (1 vòng) · `npm run fare-watch:loop` · hoặc `FARE_WATCHER=true` để chạy trong app. Cấu hình: `FARE_WATCH_INTERVAL_MIN` (≥1, mặc định 60), `FARE_ALERT_COOLDOWN_H` (≥0, mặc định 12), `FARE_ALERT_EMAIL`, `SERPAPI_KEY`.

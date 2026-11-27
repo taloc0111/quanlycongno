@@ -1,32 +1,39 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { Plus, Edit2, Trash2, X, PlaneTakeoff, Search, Ticket, RefreshCw, TrendingDown, TrendingUp, Radar, BellRing } from 'lucide-react';
-import VnDatePicker from './components/VnDatePicker';
-import MoneyInput from './components/MoneyInput';
-import ConfirmDialog from './components/ConfirmDialog';
-import Toast from './components/Toast';
-import { apiGet, apiSend } from './services/client';
-import { formatCurrency } from './utils/format';
-import { useToast, useConfirm } from './hooks/useFeedback';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  Plus, Pencil, Trash2, PlaneTakeoff, Ticket, RefreshCw, TrendingDown, TrendingUp, Minus, Radar, BellRing,
+  History, CheckCircle2, Target, ShoppingCart, RotateCcw, Phone, Users, Lock, AlertTriangle,
+} from 'lucide-react';
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, CartesianGrid } from 'recharts';
+import { api } from './services/client';
+import { formatCurrency, formatCompact, formatDate, formatDateTime, daysUntil, num } from './utils/format';
+import { useAuth } from './auth/AuthContext';
+import { useFeedback } from './ui/FeedbackContext';
+import {
+  Button, IconButton, Field, Input, Select, MoneyField, DateField, SearchInput, Textarea, Switch,
+  Modal, Card, Badge, PageHeader, StatCard, ErrorBanner, EmptyState, Skeleton, Segmented,
+} from './ui';
 
 const STATUS = {
-  watching: { label: 'Đang canh', cls: 'bg-blue-100 text-blue-700' },
-  quoted: { label: 'Đã báo giá', cls: 'bg-amber-100 text-amber-700' },
-  booked: { label: 'Đã đặt', cls: 'bg-green-100 text-green-700' },
-  cancelled: { label: 'Hủy', cls: 'bg-gray-200 text-gray-500' },
+  watching: { label: 'Đang canh', tone: 'brand' },
+  quoted: { label: 'Đã báo giá', tone: 'warning' },
+  booked: { label: 'Đã đặt', tone: 'success' },
+  cancelled: { label: 'Huỷ', tone: 'gray' },
 };
 const EMPTY = {
   customerName: '', phoneNumber: '', route: '', departDate: '', returnDate: '',
   airline: '', pax: '1', targetPrice: '', status: 'watching', notes: '', autoTrack: false,
 };
+const FILTERS = [
+  { value: 'active', label: 'Đang theo dõi' },
+  { value: 'booked', label: 'Đã đặt' },
+  { value: 'cancelled', label: 'Huỷ' },
+  { value: 'all', label: 'Tất cả' },
+];
 
 // Hãng hỗ trợ auto canh giá (khớp với resolveAdapter ở backend).
 const AUTO_AIRLINES = ['Vietjet', 'Vietnam Airlines', 'Bamboo', 'Sun PhuQuoc', 'Vietravel'];
-const supportsAuto = (airline) => {
-  const a = (airline || '').toLowerCase();
-  return /vietjet|vietnam air|vna|bamboo|sun ?ph|vietravel/.test(a);
-};
+const supportsAuto = (airline) => /vietjet|vietnam air|vna|bamboo|sun ?ph|vietravel/.test((airline || '').toLowerCase());
 
-const fmtDate = (s) => (s ? s.slice(0, 10).split('-').reverse().join('/') : '');
 // "vừa xong" / "5 phút trước" / "2 giờ trước" / "3 ngày trước" từ timestamp.
 const fmtAgo = (s) => {
   if (!s) return '';
@@ -40,104 +47,98 @@ const fmtAgo = (s) => {
 const isStale = (s) => s && (Date.now() - new Date(s).getTime()) > 24 * 3600000;
 // 'yyyy-mm-dd HH:MM' → 'HH:MM' (giờ cất cánh chuyến rẻ nhất).
 const fmtHm = (s) => (s && s.length >= 16 ? s.slice(11, 16) : '');
-// Số tiền gọn cho nhãn nhỏ: 120000 → "120k", 1382600 → "1,4tr".
-const compactVnd = (n) => {
-  const a = Math.abs(Math.round(Number(n) || 0));
-  if (a >= 1e6) return (a / 1e6).toFixed(a % 1e6 === 0 ? 0 : 1).replace('.', ',') + 'tr';
-  if (a >= 1e3) return Math.round(a / 1e3) + 'k';
-  return String(a);
-};
-// Số ngày từ hôm nay tới ngày đi (âm = đã qua).
-const daysUntil = (s) => {
-  if (!s) return null;
-  const d = new Date(s.slice(0, 10));
-  const today = new Date(new Date().toISOString().slice(0, 10));
-  return Math.round((d - today) / 86400000);
-};
+const isActive = (w) => w.status === 'watching' || w.status === 'quoted';
+const priceHit = (w) => num(w.last_price) > 0 && num(w.target_price) > 0 && num(w.last_price) <= num(w.target_price);
+
+/** Mũi tên xu hướng: last_price so với prev_price. */
+function Trend({ w }) {
+  const cur = num(w.last_price); const prev = num(w.prev_price);
+  if (!(cur > 0 && prev > 0)) return null;
+  const diff = cur - prev;
+  if (diff === 0) return <span className="inline-flex items-center gap-0.5 text-[11px] font-semibold text-ink-faint" title="Không đổi so lần canh trước"><Minus size={12} /> 0</span>;
+  const down = diff < 0;
+  return (
+    <span className={`inline-flex items-center gap-0.5 text-[11px] font-semibold ${down ? 'text-success-600' : 'text-danger-600'}`} title={`${down ? 'Giảm' : 'Tăng'} ${formatCurrency(Math.abs(diff))} so lần canh trước`}>
+      {down ? <TrendingDown size={12} /> : <TrendingUp size={12} />}{formatCompact(Math.abs(diff))}
+    </span>
+  );
+}
 
 export default function TicketWatchApp() {
+  const { refreshProfile } = useAuth();
+  const { toast, confirm } = useFeedback();
   const [watches, setWatches] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [routes, setRoutes] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
+  const [disabled, setDisabled] = useState(false); // 403 featureDisabled
   const [search, setSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState('active'); // active = watching+quoted
-  const [showForm, setShowForm] = useState(false);
-  const [editingId, setEditingId] = useState(null);
-  const [form, setForm] = useState(EMPTY);
+  const [form, setForm] = useState(null); // null = đóng; { ...EMPTY, id? }
+  const [saving, setSaving] = useState(false);
   const [booking, setBooking] = useState(null); // { watch, ticketAmount, costAmount }
+  const [bookingSaving, setBookingSaving] = useState(false);
   const [checkingId, setCheckingId] = useState(null); // watch đang "lấy giá ngay"
   const [history, setHistory] = useState(null); // { watch, rows, loading }
-  const { toast, showToast } = useToast();
-  const { confirmState, askConfirm, closeConfirm } = useConfirm();
 
-  const load = async () => {
-    setLoading(true);
+  const handleApiError = useCallback((err, prefix = '') => {
+    if (err?.status === 403 && err?.data?.featureDisabled) { setDisabled(true); refreshProfile(); return; }
+    if (err?.status === 503 || err?.status === 429) { toast.warning(err.message || 'Dịch vụ tra giá đang bận, thử lại sau.'); return; }
+    toast.error(prefix + (err?.message || 'Có lỗi xảy ra'));
+  }, [toast, refreshProfile]);
+
+  const load = useCallback(async ({ silent = false } = {}) => {
+    if (silent) setRefreshing(true); else setLoading(true);
     setError('');
     try {
-      setWatches(await apiGet('/ticket-watches'));
+      setWatches(await api.get('/ticket-watches'));
+      setDisabled(false);
     } catch (err) {
-      setError(err.message);
+      if (err?.status === 403 && err?.data?.featureDisabled) setDisabled(true);
+      else setError(err.message);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
-  };
-  useEffect(() => { load(); }, []);
+  }, []);
+  useEffect(() => { load(); }, [load]);
   useEffect(() => {
-    apiGet('/customers').then(setCustomers).catch(() => {});
-    apiGet('/routes').then(setRoutes).catch(() => {});
+    api.get('/customers').then(setCustomers).catch(() => {});
+    api.get('/routes').then(setRoutes).catch(() => {});
   }, []);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return watches.filter((w) => {
       const matchText = !q || w.customer_name?.toLowerCase().includes(q)
-        || w.phone_number?.includes(q) || w.route?.toLowerCase().includes(q);
+        || w.phone_number?.includes(q) || w.route?.toLowerCase().includes(q) || w.airline?.toLowerCase().includes(q);
       const matchStatus = filterStatus === 'all' ? true
-        : filterStatus === 'active' ? (w.status === 'watching' || w.status === 'quoted')
+        : filterStatus === 'active' ? isActive(w)
         : w.status === filterStatus;
       return matchText && matchStatus;
     });
   }, [watches, search, filterStatus]);
 
-  const openAdd = () => { setForm(EMPTY); setEditingId(null); setShowForm(true); };
-  const openEdit = (w) => {
-    setForm({
-      customerName: w.customer_name || '', phoneNumber: w.phone_number || '', route: w.route || '',
-      departDate: (w.depart_date || '').slice(0, 10), returnDate: (w.return_date || '').slice(0, 10),
-      airline: w.airline || '', pax: String(w.pax || 1), targetPrice: w.target_price || '',
-      status: w.status || 'watching', notes: w.notes || '', autoTrack: !!w.auto_track,
-    });
-    setEditingId(w.id);
-    setShowForm(true);
-  };
+  const stats = useMemo(() => ({
+    active: watches.filter(isActive).length,
+    hit: watches.filter((w) => isActive(w) && priceHit(w)).length,
+    booked: watches.filter((w) => w.status === 'booked').length,
+    auto: watches.filter((w) => isActive(w) && w.auto_track).length,
+  }), [watches]);
 
-  // Lấy giá ngay cho 1 yêu cầu (gọi worker — mất vài chục giây).
-  const checkNow = async (w) => {
-    setCheckingId(w.id);
-    try {
-      const r = await apiSend('POST', `/ticket-watches/${w.id}/check-now`);
-      if (r.ok) showToast(`Giá hiện tại: ${formatCurrency(r.price)}${r.alerted ? ' — đạt giá mong muốn!' : ''}`);
-      else showToast('Chưa lấy được giá: ' + (r.error || 'không rõ'), 'error');
-      load();
-    } catch (err) {
-      showToast('Lỗi: ' + err.message, 'error');
-    } finally {
-      setCheckingId(null);
-    }
-  };
-
-  const openHistory = async (w) => {
-    setHistory({ watch: w, rows: [], loading: true });
-    try {
-      const rows = await apiGet(`/ticket-watches/${w.id}/snapshots`);
-      setHistory({ watch: w, rows, loading: false });
-    } catch (err) {
-      showToast('Lỗi tải lịch sử: ' + err.message, 'error');
-      setHistory(null);
-    }
-  };
+  // ---------- Form ----------
+  const openAdd = () => setForm({ ...EMPTY });
+  const openEdit = (w) => setForm({
+    id: w.id,
+    customerName: w.customer_name || '', phoneNumber: w.phone_number || '', route: w.route || '',
+    departDate: (w.depart_date || '').slice(0, 10), returnDate: (w.return_date || '').slice(0, 10),
+    airline: w.airline || '', pax: String(w.pax || 1), targetPrice: w.target_price || '',
+    status: w.status || 'watching', notes: w.notes || '', autoTrack: !!w.auto_track,
+  });
+  const closeForm = () => setForm(null);
+  const setField = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
   // Khi gõ/chọn tên khách trùng danh bạ → tự điền SĐT nếu đang trống.
   const onCustomerName = (name) => {
@@ -146,28 +147,63 @@ export default function TicketWatchApp() {
   };
 
   const save = async () => {
-    if (!form.customerName.trim()) { showToast('Nhập tên khách hàng', 'error'); return; }
+    if (!form.customerName.trim()) { toast.error('Nhập tên khách hàng'); return; }
+    setSaving(true);
     try {
-      if (editingId) await apiSend('PUT', `/ticket-watches/${editingId}`, form);
-      else await apiSend('POST', '/ticket-watches', form);
-      setShowForm(false);
-      showToast(editingId ? 'Cập nhật yêu cầu canh vé' : 'Đã thêm yêu cầu canh vé');
-      load();
-    } catch (err) { showToast('Lỗi: ' + err.message, 'error'); }
+      const { id, ...body } = form;
+      if (id) await api.put(`/ticket-watches/${id}`, body);
+      else await api.post('/ticket-watches', body);
+      toast.success(id ? 'Đã cập nhật yêu cầu canh vé' : 'Đã thêm yêu cầu canh vé');
+      setForm(null);
+      load({ silent: true });
+    } catch (err) { handleApiError(err); }
+    finally { setSaving(false); }
   };
 
+  // Chỉ gửi { status } — backend cập nhật từng phần.
   const setStatus = async (w, status) => {
     try {
-      await apiSend('PUT', `/ticket-watches/${w.id}`, { status });
-      load();
-    } catch (err) { showToast('Lỗi: ' + err.message, 'error'); }
+      await api.put(`/ticket-watches/${w.id}`, { status });
+      setWatches((rows) => rows.map((r) => (r.id === w.id ? { ...r, status } : r)));
+      toast.success(`${w.customer_name}: ${STATUS[status]?.label}`);
+      load({ silent: true });
+    } catch (err) { handleApiError(err); }
   };
 
-  const remove = (w) => {
-    askConfirm(`Xóa yêu cầu canh vé của "${w.customer_name}"?`, async () => {
-      try { await apiSend('DELETE', `/ticket-watches/${w.id}`); showToast('Đã xóa'); load(); }
-      catch (err) { showToast('Lỗi: ' + err.message, 'error'); }
-    });
+  const remove = async (w) => {
+    const ok = await confirm({ title: 'Xoá yêu cầu canh vé', message: `Xoá yêu cầu canh vé của "${w.customer_name}"?` });
+    if (!ok) return;
+    try {
+      await api.del(`/ticket-watches/${w.id}`);
+      setWatches((rows) => rows.filter((r) => r.id !== w.id));
+      toast.success('Đã xoá');
+    } catch (err) { handleApiError(err); }
+  };
+
+  // Lấy giá ngay cho 1 yêu cầu (gọi worker — mất vài chục giây).
+  const checkNow = async (w) => {
+    setCheckingId(w.id);
+    try {
+      const r = await api.post(`/ticket-watches/${w.id}/check-now`);
+      if (r.ok) toast.success(`Giá hiện tại: ${formatCurrency(r.price)}${r.alerted ? ' — đạt giá mong muốn!' : ''}`);
+      else toast.error('Chưa lấy được giá: ' + (r.error || 'không rõ'));
+      load({ silent: true });
+    } catch (err) {
+      handleApiError(err);
+    } finally {
+      setCheckingId(null);
+    }
+  };
+
+  const openHistory = async (w) => {
+    setHistory({ watch: w, rows: [], loading: true });
+    try {
+      const rows = await api.get(`/ticket-watches/${w.id}/snapshots`);
+      setHistory({ watch: w, rows, loading: false });
+    } catch (err) {
+      handleApiError(err, 'Lỗi tải lịch sử: ');
+      setHistory(null);
+    }
   };
 
   // "Đã đặt" → mở modal tạo công nợ vé đã điền sẵn.
@@ -175,9 +211,10 @@ export default function TicketWatchApp() {
 
   const confirmBooking = async () => {
     const { watch, ticketAmount, costAmount } = booking;
-    if (!(parseFloat(ticketAmount) > 0)) { showToast('Nhập giá vé bán hợp lệ', 'error'); return; }
+    if (!(parseFloat(ticketAmount) > 0)) { toast.error('Nhập giá vé bán hợp lệ'); return; }
+    setBookingSaving(true);
     try {
-      await apiSend('POST', '/debts', {
+      await api.post('/debts', {
         customerName: watch.customer_name,
         phoneNumber: watch.phone_number || '',
         route: watch.route || '',
@@ -187,390 +224,397 @@ export default function TicketWatchApp() {
         paid: 0,
         notes: 'Từ canh vé',
       });
-      await apiSend('PUT', `/ticket-watches/${watch.id}`, { status: 'booked' });
+      await api.put(`/ticket-watches/${watch.id}`, { status: 'booked' });
       setBooking(null);
-      showToast('Đã tạo công nợ vé + đánh dấu Đã đặt');
-      load();
-    } catch (err) { showToast('Lỗi: ' + err.message, 'error'); }
+      toast.success('Đã tạo công nợ vé + đánh dấu Đã đặt');
+      load({ silent: true });
+    } catch (err) { handleApiError(err); }
+    finally { setBookingSaving(false); }
   };
 
-  const FILTERS = [
-    { key: 'active', label: 'Đang theo dõi' },
-    { key: 'booked', label: 'Đã đặt' },
-    { key: 'cancelled', label: 'Hủy' },
-    { key: 'all', label: 'Tất cả' },
-  ];
+  // ---------- Biểu đồ lịch sử ----------
+  const chartData = useMemo(() => {
+    if (!history?.rows?.length) return [];
+    return [...history.rows]
+      .filter((s) => s.ok && s.price != null)
+      .sort((a, b) => new Date(a.created_at) - new Date(b.created_at))
+      .map((s) => ({ t: new Date(s.created_at).getTime(), price: num(s.price), label: formatDateTime(s.created_at), airline: s.airline, flightNo: s.flight_no }));
+  }, [history]);
+
+  // ---------- Thẻ canh vé ----------
+  const renderCard = (w) => {
+    const d = daysUntil(w.depart_date);
+    const active = isActive(w);
+    const hasPrice = num(w.last_price) > 0;
+    const hit = priceHit(w);
+    const target = num(w.target_price);
+    const overTarget = hasPrice && target > 0 && num(w.last_price) > target ? num(w.last_price) - target : null;
+    const urgency = !active || d === null ? 'border-surface-border'
+      : d < 0 ? 'border-slate-300' : d <= 2 ? 'border-danger-500/60' : d <= 6 ? 'border-warning-500/60' : 'border-success-500/50';
+    const urgencyText = d === null ? '' : d < 0 ? `${-d} ngày trước` : d === 0 ? 'Hôm nay' : d === 1 ? 'Ngày mai' : `còn ${d} ngày`;
+    const urgencyTone = d === null ? 'gray' : d < 0 ? 'gray' : d <= 2 ? 'danger' : d <= 6 ? 'warning' : 'success';
+    const stale = isStale(w.last_checked_at);
+
+    return (
+      <Card key={w.id} padded={false} className={`flex flex-col border-l-4 ${urgency} ${hit ? 'ring-1 ring-success-500/30' : ''}`}>
+        <div className="p-4 flex-1">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <p className="font-bold text-ink truncate">{w.customer_name}</p>
+              {w.phone_number && <p className="inline-flex items-center gap-1 text-xs text-ink-muted"><Phone size={11} /> {w.phone_number}</p>}
+            </div>
+            <div className="flex flex-col items-end gap-1 shrink-0">
+              <Badge tone={STATUS[w.status]?.tone || 'gray'} dot>{STATUS[w.status]?.label || w.status}</Badge>
+              {hit && active && <Badge tone="success" icon={BellRing}>Đạt giá</Badge>}
+            </div>
+          </div>
+
+          <div className="mt-2.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+            <span className="inline-flex items-center gap-1.5 font-semibold text-ink"><PlaneTakeoff size={15} className="text-brand-500" />{w.route || '—'}</span>
+            {w.airline && <span className="text-xs text-ink-muted">· {w.airline}</span>}
+            {w.pax > 1 && <span className="inline-flex items-center gap-1 text-xs text-ink-muted"><Users size={11} /> {w.pax} khách</span>}
+          </div>
+          <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-ink-soft">
+            <span>{formatDate(w.depart_date) || '—'}{w.return_date ? ` → ${formatDate(w.return_date)}` : ''}</span>
+            {active && urgencyText && <Badge tone={urgencyTone}>{urgencyText}</Badge>}
+          </div>
+          <p className="mt-1.5 inline-flex items-center gap-1.5 text-sm text-ink-soft">
+            <Target size={14} className="text-ink-faint" /> Mong muốn: <b className="text-ink tabular">{target > 0 ? formatCurrency(target) : '—'}</b>
+          </p>
+
+          {/* Khối auto canh giá */}
+          {(w.auto_track || hasPrice || w.last_checked_at) && (
+            <div className={`mt-2.5 rounded-xl border px-3 py-2 text-sm ${hit ? 'border-success-100 bg-success-50' : 'border-surface-border bg-surface-muted'}`}>
+              <div className="flex items-center justify-between gap-2">
+                <span className="inline-flex items-center gap-1.5 text-xs font-medium text-ink-muted">
+                  <Radar size={13} className={w.auto_track ? 'text-brand-500' : 'text-ink-faint'} /> {w.auto_track ? 'Auto canh giá' : 'Giá gần nhất'}
+                </span>
+                {hasPrice ? (
+                  <span className="inline-flex items-center gap-2">
+                    <Trend w={w} />
+                    <span className={`font-bold tabular ${hit ? 'text-success-700' : 'text-ink'}`}>{formatCurrency(w.last_price)}</span>
+                  </span>
+                ) : (
+                  <span className="text-xs text-ink-faint">{w.last_check_ok === false ? 'chưa lấy được' : 'chưa có giá'}</span>
+                )}
+              </div>
+              {hasPrice && (w.last_airline || w.last_depart_time) && (
+                <p className="mt-1 flex items-center gap-1.5 text-xs text-ink-muted">
+                  <PlaneTakeoff size={11} className="text-brand-400 shrink-0" />
+                  {w.last_airline && <span className="font-medium text-ink-soft">{w.last_airline}</span>}
+                  {w.last_depart_time && <span>· {fmtHm(w.last_depart_time)}</span>}
+                  {w.last_flight_no && <span className="text-ink-faint">· {w.last_flight_no}</span>}
+                </p>
+              )}
+              <div className="mt-1 flex items-center justify-between gap-2 text-[11px]">
+                {hit ? <span className="inline-flex items-center gap-1 font-semibold text-success-700"><BellRing size={11} /> Đã đạt giá mong muốn!</span>
+                  : w.last_check_ok === false && w.last_error ? <span className="truncate text-warning-600" title={w.last_error}>{w.last_error}</span>
+                  : overTarget != null ? <span className="text-ink-muted" title={`Cao hơn giá mong muốn ${formatCurrency(overTarget)}`}>cao hơn {formatCompact(overTarget)}</span>
+                  : <span />}
+                <span className={`ml-auto shrink-0 ${stale ? 'text-warning-600' : 'text-ink-faint'}`} title={stale ? 'Giá đã cũ (>24h) — worker canh thưa do hạn mức' : ''}>
+                  {w.last_checked_at ? fmtAgo(w.last_checked_at) : 'chưa chạy'}{stale ? ' · cũ' : ''}
+                </span>
+              </div>
+            </div>
+          )}
+
+          {w.notes && <p className="mt-2 text-xs italic text-ink-muted">{w.notes}</p>}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-1.5 border-t border-surface-border px-3 py-2.5">
+          {active ? (
+            <>
+              {w.status === 'watching' && <Button size="xs" variant="secondary" onClick={() => setStatus(w, 'quoted')}>Đã báo giá</Button>}
+              <Button size="xs" variant="success" icon={ShoppingCart} onClick={() => openBooking(w)}>Đã đặt</Button>
+              <Button size="xs" variant="ghost" onClick={() => setStatus(w, 'cancelled')}>Huỷ</Button>
+              {w.route && w.depart_date && (
+                <Button size="xs" variant="soft" icon={RefreshCw} loading={checkingId === w.id} onClick={() => checkNow(w)} title="Lấy giá hiện tại ngay (mất vài chục giây)">
+                  {checkingId === w.id ? 'Đang lấy…' : 'Lấy giá ngay'}
+                </Button>
+              )}
+            </>
+          ) : (
+            <Button size="xs" variant="secondary" icon={RotateCcw} onClick={() => setStatus(w, 'watching')}>Canh lại</Button>
+          )}
+          {(w.auto_track || w.last_checked_at) && (
+            <Button size="xs" variant="ghost" icon={History} onClick={() => openHistory(w)} title="Lịch sử giá">Lịch sử</Button>
+          )}
+          <div className="ml-auto flex gap-0.5">
+            <IconButton icon={Pencil} title="Sửa" variant="primary" onClick={() => openEdit(w)} />
+            <IconButton icon={Trash2} title="Xoá" variant="danger" onClick={() => remove(w)} />
+          </div>
+        </div>
+      </Card>
+    );
+  };
+
+  if (disabled) {
+    return (
+      <div>
+        <PageHeader icon={PlaneTakeoff} title="Canh vé" description="Theo dõi giá vé cho khách và báo khi tới giá mong muốn." />
+        <Card>
+          <EmptyState icon={Lock} title="Tính năng Canh vé chưa được bật cho tài khoản này" description="Liên hệ quản trị viên để bật tính năng." />
+        </Card>
+      </div>
+    );
+  }
 
   return (
-    <div className="min-h-screen bg-gray-50 p-4 sm:p-6">
-      <div className="max-w-6xl mx-auto">
-        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-          <h2 className="flex items-center gap-2 text-2xl font-bold text-gray-900"><PlaneTakeoff /> Canh vé</h2>
-          <button onClick={openAdd} className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold text-sm">
-            <Plus size={18} /> Thêm canh vé
-          </button>
-        </div>
+    <div>
+      <PageHeader
+        icon={PlaneTakeoff}
+        title="Canh vé"
+        description="Theo dõi giá vé cho khách và báo khi tới giá mong muốn."
+        actions={<Button icon={Plus} onClick={openAdd}>Thêm canh vé</Button>}
+      />
 
-        <div className="flex flex-col sm:flex-row gap-3 mb-4">
-          <div className="relative flex-1">
-            <Search className="absolute left-3 top-2.5 text-gray-400" size={18} />
-            <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Tìm khách, SĐT, hành trình…"
-              className="w-full pl-10 pr-4 py-2 border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none"
-            />
-          </div>
-          <div className="flex gap-1 bg-white border-2 border-gray-200 rounded-lg p-1">
-            {FILTERS.map((f) => (
-              <button
-                key={f.key}
-                onClick={() => setFilterStatus(f.key)}
-                className={`px-3 py-1.5 rounded-md text-sm font-semibold transition ${filterStatus === f.key ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-100'}`}
-              >
-                {f.label}
-              </button>
-            ))}
-          </div>
-        </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+        <StatCard icon={Radar} label="Đang canh" value={stats.active} sub={`${stats.auto} tự động`} tone="brand" onClick={() => setFilterStatus('active')} />
+        <StatCard icon={BellRing} label="Đã đạt giá" value={stats.hit} sub="Giá hiện tại ≤ mong muốn" tone={stats.hit > 0 ? 'success' : 'gray'} />
+        <StatCard icon={CheckCircle2} label="Đã đặt" value={stats.booked} tone="purple" onClick={() => setFilterStatus('booked')} />
+        <StatCard icon={Ticket} label="Tổng yêu cầu" value={watches.length} tone="gray" onClick={() => setFilterStatus('all')} />
+      </div>
 
-        {loading && <p className="text-gray-500">Đang tải…</p>}
-        {error && <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-red-700">{error}</div>}
-
-        {!loading && !error && filtered.length === 0 && (
-          <div className="text-center text-gray-400 py-16">
-            <Ticket size={48} className="mx-auto mb-3 opacity-40" />
-            <p>Chưa có yêu cầu canh vé nào. Bấm <b>Thêm canh vé</b> để tạo.</p>
-          </div>
-        )}
-
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          {filtered.map((w) => {
-            const d = daysUntil(w.depart_date);
-            const active = w.status === 'watching' || w.status === 'quoted';
-            // Tô viền theo độ gấp (chỉ với yêu cầu còn theo dõi).
-            const urgency = !active || d === null ? 'border-gray-200'
-              : d < 0 ? 'border-gray-300'
-              : d <= 2 ? 'border-red-400'
-              : d <= 6 ? 'border-amber-400'
-              : 'border-emerald-300';
-            const urgencyText = d === null ? '' : d < 0 ? `${-d} ngày trước` : d === 0 ? 'Hôm nay' : `còn ${d} ngày`;
-            const urgencyCls = d === null ? '' : d < 0 ? 'text-gray-400' : d <= 2 ? 'text-red-600' : d <= 6 ? 'text-amber-600' : 'text-emerald-600';
-            return (
-              <div key={w.id} className={`bg-white rounded-xl border-2 ${urgency} shadow-sm p-4 flex flex-col`}>
-                <div className="flex items-start justify-between gap-2 mb-2">
-                  <div className="min-w-0">
-                    <p className="font-bold text-gray-900 truncate">{w.customer_name}</p>
-                    {w.phone_number && <p className="text-xs text-gray-500">{w.phone_number}</p>}
-                  </div>
-                  <span className={`px-2 py-0.5 rounded-full text-xs font-semibold shrink-0 ${STATUS[w.status]?.cls}`}>{STATUS[w.status]?.label}</span>
-                </div>
-
-                <div className="flex items-center gap-2 text-sm text-gray-700 mb-1">
-                  <PlaneTakeoff size={15} className="text-blue-500 shrink-0" />
-                  <span className="font-semibold">{w.route || '—'}</span>
-                  {w.airline && <span className="text-xs text-gray-400">· {w.airline}</span>}
-                </div>
-                <p className="text-sm text-gray-600">
-                  {fmtDate(w.depart_date) || '—'}{w.return_date ? ` → ${fmtDate(w.return_date)}` : ''}
-                  {w.pax > 1 && <span className="text-gray-400"> · {w.pax} khách</span>}
-                  {active && urgencyText && <span className={`ml-2 font-semibold ${urgencyCls}`}>({urgencyText})</span>}
-                </p>
-                <p className="text-sm mt-1">Giá mong muốn: <span className="font-semibold text-gray-900">{Number(w.target_price) > 0 ? formatCurrency(w.target_price) : '—'}</span></p>
-
-                {/* Khối auto canh giá: giá lấy gần nhất + trạng thái */}
-                {w.auto_track && (() => {
-                  const hasPrice = w.last_price != null && Number(w.last_price) > 0;
-                  const cur = Number(w.last_price) || 0;
-                  const target = Number(w.target_price) || 0;
-                  const hit = hasPrice && target > 0 && cur <= target;
-                  // Xu hướng so lần canh trước: âm = giảm (tốt), dương = tăng.
-                  const prev = Number(w.prev_price) || 0;
-                  const diff = hasPrice && prev > 0 ? cur - prev : null;
-                  // Còn cao hơn giá mong muốn bao nhiêu (khi chưa đạt).
-                  const overTarget = hasPrice && target > 0 && cur > target ? cur - target : null;
-                  return (
-                    <div className={`mt-2 rounded-lg px-2.5 py-1.5 text-sm ${hit ? 'bg-green-50 border border-green-300' : 'bg-gray-50 border border-gray-200'}`}>
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="flex items-center gap-1.5 text-gray-600">
-                          <Radar size={14} className="text-blue-500" /> Auto canh giá
-                        </span>
-                        {hasPrice ? (
-                          <span className="flex items-center gap-1.5">
-                            {diff != null && diff !== 0 && (
-                              <span
-                                className={`flex items-center gap-0.5 text-[11px] font-semibold ${diff < 0 ? 'text-green-600' : 'text-red-500'}`}
-                                title={`${diff < 0 ? 'Giảm' : 'Tăng'} ${formatCurrency(Math.abs(diff))} so lần canh trước`}
-                              >
-                                {diff < 0 ? <TrendingDown size={12} /> : <TrendingUp size={12} />}{compactVnd(diff)}
-                              </span>
-                            )}
-                            <span className={`font-bold ${hit ? 'text-green-700' : 'text-gray-900'}`}>{formatCurrency(w.last_price)}</span>
-                          </span>
-                        ) : (
-                          <span className="text-xs text-gray-400">{w.last_check_ok === false ? 'chưa lấy được' : 'chưa có giá'}</span>
-                        )}
-                      </div>
-
-                      {/* Hãng + giờ bay + số hiệu chuyến rẻ nhất lấy được */}
-                      {hasPrice && (w.last_airline || w.last_depart_time) && (
-                        <div className="flex items-center gap-1.5 text-xs text-gray-600 mt-1">
-                          <PlaneTakeoff size={12} className="text-blue-500 shrink-0" />
-                          {w.last_airline && <span className="font-medium">{w.last_airline}</span>}
-                          {w.last_depart_time && <span className="text-gray-500">· {fmtHm(w.last_depart_time)}</span>}
-                          {w.last_flight_no && <span className="text-gray-400">· {w.last_flight_no}</span>}
-                        </div>
-                      )}
-
-                      <div className="flex items-center justify-between gap-2 mt-0.5">
-                        {hit && <span className="flex items-center gap-1 text-xs font-semibold text-green-700"><BellRing size={12} /> Đã đạt giá mong muốn!</span>}
-                        {!hit && w.last_check_ok === false && w.last_error && (
-                          <span className="text-xs text-amber-600 truncate" title={w.last_error}>{w.last_error}</span>
-                        )}
-                        {!hit && overTarget != null && (
-                          <span className="text-xs text-gray-500" title={`Cao hơn giá mong muốn ${formatCurrency(overTarget)}`}>cao hơn {compactVnd(overTarget)}</span>
-                        )}
-                        <span
-                          className={`text-[11px] ml-auto ${isStale(w.last_checked_at) ? 'text-amber-600' : 'text-gray-400'}`}
-                          title={isStale(w.last_checked_at) ? 'Giá đã cũ (>24h) — worker canh thưa do hạn mức' : ''}
-                        >
-                          {w.last_checked_at ? fmtAgo(w.last_checked_at) : 'chưa chạy'}{isStale(w.last_checked_at) ? ' · cũ' : ''}
-                        </span>
-                      </div>
-                    </div>
-                  );
-                })()}
-
-                {w.notes && <p className="text-xs text-gray-500 mt-1 italic">{w.notes}</p>}
-
-                <div className="flex flex-wrap items-center gap-1.5 mt-3 pt-3 border-t">
-                  {active && (
-                    <>
-                      {w.status === 'watching' && (
-                        <button onClick={() => setStatus(w, 'quoted')} className="px-2 py-1 rounded-md bg-amber-100 text-amber-700 text-xs font-semibold hover:bg-amber-200">Đã báo giá</button>
-                      )}
-                      <button onClick={() => openBooking(w)} className="px-2 py-1 rounded-md bg-green-600 text-white text-xs font-semibold hover:bg-green-700">Đã đặt → tạo công nợ</button>
-                      <button onClick={() => setStatus(w, 'cancelled')} className="px-2 py-1 rounded-md bg-gray-100 text-gray-600 text-xs font-semibold hover:bg-gray-200">Hủy</button>
-                    </>
-                  )}
-                  {!active && (
-                    <button onClick={() => setStatus(w, 'watching')} className="px-2 py-1 rounded-md bg-blue-100 text-blue-700 text-xs font-semibold hover:bg-blue-200">Canh lại</button>
-                  )}
-                  {active && w.route && w.depart_date && (
-                    <button
-                      onClick={() => checkNow(w)}
-                      disabled={checkingId === w.id}
-                      className="flex items-center gap-1 px-2 py-1 rounded-md bg-indigo-100 text-indigo-700 text-xs font-semibold hover:bg-indigo-200 disabled:opacity-60"
-                      title="Lấy giá hiện tại ngay (mất vài chục giây)"
-                    >
-                      <RefreshCw size={12} className={checkingId === w.id ? 'animate-spin' : ''} />
-                      {checkingId === w.id ? 'Đang lấy…' : 'Lấy giá ngay'}
-                    </button>
-                  )}
-                  {(w.auto_track || w.last_checked_at) && (
-                    <button onClick={() => openHistory(w)} className="flex items-center gap-1 px-2 py-1 rounded-md bg-gray-100 text-gray-600 text-xs font-semibold hover:bg-gray-200" title="Lịch sử giá">
-                      <TrendingDown size={12} /> Lịch sử
-                    </button>
-                  )}
-                  <div className="ml-auto flex gap-1">
-                    <button onClick={() => openEdit(w)} className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg" title="Sửa"><Edit2 size={15} /></button>
-                    <button onClick={() => remove(w)} className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg" title="Xóa"><Trash2 size={15} /></button>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
+      <div className="card mb-4 p-3 flex flex-col lg:flex-row lg:items-center gap-2.5">
+        <SearchInput value={search} onChange={setSearch} placeholder="Tìm khách, SĐT, hành trình, hãng…" className="lg:w-80" />
+        <Segmented value={filterStatus} onChange={setFilterStatus} options={FILTERS} />
+        <div className="flex items-center gap-2 lg:ml-auto text-sm text-ink-muted">
+          <span>{filtered.length} yêu cầu</span>
+          <IconButton icon={RefreshCw} title="Tải lại" onClick={() => load({ silent: true })} className={refreshing ? 'animate-spin' : ''} />
         </div>
       </div>
 
-      {/* Form thêm/sửa */}
-      {showForm && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 p-4 overflow-y-auto">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg my-8">
-            <div className="flex items-center justify-between border-b px-6 py-4">
-              <h3 className="text-lg font-bold">{editingId ? 'Sửa canh vé' : 'Thêm canh vé'}</h3>
-              <button onClick={() => setShowForm(false)} className="text-gray-400 hover:text-gray-700"><X size={22} /></button>
-            </div>
-            <div className="px-6 py-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className="block text-sm text-gray-600 mb-1">Tên khách hàng *</label>
-                <input list="tw-customers" value={form.customerName} onChange={(e) => onCustomerName(e.target.value)} className="w-full border rounded-lg px-3 py-2" />
-                <datalist id="tw-customers">{customers.map((c) => <option key={c.id} value={c.name} />)}</datalist>
-              </div>
-              <div>
-                <label className="block text-sm text-gray-600 mb-1">Số điện thoại</label>
-                <input value={form.phoneNumber} onChange={(e) => setForm({ ...form, phoneNumber: e.target.value })} className="w-full border rounded-lg px-3 py-2" />
-              </div>
-              <div>
-                <label className="block text-sm text-gray-600 mb-1">Hành trình</label>
-                <input list="tw-routes" value={form.route} onChange={(e) => setForm({ ...form, route: e.target.value })} placeholder="VD: SGN-HAN" className="w-full border rounded-lg px-3 py-2" />
-                <datalist id="tw-routes">{routes.map((r) => <option key={r} value={r} />)}</datalist>
-              </div>
-              <div>
-                <label className="block text-sm text-gray-600 mb-1">Hãng (tùy chọn)</label>
-                <input value={form.airline} onChange={(e) => setForm({ ...form, airline: e.target.value })} placeholder="VD: Vietjet" className="w-full border rounded-lg px-3 py-2" />
-              </div>
-              <div>
-                <label className="block text-sm text-gray-600 mb-1">Ngày đi</label>
-                <VnDatePicker value={form.departDate} onChange={(v) => setForm({ ...form, departDate: v })} />
-              </div>
-              <div>
-                <label className="block text-sm text-gray-600 mb-1">Ngày về <span className="text-xs text-gray-400">(khứ hồi)</span></label>
-                <VnDatePicker value={form.returnDate} onChange={(v) => setForm({ ...form, returnDate: v })} />
-              </div>
-              <div>
-                <label className="block text-sm text-gray-600 mb-1">Số khách</label>
-                <input type="number" min="1" value={form.pax} onChange={(e) => setForm({ ...form, pax: e.target.value })} className="w-full border rounded-lg px-3 py-2" />
-              </div>
-              <div>
-                <label className="block text-sm text-gray-600 mb-1">Giá mong muốn</label>
-                <MoneyInput value={form.targetPrice} onChange={(v) => setForm({ ...form, targetPrice: v })} className="w-full border rounded-lg px-3 py-2" placeholder="VD: 2.000.000" />
-                <p className="text-[11px] text-gray-400 mt-1">
-                  {form.returnDate
-                    ? 'Có Ngày về → so với TỔNG giá khứ hồi (đi + về), tính cho 1 khách.'
-                    : 'Một chiều → so với giá chiều đi, tính cho 1 khách.'}
-                </p>
-              </div>
-              <div className="sm:col-span-2">
-                <label className="block text-sm text-gray-600 mb-1">Trạng thái</label>
-                <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })} className="w-full border rounded-lg px-3 py-2">
-                  {Object.entries(STATUS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
-                </select>
-              </div>
-              <div className="sm:col-span-2">
-                <label className="block text-sm text-gray-600 mb-1">Ghi chú</label>
-                <input value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="VD: khách muốn bay sáng, giá dưới 2tr" className="w-full border rounded-lg px-3 py-2" />
-              </div>
+      <ErrorBanner message={error} onRetry={load} />
 
-              {/* Bật auto canh giá — chỉ ý nghĩa khi đã khai hãng được hỗ trợ + có hành trình + ngày */}
-              <div className="sm:col-span-2 rounded-lg bg-blue-50 border border-blue-200 p-3">
-                <label className="flex items-start gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={form.autoTrack}
-                    onChange={(e) => setForm({ ...form, autoTrack: e.target.checked })}
-                    className="mt-0.5 h-4 w-4 accent-blue-600"
-                  />
-                  <span>
-                    <span className="flex items-center gap-1.5 text-sm font-semibold text-gray-800"><Radar size={15} className="text-blue-600" /> Tự động canh giá</span>
-                    <span className="block text-xs text-gray-500 mt-0.5">
-                      Hệ thống tự lấy giá định kỳ và báo khi ≤ giá mong muốn. Cần <b>Hành trình</b> + <b>Ngày đi</b>;
-                      không ghi <b>Hãng</b> = canh giá rẻ nhất của mọi hãng. Có <b>Ngày về</b> = canh TỔNG khứ hồi
-                      (tốn 2 lượt tra giá mỗi lần canh thay vì 1).
-                    </span>
-                  </span>
-                </label>
-                {form.autoTrack && form.airline && !supportsAuto(form.airline) && (
-                  <p className="text-xs text-amber-600 mt-2">
-                    ⚠️ Hãng lạ — hệ thống khớp theo tên hãng trên Google Flights (quen: {AUTO_AIRLINES.join(', ')}).
-                    Để trống ô Hãng nếu muốn canh giá rẻ nhất của mọi hãng.
-                  </p>
-                )}
-              </div>
-            </div>
-            <div className="flex justify-end gap-3 border-t px-6 py-4">
-              <button onClick={() => setShowForm(false)} className="px-5 py-2 bg-gray-200 rounded-lg font-semibold text-sm">Huỷ</button>
-              <button onClick={save} className="px-5 py-2 bg-blue-600 text-white rounded-lg font-semibold text-sm">Lưu</button>
-            </div>
-          </div>
+      {loading ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          {[0, 1, 2].map((i) => <Card key={i}><Skeleton className="h-5 w-40" /><Skeleton className="mt-3 h-4 w-56" /><Skeleton className="mt-2 h-4 w-32" /><Skeleton className="mt-4 h-14 w-full" /></Card>)}
+        </div>
+      ) : !error && filtered.length === 0 ? (
+        <Card>
+          <EmptyState
+            icon={Ticket}
+            title={watches.length ? 'Không có yêu cầu nào khớp bộ lọc' : 'Chưa có yêu cầu canh vé nào'}
+            description={watches.length ? 'Thử đổi bộ lọc trạng thái hoặc từ khoá.' : 'Thêm yêu cầu, bật tự động canh giá để hệ thống báo khi vé rẻ.'}
+            action={!watches.length && <Button icon={Plus} onClick={openAdd}>Thêm canh vé</Button>}
+          />
+        </Card>
+      ) : (
+        <div className={`grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 ${error ? 'mt-4' : ''}`}>
+          {filtered.map(renderCard)}
         </div>
       )}
+
+      {/* Form thêm/sửa */}
+      <Modal
+        open={!!form}
+        onClose={closeForm}
+        icon={PlaneTakeoff}
+        title={form?.id ? 'Sửa canh vé' : 'Thêm canh vé'}
+        size="lg"
+        footer={(
+          <>
+            <Button variant="secondary" onClick={closeForm}>Huỷ</Button>
+            <Button loading={saving} onClick={save}>{form?.id ? 'Lưu thay đổi' : 'Thêm mới'}</Button>
+          </>
+        )}
+      >
+        {form && (
+          <form onSubmit={(e) => { e.preventDefault(); save(); }} className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+            <Field label="Tên khách hàng" required htmlFor="tw-name">
+              <Input id="tw-name" list="tw-customers" autoComplete="off" value={form.customerName} onChange={(e) => onCustomerName(e.target.value)} />
+              <datalist id="tw-customers">{customers.map((c) => <option key={c.id} value={c.name} />)}</datalist>
+            </Field>
+            <Field label="Số điện thoại" htmlFor="tw-phone">
+              <Input id="tw-phone" value={form.phoneNumber} onChange={(e) => setField('phoneNumber', e.target.value)} inputMode="tel" />
+            </Field>
+            <Field label="Hành trình" htmlFor="tw-route">
+              <Input id="tw-route" list="tw-routes" autoComplete="off" value={form.route} onChange={(e) => setField('route', e.target.value.toUpperCase())} placeholder="VD: SGN-HAN" />
+              <datalist id="tw-routes">{routes.map((r) => <option key={r} value={r} />)}</datalist>
+            </Field>
+            <Field label="Hãng" hint="Để trống = canh rẻ nhất mọi hãng" htmlFor="tw-airline">
+              <Input id="tw-airline" list="tw-airlines" autoComplete="off" value={form.airline} onChange={(e) => setField('airline', e.target.value)} placeholder="VD: Vietjet" />
+              <datalist id="tw-airlines">{AUTO_AIRLINES.map((a) => <option key={a} value={a} />)}</datalist>
+            </Field>
+            <Field label="Ngày đi">
+              <DateField value={form.departDate} onChange={(v) => setField('departDate', v)} />
+            </Field>
+            <Field label="Ngày về" hint="Có ngày về = khứ hồi">
+              <DateField value={form.returnDate} onChange={(v) => setField('returnDate', v)} />
+            </Field>
+            <Field label="Số khách" htmlFor="tw-pax">
+              <Input id="tw-pax" type="number" min="1" value={form.pax} onChange={(e) => setField('pax', e.target.value)} />
+            </Field>
+            <Field
+              label="Giá mong muốn"
+              htmlFor="tw-target"
+              hint={form.returnDate ? 'So với TỔNG giá khứ hồi (đi + về), tính cho 1 khách.' : 'So với giá chiều đi, tính cho 1 khách.'}
+            >
+              <MoneyField id="tw-target" value={form.targetPrice} onChange={(v) => setField('targetPrice', v)} placeholder="VD: 2.000.000" />
+            </Field>
+            <Field label="Trạng thái" htmlFor="tw-status">
+              <Select id="tw-status" value={form.status} onChange={(e) => setField('status', e.target.value)}>
+                {Object.entries(STATUS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+              </Select>
+            </Field>
+            <Field label="Ghi chú" htmlFor="tw-notes">
+              <Textarea id="tw-notes" rows={1} value={form.notes} onChange={(e) => setField('notes', e.target.value)} placeholder="VD: khách muốn bay sáng, giá dưới 2tr" />
+            </Field>
+
+            {/* Bật auto canh giá */}
+            <div className="sm:col-span-2 rounded-xl border border-brand-100 bg-brand-50 p-3">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="inline-flex items-center gap-1.5 text-sm font-semibold text-ink"><Radar size={15} className="text-brand-600" /> Tự động canh giá</p>
+                  <p className="mt-0.5 text-xs text-ink-muted">
+                    Hệ thống tự lấy giá định kỳ và báo khi ≤ giá mong muốn. Cần <b>Hành trình</b> + <b>Ngày đi</b>;
+                    không ghi <b>Hãng</b> = canh giá rẻ nhất của mọi hãng. Có <b>Ngày về</b> = canh TỔNG khứ hồi
+                    (tốn 2 lượt tra giá mỗi lần canh thay vì 1).
+                  </p>
+                </div>
+                <Switch checked={form.autoTrack} onChange={(v) => setField('autoTrack', v)} />
+              </div>
+              {form.autoTrack && (!form.route || !form.departDate) && (
+                <p className="mt-2 inline-flex items-center gap-1 text-xs text-warning-600"><AlertTriangle size={13} /> Cần nhập Hành trình và Ngày đi để auto canh chạy được.</p>
+              )}
+              {form.autoTrack && form.airline && !supportsAuto(form.airline) && (
+                <p className="mt-2 inline-flex items-start gap-1 text-xs text-warning-600">
+                  <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+                  <span>Hãng lạ — hệ thống khớp theo tên hãng trên Google Flights (quen: {AUTO_AIRLINES.join(', ')}). Để trống ô Hãng nếu muốn canh giá rẻ nhất của mọi hãng.</span>
+                </p>
+              )}
+            </div>
+            <button type="submit" className="hidden" aria-hidden />
+          </form>
+        )}
+      </Modal>
 
       {/* Modal tạo công nợ khi đặt được vé */}
-      {booking && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 p-4 overflow-y-auto">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md my-8">
-            <div className="flex items-center justify-between border-b px-6 py-4">
-              <h3 className="text-lg font-bold">Tạo công nợ vé</h3>
-              <button onClick={() => setBooking(null)} className="text-gray-400 hover:text-gray-700"><X size={22} /></button>
-            </div>
-            <div className="px-6 py-4 space-y-3">
-              <p className="text-sm text-gray-600">
-                <b>{booking.watch.customer_name}</b> · {booking.watch.route || '—'} · {fmtDate(booking.watch.depart_date) || '—'}
+      <Modal
+        open={!!booking}
+        onClose={() => setBooking(null)}
+        icon={ShoppingCart}
+        title="Tạo công nợ vé"
+        subtitle={booking ? `${booking.watch.customer_name} · ${booking.watch.route || '—'} · ${formatDate(booking.watch.depart_date) || '—'}` : undefined}
+        size="sm"
+        footer={(
+          <>
+            <Button variant="secondary" onClick={() => setBooking(null)}>Huỷ</Button>
+            <Button variant="success" icon={CheckCircle2} loading={bookingSaving} onClick={confirmBooking}>Tạo công nợ</Button>
+          </>
+        )}
+      >
+        {booking && (
+          <form onSubmit={(e) => { e.preventDefault(); confirmBooking(); }} className="space-y-3.5">
+            <Field label="Giá vé bán" required htmlFor="bk-amount">
+              <MoneyField id="bk-amount" value={booking.ticketAmount} onChange={(v) => setBooking({ ...booking, ticketAmount: v })} placeholder="Giá bán cho khách" />
+            </Field>
+            <Field label="Giá gốc" hint="Tuỳ chọn — giá nhập vé" htmlFor="bk-cost">
+              <MoneyField id="bk-cost" value={booking.costAmount} onChange={(v) => setBooking({ ...booking, costAmount: v })} placeholder="Giá nhập vé" />
+            </Field>
+            {num(booking.ticketAmount) > 0 && (
+              <p className="rounded-xl bg-surface-subtle px-3 py-2 text-sm text-ink-muted">
+                Lợi nhuận dự kiến: <b className={`tabular ${num(booking.ticketAmount) - num(booking.costAmount) >= 0 ? 'text-success-600' : 'text-danger-600'}`}>{formatCurrency(num(booking.ticketAmount) - num(booking.costAmount))}</b>
               </p>
-              <div>
-                <label className="block text-sm text-gray-600 mb-1">Giá vé bán *</label>
-                <MoneyInput value={booking.ticketAmount} onChange={(v) => setBooking({ ...booking, ticketAmount: v })} className="w-full border rounded-lg px-3 py-2" placeholder="Giá bán cho khách" />
-              </div>
-              <div>
-                <label className="block text-sm text-gray-600 mb-1">Giá gốc (tùy chọn)</label>
-                <MoneyInput value={booking.costAmount} onChange={(v) => setBooking({ ...booking, costAmount: v })} className="w-full border rounded-lg px-3 py-2" placeholder="Giá nhập vé" />
-              </div>
-              <p className="text-xs text-gray-400">Sẽ tạo 1 dòng trong Công nợ vé và đánh dấu yêu cầu là “Đã đặt”.</p>
-            </div>
-            <div className="flex justify-end gap-3 border-t px-6 py-4">
-              <button onClick={() => setBooking(null)} className="px-5 py-2 bg-gray-200 rounded-lg font-semibold text-sm">Huỷ</button>
-              <button onClick={confirmBooking} className="px-5 py-2 bg-green-600 text-white rounded-lg font-semibold text-sm">Tạo công nợ</button>
-            </div>
-          </div>
-        </div>
-      )}
+            )}
+            <p className="text-xs text-ink-faint">Sẽ tạo 1 dòng trong Công nợ vé và đánh dấu yêu cầu là “Đã đặt”.</p>
+            <button type="submit" className="hidden" aria-hidden />
+          </form>
+        )}
+      </Modal>
 
       {/* Lịch sử giá */}
-      {history && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 p-4 overflow-y-auto">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md my-8">
-            <div className="flex items-center justify-between border-b px-6 py-4">
-              <h3 className="text-lg font-bold flex items-center gap-2"><TrendingDown size={18} /> Lịch sử giá</h3>
-              <button onClick={() => setHistory(null)} className="text-gray-400 hover:text-gray-700"><X size={22} /></button>
-            </div>
-            <div className="px-6 py-4">
-              <p className="text-sm text-gray-600 mb-3">
-                <b>{history.watch.route || '—'}</b> · {history.watch.airline || ''} · {fmtDate(history.watch.depart_date) || '—'}
-              </p>
-              {history.loading && <p className="text-gray-500">Đang tải…</p>}
-              {!history.loading && history.rows.length === 0 && (
-                <p className="text-gray-400 text-sm">Chưa có lần lấy giá nào.</p>
-              )}
-              {!history.loading && history.rows.length > 0 && (
-                <div className="max-h-80 overflow-y-auto -mx-2">
-                  <table className="w-full text-sm">
-                    <thead className="text-gray-400 text-xs">
-                      <tr><th className="text-left px-2 py-1">Thời điểm · chuyến</th><th className="text-right px-2 py-1">Giá</th></tr>
-                    </thead>
-                    <tbody>
-                      {history.rows.map((s) => {
-                        const target = Number(history.watch.target_price) || 0;
-                        const hit = s.ok && s.price != null && target > 0 && Number(s.price) <= target;
-                        return (
-                          <tr key={s.id} className="border-t align-top">
-                            <td className="px-2 py-1.5">
-                              <div className="text-gray-600">{new Date(s.created_at).toLocaleString('vi-VN')}</div>
-                              {s.ok && (s.airline || s.depart_time) && (
-                                <div className="text-xs text-gray-400 flex items-center gap-1 mt-0.5">
-                                  <PlaneTakeoff size={11} className="text-blue-400 shrink-0" />
-                                  {s.airline && <span>{s.airline}</span>}
-                                  {s.depart_time && <span>· {fmtHm(s.depart_time)}</span>}
-                                  {s.flight_no && <span className="text-gray-300">· {s.flight_no}</span>}
-                                </div>
-                              )}
-                            </td>
-                            <td className={`px-2 py-1.5 text-right font-semibold ${hit ? 'text-green-700' : s.ok ? 'text-gray-900' : 'text-amber-600'}`}>
-                              {s.ok && s.price != null ? formatCurrency(s.price) : <span className="text-xs font-normal" title={s.error || ''}>lỗi</span>}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+      <Modal
+        open={!!history}
+        onClose={() => setHistory(null)}
+        icon={History}
+        title="Lịch sử giá"
+        subtitle={history ? `${history.watch.route || '—'}${history.watch.airline ? ` · ${history.watch.airline}` : ''} · ${formatDate(history.watch.depart_date) || '—'}` : undefined}
+        size="lg"
+        footer={<Button variant="secondary" onClick={() => setHistory(null)}>Đóng</Button>}
+      >
+        {history && (history.loading ? (
+          <div className="space-y-3"><Skeleton className="h-40 w-full" /><Skeleton className="h-4 w-full" /><Skeleton className="h-4 w-full" /></div>
+        ) : history.rows.length === 0 ? (
+          <EmptyState icon={History} title="Chưa có lần lấy giá nào" description="Bật tự động canh giá hoặc bấm “Lấy giá ngay” trên thẻ." compact />
+        ) : (
+          <div className="space-y-4">
+            {chartData.length >= 2 && (
+              <div className="rounded-xl border border-surface-border bg-white p-3">
+                <div className="mb-1 flex items-center justify-between text-xs text-ink-muted">
+                  <span>Giá qua các lần canh</span>
+                  {num(history.watch.target_price) > 0 && <span className="inline-flex items-center gap-1.5"><span className="inline-block h-0 w-4 border-t-2 border-dashed border-ink-faint" /> Mong muốn {formatCurrency(history.watch.target_price)}</span>}
                 </div>
-              )}
-            </div>
-            <div className="flex justify-end border-t px-6 py-4">
-              <button onClick={() => setHistory(null)} className="px-5 py-2 bg-gray-200 rounded-lg font-semibold text-sm">Đóng</button>
+                <div className="h-44">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={chartData} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
+                      <CartesianGrid vertical={false} stroke="#e2e8f0" strokeDasharray="2 4" />
+                      <XAxis dataKey="t" type="number" domain={['dataMin', 'dataMax']} scale="time" tickFormatter={(v) => formatDate(new Date(v))} tick={{ fontSize: 11, fill: '#64748b' }} axisLine={{ stroke: '#e2e8f0' }} tickLine={false} minTickGap={32} />
+                      <YAxis tickFormatter={(v) => formatCompact(v)} tick={{ fontSize: 11, fill: '#64748b' }} axisLine={false} tickLine={false} width={48} domain={['auto', 'auto']} />
+                      <Tooltip
+                        cursor={{ stroke: '#94a3b8', strokeWidth: 1 }}
+                        content={({ active, payload }) => {
+                          if (!active || !payload?.length) return null;
+                          const p = payload[0].payload;
+                          return (
+                            <div className="rounded-lg border border-surface-border bg-white px-2.5 py-1.5 text-xs shadow-pop">
+                              <p className="text-ink-muted">{p.label}</p>
+                              <p className="font-semibold tabular text-ink">{formatCurrency(p.price)}</p>
+                              {(p.airline || p.flightNo) && <p className="text-ink-muted">{[p.airline, p.flightNo].filter(Boolean).join(' · ')}</p>}
+                            </div>
+                          );
+                        }}
+                      />
+                      {num(history.watch.target_price) > 0 && <ReferenceLine y={num(history.watch.target_price)} stroke="#94a3b8" strokeDasharray="4 4" />}
+                      <Line type="monotone" dataKey="price" stroke="#2447e3" strokeWidth={2} dot={{ r: 3, fill: '#2447e3', stroke: '#fff', strokeWidth: 1.5 }} activeDot={{ r: 5 }} isAnimationActive={false} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            )}
+            <div className="card overflow-hidden">
+              <div className="max-h-72 overflow-y-auto">
+                <table className="w-full text-[13.5px]">
+                  <thead className="sticky top-0">
+                    <tr className="bg-surface-muted text-[12px] uppercase tracking-wide text-ink-muted">
+                      <th className="px-3 py-2 text-left font-semibold">Thời điểm · chuyến</th>
+                      <th className="px-3 py-2 text-right font-semibold">Giá</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-surface-border">
+                    {history.rows.map((s) => {
+                      const target = num(history.watch.target_price);
+                      const hit = s.ok && s.price != null && target > 0 && num(s.price) <= target;
+                      return (
+                        <tr key={s.id} className="align-top hover:bg-surface-muted">
+                          <td className="px-3 py-2">
+                            <div className="text-ink">{formatDateTime(s.created_at)}</div>
+                            {s.ok && (s.airline || s.depart_time) && (
+                              <div className="mt-0.5 flex items-center gap-1 text-xs text-ink-muted">
+                                <PlaneTakeoff size={11} className="text-brand-400 shrink-0" />
+                                {s.airline && <span>{s.airline}</span>}
+                                {s.depart_time && <span>· {fmtHm(s.depart_time)}</span>}
+                                {s.flight_no && <span className="text-ink-faint">· {s.flight_no}</span>}
+                              </div>
+                            )}
+                          </td>
+                          <td className={`px-3 py-2 text-right font-semibold tabular ${hit ? 'text-success-700' : s.ok ? 'text-ink' : ''}`}>
+                            {s.ok && s.price != null ? (
+                              <span className="inline-flex items-center gap-1">{hit && <BellRing size={12} />}{formatCurrency(s.price)}</span>
+                            ) : (
+                              <Badge tone="warning">{s.error ? <span title={s.error}>lỗi</span> : 'lỗi'}</Badge>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
-        </div>
-      )}
-
-      <ConfirmDialog
-        open={!!confirmState}
-        message={confirmState?.message}
-        confirmText={confirmState?.confirmText}
-        onCancel={closeConfirm}
-        onConfirm={() => { confirmState?.onConfirm?.(); closeConfirm(); }}
-      />
-      <Toast toast={toast} />
+        ))}
+      </Modal>
     </div>
   );
 }

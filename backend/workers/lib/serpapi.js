@@ -9,6 +9,7 @@
 // Chạm hạn mức → ném lỗi, caller tự rơi về fallback.
 const pool = require('../../config/database');
 const { parseRoute, parseDate } = require('./util');
+const { currentMonthLocal } = require('../../utils/dates');
 const { resolveKey } = require('../adapters');
 
 const TIMEOUT_MS = parseInt(process.env.SERPAPI_TIMEOUT_MS || '30000', 10);
@@ -27,7 +28,7 @@ function monthlyLimit() {
 async function tryConsume() {
   const limit = monthlyLimit();
   if (!(limit > 0)) return false;
-  const period = new Date().toISOString().slice(0, 7); // 'YYYY-MM'
+  const period = currentMonthLocal(); // 'YYYY-MM' theo giờ VN
   const { rows } = await pool.query(
     `INSERT INTO api_usage (provider, period, used) VALUES ('serpapi', $1, 1)
      ON CONFLICT (provider, period)

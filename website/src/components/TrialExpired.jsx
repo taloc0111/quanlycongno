@@ -1,40 +1,37 @@
-import { LogOut, AlertTriangle } from 'lucide-react';
-import { ZALO_URL, ZALO_ENABLED } from '../utils/contact';
+import { LogOut, AlertTriangle, MessageCircle } from 'lucide-react';
+import { ZALO_URL, ZALO_ENABLED, ZALO_NUMBER } from '../utils/contact';
+import { AuthShell } from '../auth/LoginPage';
+import { Button, Badge } from '../ui';
 
 // Màn chặn khi tài khoản dùng thử đã hết hạn (thay vì để các trang lỗi 403 lung tung).
 export default function TrialExpired({ user, onLogout }) {
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-100 to-gray-200 p-4">
-      <div className="w-full max-w-md bg-white rounded-2xl shadow-xl overflow-hidden text-center">
-        <div className="bg-gradient-to-r from-orange-500 to-red-600 px-8 py-8 text-white">
-          <div className="inline-flex items-center justify-center w-16 h-16 bg-white/20 rounded-2xl mb-3">
-            <AlertTriangle size={32} />
-          </div>
-          <h1 className="text-2xl font-bold">Hết hạn dùng thử</h1>
-        </div>
-        <div className="px-8 py-6 space-y-4">
-          <p className="text-gray-600">
-            Tài khoản <b>{user?.username}</b> đã hết 14 ngày dùng thử. Vui lòng liên hệ để nâng cấp và tiếp tục sử dụng.
-          </p>
+    <AuthShell footer={ZALO_ENABLED ? `Hỗ trợ: Zalo ${ZALO_NUMBER}` : null}>
+      <div className="text-center">
+        <span className="mx-auto mb-4 inline-flex h-16 w-16 items-center justify-center rounded-2xl bg-warning-50 text-warning-600">
+          <AlertTriangle size={32} />
+        </span>
+        <Badge tone="warning" dot>Hết hạn dùng thử</Badge>
+        <h1 className="mt-3 text-xl font-bold tracking-tight text-ink">Thời gian dùng thử đã kết thúc</h1>
+        <p className="mt-2 text-sm text-ink-muted">
+          Tài khoản <b className="text-ink">{user?.username}</b> đã hết 14 ngày dùng thử.
+          Dữ liệu của bạn vẫn được giữ nguyên — liên hệ để nâng cấp và tiếp tục sử dụng.
+        </p>
+        <div className="mt-6 space-y-2">
           {ZALO_ENABLED && (
-            <a
-              href={ZALO_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center justify-center gap-2 w-full py-3 rounded-lg bg-[#0068FF] text-white font-semibold hover:brightness-110 transition"
+            <Button
+              block
+              size="lg"
+              icon={MessageCircle}
+              className="bg-[#0068FF] hover:bg-[#0054d6] focus-visible:ring-[#0068FF]/40"
+              onClick={() => window.open(ZALO_URL, '_blank', 'noopener,noreferrer')}
             >
-              <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-white text-[#0068FF] text-xs font-extrabold">Za</span>
               Liên hệ nâng cấp qua Zalo
-            </a>
+            </Button>
           )}
-          <button
-            onClick={onLogout}
-            className="flex items-center justify-center gap-2 w-full py-2.5 rounded-lg bg-gray-100 text-gray-600 font-semibold hover:bg-gray-200 transition"
-          >
-            <LogOut size={16} /> Đăng xuất
-          </button>
+          <Button block variant="secondary" icon={LogOut} onClick={onLogout}>Đăng xuất</Button>
         </div>
       </div>
-    </div>
+    </AuthShell>
   );
 }

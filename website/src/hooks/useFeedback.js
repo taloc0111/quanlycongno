@@ -1,19 +1,19 @@
-import { useState } from 'react';
+// Tương thích ngược: các trang cũ import { useToast, useConfirm } từ đây.
+// Bản mới dùng FeedbackProvider (ui/FeedbackContext) — toast + confirm toàn cục.
+import { useFeedback } from '../ui/FeedbackContext';
 
-// Toast tự ẩn sau 2.5s — dùng kèm <Toast toast={toast} />.
+export { useFeedback };
+
 export function useToast() {
-  const [toast, setToast] = useState(null);
-  const showToast = (message, type = 'success') => {
-    setToast({ message, type });
-    setTimeout(() => setToast(null), 2500);
-  };
-  return { toast, showToast };
+  const { toast } = useFeedback();
+  const showToast = (message, type = 'success') => (type === 'error' ? toast.error(message) : toast.success(message));
+  return { toast: null, showToast };
 }
 
-// Hộp thoại xác nhận — dùng kèm <ConfirmDialog open={!!confirmState} ... />.
 export function useConfirm() {
-  const [confirmState, setConfirmState] = useState(null); // { message, onConfirm, title?, confirmText?, danger? }
-  const askConfirm = (message, onConfirm, opts = {}) => setConfirmState({ message, onConfirm, ...opts });
-  const closeConfirm = () => setConfirmState(null);
-  return { confirmState, askConfirm, closeConfirm };
+  const { confirm } = useFeedback();
+  const askConfirm = (message, onConfirm, opts = {}) => {
+    confirm({ message, ...opts }).then((ok) => { if (ok) onConfirm(); });
+  };
+  return { confirmState: null, askConfirm, closeConfirm: () => {} };
 }

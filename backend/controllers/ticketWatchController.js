@@ -2,11 +2,9 @@
 const pool = require('../config/database');
 const logger = require('../config/logger');
 const { checkWatchById } = require('../workers/fareWatcher');
+const v = require('../utils/validate');
 
 const STATUSES = ['watching', 'quoted', 'booked', 'cancelled'];
-
-// Ép về boolean rõ ràng từ giá trị form (true/false/"true"/1/undefined).
-const toBool = (v) => v === true || v === 'true' || v === 1 || v === '1';
 
 // Danh sách của chính mình: đang canh trước, sắp theo ngày đi gần nhất.
 const getWatches = async (req, res) => {
@@ -25,20 +23,33 @@ const getWatches = async (req, res) => {
   }
 };
 
+// Bảng field body → cột DB + hàm kiểm tra (dùng cho cả create lẫn update từng phần).
+const FIELDS = {
+  customerName: { col: 'customer_name', parse: (x) => v.str(x, { max: 255, required: true, label: 'Tên khách hàng' }) },
+  phoneNumber: { col: 'phone_number', parse: (x) => v.str(x, { max: 20, label: 'Số điện thoại' }) },
+  route: { col: 'route', parse: (x) => v.str(x, { max: 100, label: 'Hành trình' }) },
+  departDate: { col: 'depart_date', parse: (x) => v.dateStr(x, { label: 'Ngày đi' }) },
+  returnDate: { col: 'return_date', parse: (x) => v.dateStr(x, { label: 'Ngày về' }) },
+  airline: { col: 'airline', parse: (x) => v.str(x, { max: 50, label: 'Hãng bay' }) },
+  pax: { col: 'pax', parse: (x) => v.int(x, { min: 1, max: 9, label: 'Số khách' }) ?? 1 },
+  targetPrice: { col: 'target_price', parse: (x) => v.amount(x, { label: 'Giá mong muốn' }) ?? 0 },
+  status: { col: 'status', parse: (x) => v.oneOf(x, STATUSES, { label: 'Trạng thái', fallback: 'watching' }) },
+  notes: { col: 'notes', parse: (x) => v.str(x, { label: 'Ghi chú' }) },
+  autoTrack: { col: 'auto_track', parse: (x) => v.bool(x, { label: 'Tự động canh' }) ?? false },
+};
+
 const createWatch = async (req, res) => {
+  const w = {};
+  for (const [key, def] of Object.entries(FIELDS)) w[key] = def.parse(req.body[key]);
   try {
-    const { customerName, phoneNumber, route, departDate, returnDate, airline, pax, targetPrice, status, notes, autoTrack } = req.body;
-    if (!customerName) return res.status(400).json({ error: 'Tên khách hàng là bắt buộc' });
-    const safeStatus = STATUSES.includes(status) ? status : 'watching';
     const result = await pool.query(
       `INSERT INTO ticket_watches
          (user_id, customer_name, phone_number, route, depart_date, return_date, airline, pax, target_price, status, notes, auto_track)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
       [
-        req.user.id, customerName, phoneNumber || null, route || null,
-        departDate || null, returnDate || null, airline || null,
-        parseInt(pax, 10) || 1, parseFloat(targetPrice) || 0, safeStatus, notes || null,
-        toBool(autoTrack),
+        req.user.id, w.customerName, w.phoneNumber, w.route,
+        w.departDate, w.returnDate, w.airline,
+        w.pax, w.targetPrice, w.status, w.notes, w.autoTrack,
       ]
     );
     res.status(201).json(result.rows[0]);
@@ -48,37 +59,25 @@ const createWatch = async (req, res) => {
   }
 };
 
+// Cập nhật TỪNG PHẦN: field không có trong body = giữ nguyên; field có mặt (kể cả ''
+// hoặc null) = ghi đè ('' → NULL với cột nullable). Nút đổi trạng thái chỉ gửi {status}.
 const updateWatch = async (req, res) => {
+  const id = v.idParam(req.params.id);
+  const sets = [];
+  const params = [id, req.user.id];
+  for (const [key, def] of Object.entries(FIELDS)) {
+    if (!Object.prototype.hasOwnProperty.call(req.body, key)) continue;
+    params.push(def.parse(req.body[key]));
+    sets.push(`${def.col} = $${params.length}`);
+  }
+  if (sets.length === 0) return res.status(400).json({ error: 'Không có trường nào để cập nhật' });
+
   try {
-    const { id } = req.params;
-    const { customerName, phoneNumber, route, departDate, returnDate, airline, pax, targetPrice, status, notes, autoTrack } = req.body;
-    // Cập nhật từng phần: chỉ đổi field nào được gửi (COALESCE giữ giá trị cũ).
     const result = await pool.query(
-      `UPDATE ticket_watches SET
-         customer_name = COALESCE($2, customer_name),
-         phone_number  = $3,
-         route         = $4,
-         depart_date   = $5,
-         return_date   = $6,
-         airline       = $7,
-         pax           = COALESCE($8, pax),
-         target_price  = COALESCE($9, target_price),
-         status        = COALESCE($10, status),
-         notes         = $11,
-         auto_track    = COALESCE($13, auto_track)
-       WHERE id = $1 AND user_id = $12
+      `UPDATE ticket_watches SET ${sets.join(', ')}
+       WHERE id = $1 AND user_id = $2
        RETURNING *`,
-      [
-        id,
-        customerName ?? null,
-        phoneNumber || null, route || null, departDate || null, returnDate || null, airline || null,
-        Number.isInteger(parseInt(pax, 10)) ? parseInt(pax, 10) : null,
-        targetPrice !== undefined ? (parseFloat(targetPrice) || 0) : null,
-        STATUSES.includes(status) ? status : null,
-        notes ?? null,
-        req.user.id,
-        autoTrack === undefined ? null : toBool(autoTrack),
-      ]
+      params
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Ticket watch not found' });
     res.json(result.rows[0]);
@@ -89,8 +88,8 @@ const updateWatch = async (req, res) => {
 };
 
 const deleteWatch = async (req, res) => {
+  const id = v.idParam(req.params.id);
   try {
-    const { id } = req.params;
     const result = await pool.query(
       'DELETE FROM ticket_watches WHERE id = $1 AND user_id = $2 RETURNING id',
       [id, req.user.id]
@@ -105,8 +104,8 @@ const deleteWatch = async (req, res) => {
 
 // Lịch sử giá của 1 yêu cầu (vẽ biểu đồ / xem diễn biến). Mới nhất trước.
 const getSnapshots = async (req, res) => {
+  const id = v.idParam(req.params.id);
   try {
-    const { id } = req.params;
     // Đảm bảo watch thuộc về user trước khi trả lịch sử.
     const own = await pool.query('SELECT id FROM ticket_watches WHERE id = $1 AND user_id = $2', [id, req.user.id]);
     if (own.rows.length === 0) return res.status(404).json({ error: 'Ticket watch not found' });
@@ -124,10 +123,10 @@ const getSnapshots = async (req, res) => {
 };
 
 // Lấy giá NGAY cho 1 yêu cầu (nút bấm tay). Nguồn SerpApi/adapter HTTP — chạy
-// in-process, mất vài giây.
+// in-process, mất vài giây. Rate-limit 3 lần/phút/user ở routes/ticketWatches.js.
 const checkNow = async (req, res) => {
+  const id = v.idParam(req.params.id);
   try {
-    const { id } = req.params;
     const { rows } = await pool.query(
       `SELECT id, route, depart_date FROM ticket_watches WHERE id = $1 AND user_id = $2`,
       [id, req.user.id]

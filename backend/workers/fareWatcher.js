@@ -22,8 +22,21 @@ const { parseRoute } = require('./lib/util');
 const { resolveAdapter, ADAPTERS } = require('./adapters');
 const serpapi = require('./lib/serpapi');
 
-const INTERVAL_MIN = parseInt(process.env.FARE_WATCH_INTERVAL_MIN || '60', 10);
-const ALERT_COOLDOWN_H = parseInt(process.env.FARE_ALERT_COOLDOWN_H || '12', 10);
+// Đọc cấu hình số từ env, kẹp về khoảng hợp lệ (giá trị rác/âm/0 → mặc định).
+// Export để test: parseIntervalMin('abc') → 60, parseIntervalMin('0') → 1.
+function parseIntervalMin(raw, fallback = 60) {
+  const n = Number(raw);
+  if (raw === undefined || raw === null || raw === '' || !Number.isFinite(n)) return fallback;
+  return Math.max(1, Math.floor(n));
+}
+function parseCooldownH(raw, fallback = 12) {
+  const n = Number(raw);
+  if (raw === undefined || raw === null || raw === '' || !Number.isFinite(n)) return fallback;
+  return Math.max(0, n);
+}
+
+const INTERVAL_MIN = parseIntervalMin(process.env.FARE_WATCH_INTERVAL_MIN, 60);
+const ALERT_COOLDOWN_H = parseCooldownH(process.env.FARE_ALERT_COOLDOWN_H, 12);
 // Công tắc gửi email cảnh báo (FARE_ALERT_EMAIL=false để tắt — badge "đạt giá"
 // trên UI vẫn hiện bình thường vì FE tự so last_price ≤ giá mong muốn).
 const ALERT_EMAIL = String(process.env.FARE_ALERT_EMAIL ?? 'true').toLowerCase() !== 'false';
@@ -86,12 +99,14 @@ async function maybeAlert(watch, price) {
     if (ageH < ALERT_COOLDOWN_H) return false; // vừa báo gần đây — bỏ qua
   }
 
-  await pool.query('UPDATE ticket_watches SET alerted_at = CURRENT_TIMESTAMP WHERE id = $1', [watch.id]);
-
-  // Lấy email chủ tài khoản để gửi.
+  // Lấy email chủ tài khoản để gửi. Không có email → không đánh dấu alerted_at (chỉ warn),
+  // để khi bổ sung email thì vòng sau gửi được ngay.
   const { rows } = await pool.query('SELECT email FROM users WHERE id = $1', [watch.user_id]);
   const to = rows[0]?.email;
-  if (!to) return true; // đã đánh dấu alerted, nhưng không có email để gửi
+  if (!to) {
+    logger.warn(`fareWatcher: watch #${watch.id} đạt giá nhưng user #${watch.user_id} chưa có email`);
+    return false;
+  }
 
   const fmt = (n) => new Intl.NumberFormat('vi-VN').format(n) + ' ₫';
   const dep = watch.depart_date ? new Date(watch.depart_date).toLocaleDateString('vi-VN') : '—';
@@ -111,8 +126,13 @@ async function maybeAlert(watch, price) {
       text: `Vé ${watch.route || ''} (${kind}) đạt giá ${fmt(price)} (mong muốn ${fmt(target)}) cho khách ${watch.customer_name}.`,
     });
   } catch (e) {
+    // Gửi lỗi → KHÔNG đánh dấu alerted_at, vòng sau thử lại.
     logger.error('Gửi email cảnh báo canh vé lỗi:', e.message);
+    return false;
   }
+  // Chỉ đánh dấu đã báo SAU KHI gửi thành công (alerted_at chỉ dùng cho cooldown email;
+  // badge "đạt giá" trên UI so last_price ≤ target_price, không phụ thuộc cột này).
+  await pool.query('UPDATE ticket_watches SET alerted_at = CURRENT_TIMESTAMP WHERE id = $1', [watch.id]);
   return true;
 }
 
@@ -206,8 +226,23 @@ async function checkAndStore(watch, { log = () => {}, serpCache = null } = {}) {
   return result;
 }
 
-// Chạy 1 vòng cho tất cả watch auto_track còn theo dõi.
-async function runOnce({ log = (m) => logger.info(m) } = {}) {
+// Chạy 1 vòng cho tất cả watch auto_track còn theo dõi. Vòng trước chưa xong (SerpApi chậm,
+// interval ngắn) → vòng mới bỏ qua, không chạy chồng. `check` cho phép test thay checkAndStore.
+let inFlight = false;
+async function runOnce({ log = (m) => logger.info(m), check = checkAndStore } = {}) {
+  if (inFlight) {
+    log('fareWatcher: vòng trước chưa xong — bỏ qua vòng này.');
+    return { skipped: true, checked: 0 };
+  }
+  inFlight = true;
+  try {
+    return await runRound({ log, check });
+  } finally {
+    inFlight = false;
+  }
+}
+
+async function runRound({ log, check }) {
   const { rows: watches } = await pool.query(
     `SELECT id, user_id, customer_name, route, depart_date, return_date, airline, pax, target_price, alerted_at
        FROM ticket_watches
@@ -224,9 +259,15 @@ async function runOnce({ log = (m) => logger.info(m) } = {}) {
   let ok = 0;
   let fail = 0;
   for (const w of watches) {
-    const r = await checkAndStore(w, { log, serpCache });
-    if (r.ok) { ok++; log(`✔ #${w.id} ${w.route} ${w.airline || r.airline}: ${r.price?.toLocaleString('vi-VN')}₫${r.alerted ? ' (ĐÃ BÁO GIÁ)' : ''}`); }
-    else { fail++; log(`✖ #${w.id} ${w.route} ${w.airline}: ${r.error}`); }
+    // Một watch lỗi bất ngờ (DB, bug adapter) không làm hỏng cả vòng.
+    try {
+      const r = await check(w, { log, serpCache });
+      if (r.ok) { ok++; log(`✔ #${w.id} ${w.route} ${w.airline || r.airline}: ${r.price?.toLocaleString('vi-VN')}₫${r.alerted ? ' (ĐÃ BÁO GIÁ)' : ''}`); }
+      else { fail++; log(`✖ #${w.id} ${w.route} ${w.airline}: ${r.error}`); }
+    } catch (e) {
+      fail++;
+      logger.error(`fareWatcher: watch #${w.id} lỗi bất ngờ: ${e.message}`);
+    }
   }
   log(`fareWatcher: xong. OK=${ok}, lỗi=${fail}.`);
   return { checked: watches.length, ok, fail };
@@ -313,7 +354,7 @@ function startLoop() {
 }
 function stopLoop() { if (_timer) { clearInterval(_timer); _timer = null; } }
 
-module.exports = { runOnce, checkAndStore, checkWatchById, quoteAllAirlines, startLoop, stopLoop };
+module.exports = { runOnce, checkAndStore, checkWatchById, quoteAllAirlines, startLoop, stopLoop, parseIntervalMin, parseCooldownH };
 
 // Chạy trực tiếp từ CLI.
 if (require.main === module) {

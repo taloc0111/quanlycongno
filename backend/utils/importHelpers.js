@@ -21,18 +21,28 @@ function parseAmount(value) {
 function parseDate(value) {
   if (value === null || value === undefined || value === '') return null;
   if (value instanceof Date && !Number.isNaN(value.getTime())) {
-    return value.toISOString().slice(0, 10);
+    // Lấy thành phần LOCAL (ngày Excel đọc ra là 00:00 giờ máy) — toISOString() (UTC)
+    // sẽ lùi 1 ngày ở múi giờ dương.
+    return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
   }
   const s = String(value).trim();
 
   const dmy = s.match(/^(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{4})$/);
   if (dmy) {
     const [, d, m, y] = dmy;
-    return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+    return validYmd(`${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`);
   }
-  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return validYmd(s.slice(0, 10));
 
   return undefined; // undefined = có nhập nhưng sai định dạng (phân biệt với null = bỏ trống)
+}
+
+// 'YYYY-MM-DD' phải là ngày có thật (31/02, 99/99 → undefined) để không văng lỗi từ Postgres.
+function validYmd(ymd) {
+  const [y, m, d] = ymd.split('-').map((x) => parseInt(x, 10));
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  const ok = dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d;
+  return ok ? ymd : undefined;
 }
 
 /**

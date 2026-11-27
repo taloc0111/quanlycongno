@@ -4,6 +4,7 @@
 // chạy thẳng in-process, không phải uỷ thác đi đâu.
 const logger = require('../config/logger');
 const { quoteAllAirlines } = require('../workers/fareWatcher');
+const { todayLocal } = require('../utils/dates');
 
 // Chống lạm dụng: chỉ nhận chặng dạng "SGN-HAN" và ngày yyyy-mm-dd hợp lệ, pax 1..9.
 const ROUTE_RE = /^[A-Za-z]{3}\s*[-→\s]\s*[A-Za-z]{3}$/;
@@ -16,7 +17,7 @@ const quote = async (req, res) => {
     const pax = Math.min(Math.max(parseInt(req.body?.pax, 10) || 1, 1), 9);
     if (!route || !ROUTE_RE.test(route)) return res.status(400).json({ error: 'Hành trình không hợp lệ (vd: SGN-HAN)' });
     if (!date || !DATE_RE.test(date)) return res.status(400).json({ error: 'Ngày đi không hợp lệ (yyyy-mm-dd)' });
-    if (new Date(date) < new Date(new Date().toISOString().slice(0, 10))) {
+    if (date < todayLocal()) {
       return res.status(400).json({ error: 'Ngày đi đã qua' });
     }
     if (returnDate) {

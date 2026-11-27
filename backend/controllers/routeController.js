@@ -1,5 +1,7 @@
-// controllers/routeController.js
+// controllers/routeController.js — danh mục hành trình bay (HAN-SGN, ...) riêng theo user.
 const pool = require('../config/database');
+const logger = require('../config/logger');
+const v = require('../utils/validate');
 
 const getRoutes = async (req, res) => {
   try {
@@ -7,24 +9,19 @@ const getRoutes = async (req, res) => {
       'SELECT route_name FROM flight_routes WHERE user_id = $1 ORDER BY route_name',
       [req.user.id]
     );
-    res.json(result.rows.map(r => r.route_name));
+    res.json(result.rows.map((r) => r.route_name));
   } catch (error) {
-    console.error('Get routes error:', error);
+    logger.error('Get routes error:', error.message);
     res.status(500).json({ error: 'Failed to fetch routes' });
   }
 };
 
 const createRoute = async (req, res) => {
+  const routeName = v.str(req.body.routeName, { max: 50, required: true, label: 'Hành trình' }).toUpperCase();
   try {
-    const { routeName } = req.body;
-
-    if (!routeName) {
-      return res.status(400).json({ error: 'Route name required' });
-    }
-
     const result = await pool.query(
       'INSERT INTO flight_routes (user_id, route_name) VALUES ($1, $2) RETURNING route_name',
-      [req.user.id, routeName.toUpperCase()]
+      [req.user.id, routeName]
     );
 
     res.status(201).json({ route: result.rows[0].route_name });
@@ -32,23 +29,22 @@ const createRoute = async (req, res) => {
     if (error.code === '23505') {
       return res.status(409).json({ error: 'Route already exists' });
     }
-    console.error('Create route error:', error);
+    logger.error('Create route error:', error.message);
     res.status(500).json({ error: 'Failed to create route' });
   }
 };
 
 const deleteRoute = async (req, res) => {
+  const routeName = v.str(req.params.routeName, { max: 50, required: true, label: 'Hành trình' }).toUpperCase();
   try {
-    const { routeName } = req.params;
-
     await pool.query(
       'DELETE FROM flight_routes WHERE user_id = $1 AND route_name = $2',
-      [req.user.id, routeName.toUpperCase()]
+      [req.user.id, routeName]
     );
 
     res.json({ message: 'Route deleted' });
   } catch (error) {
-    console.error('Delete route error:', error);
+    logger.error('Delete route error:', error.message);
     res.status(500).json({ error: 'Failed to delete route' });
   }
 };

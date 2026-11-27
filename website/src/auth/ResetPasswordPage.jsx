@@ -1,6 +1,8 @@
 import { useState } from 'react';
-import { Lock, CheckCircle, Plane } from 'lucide-react';
+import { CheckCircle2, KeyRound, ArrowLeft, LogIn } from 'lucide-react';
 import { useAuth } from './AuthContext';
+import { AuthShell, PasswordInput } from './LoginPage';
+import { Button, Field, ErrorBanner } from '../ui';
 
 // Trang đặt lại mật khẩu — hiện khi URL có ?reset=<token>.
 export default function ResetPasswordPage({ token }) {
@@ -24,44 +26,45 @@ export default function ResetPasswordPage({ token }) {
     finally { setLoading(false); }
   };
 
-  return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-600 via-indigo-600 to-purple-700 p-4">
-      <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl overflow-hidden">
-        <div className="bg-gradient-to-r from-blue-600 to-indigo-600 px-8 py-8 text-center text-white">
-          <div className="inline-flex items-center justify-center w-16 h-16 bg-white/20 rounded-2xl mb-3"><Plane size={30} /></div>
-          <h1 className="text-xl font-bold">Đặt lại mật khẩu</h1>
-        </div>
+  const mismatch = confirm && confirm !== password;
 
-        {done ? (
-          <div className="px-8 py-8 text-center space-y-4">
-            <CheckCircle size={48} className="mx-auto text-green-500" />
-            <p className="text-gray-700">Đổi mật khẩu thành công! Hãy đăng nhập lại bằng mật khẩu mới.</p>
-            <button onClick={goLogin} className="w-full py-3 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700">Đăng nhập</button>
+  return (
+    <AuthShell>
+      {done ? (
+        <div className="py-2 text-center">
+          <span className="mx-auto mb-4 inline-flex h-16 w-16 items-center justify-center rounded-full bg-success-50 text-success-600">
+            <CheckCircle2 size={34} />
+          </span>
+          <h1 className="text-xl font-bold tracking-tight text-ink">Đổi mật khẩu thành công</h1>
+          <p className="mt-1.5 text-sm text-ink-muted">Hãy đăng nhập lại bằng mật khẩu mới.</p>
+          <Button block size="lg" icon={LogIn} className="mt-6" onClick={goLogin}>Đăng nhập</Button>
+        </div>
+      ) : (
+        <>
+          <div className="mb-5 flex items-start gap-3">
+            <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-brand-600">
+              <KeyRound size={20} />
+            </span>
+            <div>
+              <h1 className="text-xl font-bold tracking-tight text-ink">Đặt lại mật khẩu</h1>
+              <p className="mt-0.5 text-sm text-ink-muted">Chọn mật khẩu mới cho tài khoản của bạn.</p>
+            </div>
           </div>
-        ) : (
-          <form onSubmit={submit} className="px-8 py-6 space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Mật khẩu mới</label>
-              <div className="relative">
-                <Lock className="absolute left-3 top-3 text-gray-400" size={18} />
-                <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full pl-10 pr-4 py-2.5 border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none" placeholder="Ít nhất 6 ký tự" autoFocus />
-              </div>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Nhập lại mật khẩu</label>
-              <div className="relative">
-                <Lock className="absolute left-3 top-3 text-gray-400" size={18} />
-                <input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} className="w-full pl-10 pr-4 py-2.5 border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none" placeholder="••••••••" />
-              </div>
-            </div>
-            {error && <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-2.5 text-sm text-red-700">{error}</div>}
-            <button type="submit" disabled={loading || !password || !confirm} className="w-full py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-lg font-semibold hover:shadow-lg transition disabled:opacity-50">
-              {loading ? 'Đang xử lý…' : 'Đặt lại mật khẩu'}
+          <form onSubmit={submit} className="space-y-4" noValidate>
+            <Field label="Mật khẩu mới" required hint="Ít nhất 6 ký tự" htmlFor="rp-password">
+              <PasswordInput id="rp-password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Ít nhất 6 ký tự" autoComplete="new-password" autoFocus />
+            </Field>
+            <Field label="Nhập lại mật khẩu" required htmlFor="rp-confirm" error={mismatch ? 'Mật khẩu nhập lại không khớp' : undefined}>
+              <PasswordInput id="rp-confirm" value={confirm} onChange={(e) => setConfirm(e.target.value)} placeholder="••••••••" autoComplete="new-password" error={!!mismatch} />
+            </Field>
+            <ErrorBanner message={error} />
+            <Button type="submit" block size="lg" loading={loading} disabled={!password || !confirm} icon={KeyRound}>Đặt lại mật khẩu</Button>
+            <button type="button" onClick={goLogin} className="inline-flex w-full items-center justify-center gap-1 text-sm text-ink-muted hover:text-ink">
+              <ArrowLeft size={14} /> Về trang đăng nhập
             </button>
-            <button type="button" onClick={goLogin} className="block w-full text-center text-sm text-gray-500 hover:underline">← Về trang đăng nhập</button>
           </form>
-        )}
-      </div>
-    </div>
+        </>
+      )}
+    </AuthShell>
   );
 }

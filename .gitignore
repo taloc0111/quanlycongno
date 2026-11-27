@@ -34,3 +34,6 @@ convert-sheet.cjs
 
 # Kết quả recon adapter canh giá (sinh ra khi dò selector — không commit)
 backend/workers/recon-out/
+
+# Ảnh chụp smoke test (chứa dữ liệu test)
+docs/screenshots/

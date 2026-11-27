@@ -1,153 +1,201 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { PlaneTakeoff, Check, Clock, RefreshCw, ExternalLink } from 'lucide-react';
-import { apiGet, apiSend } from './services/client';
-import Toast from './components/Toast';
-import { useToast } from './hooks/useFeedback';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { PlaneTakeoff, RefreshCw, ExternalLink, Phone, Ticket, CalendarDays, CheckCircle2 } from 'lucide-react';
+import { api } from './services/client';
+import { useFeedback } from './ui/FeedbackContext';
 import { detectAirline } from './utils/airlines';
+import { formatDate, today, addDays, daysUntil, ymdToDate, normalizeYmd } from './utils/format';
+import { Button, SearchInput, Switch, Badge, EmptyState, Skeleton, PageHeader, ErrorBanner, Segmented, Card } from './ui';
 
-const toYmd = (dt) => `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
-const fmt = (s) => (s ? s.slice(0, 10).split('-').reverse().join('/') : '');
+const RANGES = [
+  { value: 'today', label: 'Hôm nay' },
+  { value: 'tomorrow', label: 'Ngày mai' },
+  { value: '7', label: '7 ngày' },
+  { value: '30', label: '30 ngày' },
+  { value: 'all', label: 'Tất cả sắp tới' },
+];
+
+const WEEKDAY = ['Chủ nhật', 'Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7'];
+
+/** Ngày bay có nằm trong khoảng đã chọn không (chỉ tính từ hôm nay trở đi). */
+function inRange(diff, range) {
+  if (diff < 0) return false;
+  if (range === 'today') return diff === 0;
+  if (range === 'tomorrow') return diff === 1;
+  if (range === 'all') return true;
+  return diff <= Number(range);
+}
+
+function DayBadge({ diff }) {
+  if (diff === 0) return <Badge tone="warning" dot>Hôm nay</Badge>;
+  if (diff === 1) return <Badge tone="danger" dot>Ngày mai</Badge>;
+  if (diff <= 7) return <Badge tone="brand">{diff} ngày nữa</Badge>;
+  return null;
+}
 
 export default function UpcomingFlightsApp() {
+  const { toast } = useFeedback();
   const [debts, setDebts] = useState([]);
   const [airlines, setAirlines] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
+  const [range, setRange] = useState('7');
+  const [search, setSearch] = useState('');
   const [onlyPending, setOnlyPending] = useState(false);
-  const { toast, showToast } = useToast();
 
-  const today = toYmd(new Date());
-
-  const load = async () => {
-    setLoading(true);
+  const load = useCallback(async ({ silent = false } = {}) => {
+    if (silent) setRefreshing(true); else setLoading(true);
     setError('');
     try {
-      setDebts(await apiGet('/debts'));
+      setDebts(await api.get('/debts'));
     } catch (err) {
       setError(err.message);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
-  };
-  useEffect(() => { load(); }, []);
-  useEffect(() => { apiGet('/airlines').then(setAirlines).catch(() => {}); }, []);
+  }, []);
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => { api.get('/airlines').then(setAirlines).catch(() => {}); }, []);
 
-  const dayDiff = (ymd) => Math.round((new Date(ymd + 'T00:00:00') - new Date(today + 'T00:00:00')) / 86400000);
-
-  // Gom các vé có ngày bay trong 0..7 ngày tới (bỏ vé quá khứ), theo nhóm.
+  // Gom theo ngày bay (tăng dần), mỗi nhóm đếm số khách chưa check-in.
   const groups = useMemo(() => {
-    const buckets = { today: [], tomorrow: [], soon: [] };
-    debts.forEach((d) => {
-      const fd = (d.flight_date || '').slice(0, 10);
-      if (!fd) return;
-      const diff = dayDiff(fd);
-      if (diff < 0 || diff > 7) return;
-      if (onlyPending && d.checked_in) return;
-      if (diff === 0) buckets.today.push(d);
-      else if (diff === 1) buckets.tomorrow.push(d);
-      else buckets.soon.push(d);
-    });
-    const byDate = (a, b) => (a.flight_date || '').localeCompare(b.flight_date || '');
-    buckets.today.sort(byDate); buckets.tomorrow.sort(byDate); buckets.soon.sort(byDate);
-    return buckets;
-  }, [debts, onlyPending, today]);
+    const q = search.trim().toLowerCase();
+    const map = new Map();
+    for (const d of debts) {
+      const fd = normalizeYmd(d.flight_date);
+      if (!fd) continue;
+      const diff = daysUntil(fd);
+      if (diff === null || !inRange(diff, range)) continue;
+      if (onlyPending && d.checked_in) continue;
+      if (q && ![d.customer_name, d.phone_number, d.route, d.airline, d.ticket_code].some((v) => String(v || '').toLowerCase().includes(q))) continue;
+      const g = map.get(fd) || { date: fd, diff, items: [], pending: 0 };
+      g.items.push(d);
+      if (!d.checked_in) g.pending += 1;
+      map.set(fd, g);
+    }
+    const out = [...map.values()].sort((a, b) => a.date.localeCompare(b.date));
+    out.forEach((g) => g.items.sort((a, b) => Number(a.checked_in) - Number(b.checked_in) || String(a.customer_name || '').localeCompare(String(b.customer_name || ''))));
+    return out;
+  }, [debts, range, search, onlyPending]);
 
-  const toggleCheckin = async (d) => {
-    const next = !d.checked_in;
+  const total = groups.reduce((s, g) => s + g.items.length, 0);
+  const pendingTotal = groups.reduce((s, g) => s + g.pending, 0);
+
+  const toggleCheckin = async (d, next) => {
     setDebts((prev) => prev.map((x) => (x.id === d.id ? { ...x, checked_in: next } : x)));
     try {
-      await apiSend('PUT', `/debts/${d.id}/checkin`, { checkedIn: next });
+      await api.put(`/debts/${d.id}/checkin`, { checkedIn: next });
+      window.dispatchEvent(new CustomEvent('data:debts-changed'));
+      toast.success(next ? `Đã check-in cho ${d.customer_name}` : 'Đã bỏ đánh dấu check-in');
     } catch (err) {
       setDebts((prev) => prev.map((x) => (x.id === d.id ? { ...x, checked_in: !next } : x)));
-      showToast('Lỗi: ' + err.message, 'error');
+      toast.error(err.message);
     }
   };
 
-  const Section = ({ title, items, accent }) => (
-    <div className="mb-6">
-      <h3 className={`text-sm font-bold uppercase tracking-wide mb-2 ${accent}`}>{title} ({items.length})</h3>
-      {items.length === 0 ? (
-        <p className="text-gray-400 text-sm">Không có chuyến nào.</p>
+  const rangeHint = {
+    today: 'Khách bay hôm nay',
+    tomorrow: 'Khách bay ngày mai',
+    7: `Khách bay từ hôm nay tới ${formatDate(addDays(today(), 7))}`,
+    30: `Khách bay từ hôm nay tới ${formatDate(addDays(today(), 30))}`,
+    all: 'Mọi chuyến bay từ hôm nay trở đi',
+  }[range];
+
+  return (
+    <div>
+      <PageHeader
+        icon={PlaneTakeoff}
+        title="Sắp bay"
+        description="Theo dõi ngày bay trong Công nợ vé để nhắc khách check-in đúng hạn."
+        actions={<Button variant="secondary" icon={RefreshCw} loading={refreshing} onClick={() => load({ silent: true })}>Làm mới</Button>}
+      />
+
+      {/* Thanh công cụ */}
+      <div className="card mb-4 p-3 flex flex-col lg:flex-row lg:items-center gap-2.5">
+        <Segmented value={range} onChange={setRange} options={RANGES} />
+        <SearchInput value={search} onChange={setSearch} placeholder="Tìm khách, SĐT, chặng, mã vé…" className="lg:w-72" />
+        <div className="flex items-center justify-between gap-3 lg:ml-auto">
+          <Switch size="sm" checked={onlyPending} onChange={setOnlyPending} label="Chỉ chưa check-in" />
+          {!loading && !error && (
+            <span className="text-xs text-ink-muted whitespace-nowrap">
+              <b className="text-ink">{total}</b> chuyến · <b className={pendingTotal ? 'text-danger-600' : 'text-success-600'}>{pendingTotal}</b> chưa check-in
+            </span>
+          )}
+        </div>
+      </div>
+
+      <ErrorBanner message={error} onRetry={() => load()} />
+
+      {loading ? (
+        <div className="space-y-3">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Card key={i} className="p-4 flex items-center gap-3">
+              <div className="flex-1 space-y-2"><Skeleton className="h-4 w-48" /><Skeleton className="h-3 w-72" /></div>
+              <Skeleton className="h-6 w-20" />
+            </Card>
+          ))}
+        </div>
+      ) : !error && groups.length === 0 ? (
+        <Card padded={false}>
+          <EmptyState
+            icon={PlaneTakeoff}
+            title={debts.length ? 'Không có chuyến bay nào khớp' : 'Chưa có vé nào có ngày bay'}
+            description={debts.length ? `${rangeHint}. Thử đổi khoảng thời gian, bỏ lọc hoặc từ khoá.` : 'Nhập ngày bay khi thêm vé ở Công nợ vé để trang này tự nhắc.'}
+            action={range !== 'all' && debts.length ? <Button variant="secondary" onClick={() => setRange('all')}>Xem tất cả sắp tới</Button> : null}
+          />
+        </Card>
       ) : (
-        <div className="space-y-2">
-          {items.map((d) => {
-            const airline = detectAirline(d.airline, airlines);
-            return (
-            <div key={d.id} className={`flex items-center gap-3 bg-white rounded-xl border px-4 py-3 ${d.checked_in ? 'border-green-200 opacity-70' : 'border-gray-200'}`}>
-              <div className="min-w-0 flex-1">
-                <p className="font-semibold text-gray-900 truncate">{d.customer_name}{d.phone_number ? <span className="text-xs text-gray-400 font-normal"> · {d.phone_number}</span> : null}</p>
-                <p className="text-sm text-gray-600">
-                  <span className="font-medium">{d.route || '—'}</span>
-                  {d.airline ? <span className="text-gray-400"> · {airline?.name || d.airline}</span> : null}
-                  {d.ticket_code ? <span className="text-gray-400"> · {d.ticket_code}</span> : null}
-                  <span className="text-gray-400"> · bay {fmt(d.flight_date)}</span>
-                </p>
+        <div className="space-y-6">
+          {groups.map((g) => (
+            <section key={g.date}>
+              <div className="sticky top-11 md:top-0 z-10 -mx-1 px-1 py-2 bg-surface-muted/95 backdrop-blur flex flex-wrap items-center gap-2">
+                <CalendarDays size={16} className="text-ink-muted" />
+                <h3 className="font-semibold text-ink">{WEEKDAY[ymdToDate(g.date).getDay()]}, {formatDate(g.date)}</h3>
+                <DayBadge diff={g.diff} />
+                <span className="ml-auto text-xs text-ink-muted">
+                  {g.items.length} chuyến · {g.pending ? <b className="text-danger-600">{g.pending} chưa check-in</b> : <span className="text-success-600 font-semibold inline-flex items-center gap-1"><CheckCircle2 size={12} /> đã check-in hết</span>}
+                </span>
               </div>
-              {airline && (
-                <a
-                  href={airline.checkinUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs sm:text-sm font-semibold shrink-0 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 transition"
-                  title={`Mở web check-in ${airline.name}`}
-                >
-                  <ExternalLink size={15} /> Web check-in
-                </a>
-              )}
-              <button
-                onClick={() => toggleCheckin(d)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs sm:text-sm font-semibold shrink-0 transition ${
-                  d.checked_in ? 'bg-green-100 text-green-700 hover:bg-green-200' : 'bg-blue-600 text-white hover:bg-blue-700'
-                }`}
-              >
-                <Check size={15} /> {d.checked_in ? 'Đã đánh dấu' : 'Đánh dấu xong'}
-              </button>
-            </div>
-            );
-          })}
+              <div className="space-y-2">
+                {g.items.map((d) => <FlightRow key={d.id} flight={d} airline={detectAirline(d.airline, airlines)} onToggle={(next) => toggleCheckin(d, next)} />)}
+              </div>
+            </section>
+          ))}
         </div>
       )}
     </div>
   );
+}
 
-  const totalUpcoming = groups.today.length + groups.tomorrow.length + groups.soon.length;
-
+function FlightRow({ flight: d, airline, onToggle }) {
   return (
-    <div className="min-h-screen bg-gray-50 p-4 sm:p-6">
-      <div className="max-w-4xl mx-auto">
-        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-          <h2 className="flex items-center gap-2 text-2xl font-bold text-gray-900"><PlaneTakeoff /> Sắp bay</h2>
-          <div className="flex items-center gap-3">
-            <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
-              <input type="checkbox" checked={onlyPending} onChange={(e) => setOnlyPending(e.target.checked)} className="w-4 h-4 rounded" />
-              Chỉ chưa check-in
-            </label>
-            <button onClick={load} className="flex items-center gap-1.5 px-3 py-2 bg-white border rounded-lg hover:bg-gray-50 text-sm font-semibold">
-              <RefreshCw size={15} /> Làm mới
-            </button>
-          </div>
+    <Card padded={false} className={`p-3 sm:p-4 flex flex-col sm:flex-row sm:items-center gap-3 transition ${d.checked_in ? 'bg-success-50/40 border-success-100' : ''}`}>
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <p className={`font-semibold truncate ${d.checked_in ? 'text-ink-muted line-through decoration-success-500/60' : 'text-ink'}`}>{d.customer_name || '—'}</p>
+          {d.phone_number && (
+            <a href={`tel:${d.phone_number}`} className="inline-flex items-center gap-1 text-xs text-ink-muted hover:text-brand-600">
+              <Phone size={11} />{d.phone_number}
+            </a>
+          )}
+          {d.checked_in && <Badge tone="success" icon={CheckCircle2}>Đã check-in</Badge>}
         </div>
-        <p className="text-sm text-gray-500 mb-4 flex items-center gap-1"><Clock size={14} /> Khách bay trong 7 ngày tới (theo ngày bay trong Công nợ vé).</p>
-
-        {loading && <p className="text-gray-500">Đang tải…</p>}
-        {error && <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-red-700">{error}</div>}
-
-        {!loading && !error && (
-          totalUpcoming === 0 ? (
-            <div className="text-center text-gray-400 py-16">
-              <PlaneTakeoff size={48} className="mx-auto mb-3 opacity-40" />
-              <p>Không có khách nào bay trong 7 ngày tới.</p>
-            </div>
-          ) : (
-            <>
-              <Section title="✈️ Ngày mai" items={groups.tomorrow} accent="text-red-600" />
-              <Section title="Hôm nay" items={groups.today} accent="text-amber-600" />
-              <Section title="Trong 7 ngày tới" items={groups.soon} accent="text-gray-600" />
-            </>
-          )
-        )}
+        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-ink-soft">
+          <span className="font-medium">{d.route || 'Chưa có chặng'}</span>
+          {(airline?.name || d.airline) && <Badge tone="outline">{airline?.name || d.airline}</Badge>}
+          {d.ticket_code && <span className="inline-flex items-center gap-1 font-mono text-xs text-ink-muted"><Ticket size={12} />{d.ticket_code}</span>}
+          <span className="text-xs text-ink-faint">bay {formatDate(d.flight_date)}</span>
+        </div>
       </div>
-      <Toast toast={toast} />
-    </div>
+      <div className="flex items-center justify-between sm:justify-end gap-3 shrink-0">
+        {airline?.checkinUrl && (
+          <a href={airline.checkinUrl} target="_blank" rel="noopener noreferrer" className="link inline-flex items-center gap-1 text-[13px]" title={`Mở web check-in ${airline.name}`}>
+            <ExternalLink size={14} /> Web check-in
+          </a>
+        )}
+        <Switch checked={!!d.checked_in} onChange={onToggle} label="Đã check-in" />
+      </div>
+    </Card>
   );
 }

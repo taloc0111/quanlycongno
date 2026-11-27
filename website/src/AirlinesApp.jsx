@@ -1,152 +1,223 @@
-import React, { useEffect, useState } from 'react';
-import { Plus, Edit2, Trash2, X, Plane, ExternalLink } from 'lucide-react';
-import { apiGet, apiSend } from './services/client';
-import ConfirmDialog from './components/ConfirmDialog';
-import Toast from './components/Toast';
-import { useToast, useConfirm } from './hooks/useFeedback';
+import { useCallback, useEffect, useState } from 'react';
+import { Plus, Pencil, Trash2, Plane, ExternalLink, RefreshCw, CheckCircle2 } from 'lucide-react';
+import { api } from './services/client';
+import { useFeedback } from './ui/FeedbackContext';
+import { useTableState } from './hooks/useTableState';
 import { DEFAULT_AIRLINES } from './utils/airlines';
+import {
+  Button, IconButton, Field, Input, SearchInput, Modal, Badge, PageHeader, DataTable, ErrorBanner, Card,
+} from './ui';
 
 const EMPTY = { name: '', code: '', checkinUrl: '' };
 
+/** Rút gọn URL để hiện trong bảng: bỏ giao thức + www. */
+const shortUrl = (url) => String(url || '').replace(/^https?:\/\/(www\.)?/i, '');
+
 export default function AirlinesApp() {
+  const { toast, confirm } = useFeedback();
   const [airlines, setAirlines] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
-  const [showForm, setShowForm] = useState(false);
-  const [editingId, setEditingId] = useState(null);
-  const [form, setForm] = useState(EMPTY);
-  const { toast, showToast } = useToast();
-  const { confirmState, askConfirm, closeConfirm } = useConfirm();
+  const [form, setForm] = useState(null); // null = đóng; { ...EMPTY, id? }
+  const [formErrors, setFormErrors] = useState({});
+  const [saving, setSaving] = useState(false);
 
-  const load = async () => {
-    setLoading(true); setError('');
-    try { setAirlines(await apiGet('/airlines')); }
-    catch (err) { setError(err.message); }
-    finally { setLoading(false); }
+  const columns = [
+    { key: 'name', label: 'Tên hãng', sortable: true, required: true },
+    { key: 'code', label: 'Mã', sortable: true, width: 90 },
+    { key: 'checkin_url', label: 'Link check-in', hideBelow: 'md' },
+  ];
+  const t = useTableState({ storageKey: 'airlines', columns, pageSize: 50, defaultSort: { key: 'name', dir: 'asc' } });
+
+  const load = useCallback(async ({ silent = false } = {}) => {
+    if (silent) setRefreshing(true); else setLoading(true);
+    setError('');
+    try {
+      setAirlines(await api.get('/airlines'));
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const { sorted, paged, totalPages, page } = t.process(airlines, {
+    searchText: (a) => `${a.name} ${a.code || ''} ${a.checkin_url || ''}`,
+    sortValue: (a, key) => String(a[key] || '').toLowerCase(),
+  });
+
+  const openAdd = () => { setForm({ ...EMPTY }); setFormErrors({}); };
+  const openEdit = (a) => { setForm({ id: a.id, name: a.name || '', code: a.code || '', checkinUrl: a.checkin_url || '' }); setFormErrors({}); };
+  const closeForm = () => setForm(null);
+  const setField = (key, value) => {
+    setForm((f) => ({ ...f, [key]: value }));
+    setFormErrors((e) => (e[key] ? { ...e, [key]: '' } : e));
   };
-  useEffect(() => { load(); }, []);
 
-  const openAdd = () => { setForm(EMPTY); setEditingId(null); setShowForm(true); };
-  const openEdit = (a) => { setForm({ name: a.name, code: a.code || '', checkinUrl: a.checkin_url }); setEditingId(a.id); setShowForm(true); };
+  const validate = (f) => {
+    const errs = {};
+    if (!f.name.trim()) errs.name = 'Nhập tên hãng';
+    if (!f.checkinUrl.trim()) errs.checkinUrl = 'Nhập link check-in';
+    else if (!/^https?:\/\//i.test(f.checkinUrl.trim())) errs.checkinUrl = 'Link phải bắt đầu bằng http:// hoặc https://';
+    if (f.code && f.code.trim().length > 10) errs.code = 'Mã tối đa 10 ký tự';
+    return errs;
+  };
 
   const save = async () => {
-    if (!form.name.trim() || !form.checkinUrl.trim()) { showToast('Cần tên hãng và link check-in', 'error'); return; }
+    const errs = validate(form);
+    setFormErrors(errs);
+    if (Object.keys(errs).length) return;
+    setSaving(true);
+    const body = { name: form.name.trim(), code: form.code.trim().toUpperCase(), checkinUrl: form.checkinUrl.trim() };
     try {
-      if (editingId) await apiSend('PUT', `/airlines/${editingId}`, form);
-      else await apiSend('POST', '/airlines', form);
-      setShowForm(false);
-      showToast(editingId ? 'Đã cập nhật hãng' : 'Đã thêm hãng');
-      load();
-    } catch (err) { showToast('Lỗi: ' + err.message, 'error'); }
+      if (form.id) await api.put(`/airlines/${form.id}`, body);
+      else await api.post('/airlines', body);
+      toast.success(form.id ? 'Đã cập nhật hãng' : 'Đã thêm hãng');
+      setForm(null);
+      await load({ silent: true });
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const remove = (a) => {
-    askConfirm(`Xóa hãng "${a.name}"?`, async () => {
-      try { await apiSend('DELETE', `/airlines/${a.id}`); showToast('Đã xóa hãng'); load(); }
-      catch (err) { showToast('Lỗi: ' + err.message, 'error'); }
-    });
+  const remove = async (a) => {
+    const ok = await confirm({ title: 'Xoá hãng bay', message: `Xoá hãng "${a.name}"? Vé đã nhập với hãng này vẫn giữ nguyên, chỉ mất nút web check-in tự động.`, confirmText: 'Xoá' });
+    if (!ok) return;
+    try {
+      await api.del(`/airlines/${a.id}`);
+      setAirlines((list) => list.filter((x) => x.id !== a.id));
+      toast.success('Đã xoá hãng');
+    } catch (err) {
+      toast.error(err.message);
+    }
   };
+
+  const cols = [
+    { key: 'name', label: 'Tên hãng', sortable: true, render: (a) => <span className="font-medium text-ink">{a.name}</span> },
+    { key: 'code', label: 'Mã', sortable: true, width: 90, render: (a) => (a.code ? <Badge tone="outline" className="font-mono">{a.code}</Badge> : <span className="text-ink-faint">—</span>) },
+    {
+      key: 'checkin_url', label: 'Link check-in', hideBelow: 'md',
+      render: (a) => (
+        <a href={a.checkin_url} target="_blank" rel="noopener noreferrer" className="link inline-flex items-center gap-1.5 max-w-[320px]" title={a.checkin_url}>
+          <span className="truncate">{shortUrl(a.checkin_url)}</span>
+          <ExternalLink size={13} className="shrink-0" />
+        </a>
+      ),
+    },
+    {
+      key: '__actions', label: '', align: 'right', width: 90,
+      render: (a) => (
+        <div className="flex justify-end gap-0.5 opacity-70 group-hover:opacity-100 transition">
+          <IconButton icon={Pencil} title="Sửa" variant="primary" onClick={() => openEdit(a)} />
+          <IconButton icon={Trash2} title="Xoá" variant="danger" onClick={() => remove(a)} />
+        </div>
+      ),
+    },
+  ];
+
+  const mobileCard = (a) => (
+    <div className="flex items-start justify-between gap-3">
+      <div className="min-w-0">
+        <p className="font-semibold text-ink truncate">{a.name} {a.code && <Badge tone="outline" className="ml-1 font-mono">{a.code}</Badge>}</p>
+        <a href={a.checkin_url} target="_blank" rel="noopener noreferrer" className="link inline-flex items-center gap-1 text-xs max-w-full">
+          <span className="truncate">{shortUrl(a.checkin_url)}</span><ExternalLink size={11} className="shrink-0" />
+        </a>
+      </div>
+      <div className="flex gap-0.5 shrink-0">
+        <IconButton icon={Pencil} title="Sửa" variant="primary" onClick={() => openEdit(a)} />
+        <IconButton icon={Trash2} title="Xoá" variant="danger" onClick={() => remove(a)} />
+      </div>
+    </div>
+  );
 
   return (
-    <div className="min-h-screen bg-gray-50 p-4 sm:p-6">
-      <div className="max-w-4xl mx-auto">
-        <div className="flex items-center justify-between gap-3 mb-2">
-          <h2 className="flex items-center gap-2 text-2xl font-bold text-gray-900"><Plane /> Hãng bay</h2>
-          <button onClick={openAdd} className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold text-sm">
-            <Plus size={18} /> Thêm hãng
-          </button>
-        </div>
-        <p className="text-sm text-gray-500 mb-5">Khai báo hãng + link check-in để tự hiện nút “Web check-in” ở trang Sắp bay (không cần sửa code).</p>
-
-        {loading && <p className="text-gray-500">Đang tải…</p>}
-        {error && <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-red-700">{error}</div>}
-
-        {!loading && !error && (
+    <div>
+      <PageHeader
+        icon={Plane}
+        title="Hãng bay"
+        description="Khai báo hãng + link check-in để trang Sắp bay tự hiện nút “Web check-in”."
+        actions={(
           <>
-            {/* Hãng tự khai báo */}
-            <div className="bg-white rounded-2xl shadow overflow-x-auto mb-6">
-              <table className="min-w-full text-sm">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="px-4 py-3 text-left font-semibold text-gray-600">Tên hãng</th>
-                    <th className="px-4 py-3 text-left font-semibold text-gray-600">Mã</th>
-                    <th className="px-4 py-3 text-left font-semibold text-gray-600">Link check-in</th>
-                    <th className="px-4 py-3"></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {airlines.length === 0 ? (
-                    <tr><td colSpan={4} className="px-4 py-6 text-center text-gray-400">Chưa có hãng tự khai báo. Bấm “Thêm hãng”.</td></tr>
-                  ) : airlines.map((a) => (
-                    <tr key={a.id} className="border-t hover:bg-gray-50">
-                      <td className="px-4 py-3 font-medium text-gray-800">{a.name}</td>
-                      <td className="px-4 py-3 text-gray-500">{a.code || '—'}</td>
-                      <td className="px-4 py-3">
-                        <a href={a.checkin_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-indigo-600 hover:underline max-w-[260px] truncate">
-                          <ExternalLink size={13} /> <span className="truncate">{a.checkin_url}</span>
-                        </a>
-                      </td>
-                      <td className="px-4 py-3 text-right whitespace-nowrap">
-                        <button onClick={() => openEdit(a)} className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg"><Edit2 size={16} /></button>
-                        <button onClick={() => remove(a)} className="p-2 text-red-600 hover:bg-red-50 rounded-lg"><Trash2 size={16} /></button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            {/* Hãng mặc định (chỉ tham khảo) */}
-            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Hãng có sẵn (mặc định)</p>
-            <div className="flex flex-wrap gap-2">
-              {DEFAULT_AIRLINES.map((a) => (
-                <a key={a.name} href={a.checkinUrl} target="_blank" rel="noopener noreferrer"
-                   className="inline-flex items-center gap-1 text-xs px-3 py-1.5 rounded-full bg-white border text-gray-600 hover:bg-gray-50">
-                  <Plane size={12} /> {a.name}
-                </a>
-              ))}
-            </div>
+            <Button variant="secondary" icon={RefreshCw} loading={refreshing} onClick={() => load({ silent: true })}>Làm mới</Button>
+            <Button icon={Plus} onClick={openAdd}>Thêm hãng</Button>
           </>
         )}
+      />
+
+      <div className="card mb-4 p-3 flex flex-col sm:flex-row sm:items-center gap-2.5">
+        <SearchInput value={t.search} onChange={t.setSearch} placeholder="Tìm tên hãng, mã, link…" className="sm:w-80" />
+        {!loading && <span className="text-xs text-ink-muted sm:ml-auto">{sorted.length} hãng tự khai báo</span>}
       </div>
 
-      {showForm && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 p-4 overflow-y-auto">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md my-8">
-            <div className="flex items-center justify-between border-b px-6 py-4">
-              <h3 className="text-lg font-bold">{editingId ? 'Sửa hãng' : 'Thêm hãng'}</h3>
-              <button onClick={() => setShowForm(false)} className="text-gray-400 hover:text-gray-700"><X size={22} /></button>
-            </div>
-            <div className="px-6 py-4 space-y-3">
-              <div>
-                <label className="block text-sm text-gray-600 mb-1">Tên hãng * <span className="text-xs text-gray-400">(khớp với ô “Hãng” khi nhập vé)</span></label>
-                <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="VD: Sun PhuQuoc Airways" className="w-full border rounded-lg px-3 py-2" />
-              </div>
-              <div>
-                <label className="block text-sm text-gray-600 mb-1">Mã hãng <span className="text-xs text-gray-400">(2 ký tự, tùy chọn)</span></label>
-                <input value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} placeholder="VD: SP" maxLength={3} className="w-full border rounded-lg px-3 py-2" />
-              </div>
-              <div>
-                <label className="block text-sm text-gray-600 mb-1">Link check-in *</label>
-                <input value={form.checkinUrl} onChange={(e) => setForm({ ...form, checkinUrl: e.target.value })} placeholder="https://www.sunphuquocairways.com/vn/en" className="w-full border rounded-lg px-3 py-2" />
-              </div>
-            </div>
-            <div className="flex justify-end gap-3 border-t px-6 py-4">
-              <button onClick={() => setShowForm(false)} className="px-5 py-2 bg-gray-200 rounded-lg font-semibold text-sm">Huỷ</button>
-              <button onClick={save} className="px-5 py-2 bg-blue-600 text-white rounded-lg font-semibold text-sm">Lưu</button>
-            </div>
-          </div>
-        </div>
-      )}
+      <ErrorBanner message={error} onRetry={() => load()} />
 
-      <ConfirmDialog
-        open={!!confirmState}
-        message={confirmState?.message}
-        confirmText={confirmState?.confirmText}
-        onCancel={closeConfirm}
-        onConfirm={() => { confirmState?.onConfirm?.(); closeConfirm(); }}
+      <DataTable
+        columns={cols}
+        rows={paged}
+        loading={loading}
+        sort={t.sort}
+        onSort={t.toggleSort}
+        emptyIcon={Plane}
+        emptyTitle={airlines.length ? 'Không có hãng nào khớp' : 'Chưa có hãng tự khai báo'}
+        emptyDescription={airlines.length ? 'Thử từ khoá khác.' : 'Các hãng phổ biến bên dưới đã có sẵn. Thêm hãng mới nếu bạn bán vé hãng khác.'}
+        emptyAction={!airlines.length && <Button icon={Plus} onClick={openAdd}>Thêm hãng</Button>}
+        pagination={{ page, totalPages, total: sorted.length, pageSize: t.pageSize, onChange: t.setPage }}
+        mobileCard={mobileCard}
+        className="mb-5"
       />
-      <Toast toast={toast} />
+
+      {/* Hãng mặc định (chỉ tham khảo) */}
+      <Card padded={false} className="overflow-hidden">
+        <div className="px-4 py-3 border-b border-surface-border">
+          <h3 className="font-semibold text-ink">Hãng có sẵn</h3>
+          <p className="text-xs text-ink-muted mt-0.5">Tự nhận diện khi ô “Hãng” của vé chứa tên hoặc mã hãng. Không cần khai báo lại.</p>
+        </div>
+        <div className="p-4 flex flex-wrap gap-2">
+          {DEFAULT_AIRLINES.map((a) => (
+            <a key={a.name} href={a.checkinUrl} target="_blank" rel="noopener noreferrer"
+               className="inline-flex items-center gap-1.5 rounded-full border border-surface-border bg-white px-3 py-1.5 text-xs font-medium text-ink-soft hover:bg-surface-subtle hover:text-ink transition">
+              <Plane size={12} className="text-ink-faint" /> {a.name}
+              <Badge tone="gray" className="font-mono">{a.code2.toUpperCase()}</Badge>
+              <ExternalLink size={11} className="text-ink-faint" />
+            </a>
+          ))}
+        </div>
+      </Card>
+
+      <Modal
+        open={!!form}
+        onClose={closeForm}
+        icon={Plane}
+        title={form?.id ? 'Sửa hãng bay' : 'Thêm hãng bay'}
+        subtitle={form?.id ? `#${form.id}` : undefined}
+        size="md"
+        footer={(
+          <>
+            <Button variant="secondary" onClick={closeForm}>Huỷ</Button>
+            <Button icon={CheckCircle2} loading={saving} onClick={save}>{form?.id ? 'Lưu thay đổi' : 'Thêm hãng'}</Button>
+          </>
+        )}
+      >
+        {form && (
+          <form onSubmit={(e) => { e.preventDefault(); save(); }} className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+            <Field label="Tên hãng" required hint="Khớp với ô “Hãng” khi nhập vé" error={formErrors.name} htmlFor="al-name" className="sm:col-span-2">
+              <Input id="al-name" value={form.name} onChange={(e) => setField('name', e.target.value)} placeholder="VD: Sun PhuQuoc Airways" error={!!formErrors.name} />
+            </Field>
+            <Field label="Mã hãng" hint="2 ký tự, tuỳ chọn" error={formErrors.code} htmlFor="al-code">
+              <Input id="al-code" value={form.code} onChange={(e) => setField('code', e.target.value.toUpperCase())} placeholder="VD: SP" maxLength={10} className="font-mono uppercase" error={!!formErrors.code} />
+            </Field>
+            <Field label="Link check-in" required error={formErrors.checkinUrl} htmlFor="al-url" className="sm:col-span-3">
+              <Input id="al-url" type="url" value={form.checkinUrl} onChange={(e) => setField('checkinUrl', e.target.value)} placeholder="https://..." error={!!formErrors.checkinUrl} />
+            </Field>
+            <button type="submit" className="hidden" aria-hidden />
+          </form>
+        )}
+      </Modal>
     </div>
   );
 }

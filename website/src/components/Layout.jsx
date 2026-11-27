@@ -1,58 +1,37 @@
-import { useState } from 'react';
-import { LogOut, Menu } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { ChevronLeft, ChevronRight, LogOut, Menu, Sparkles, X } from 'lucide-react';
 import { ZALO_URL, ZALO_ENABLED } from '../utils/contact';
+import { storage } from '../services/client';
 
-/**
- * Vỏ ứng dụng với sidebar trái cố định (desktop) + thanh trên có nút menu (mobile).
- * Props:
- *  - nav: [{ key, label, icon, group }]
- *  - activeKey, onSelect(key)
- *  - user: { username, fullName }
- *  - onLogout: () => void
- *  - children: nội dung module đang chọn
- */
-export default function Layout({ nav, activeKey, onSelect, user, onLogout, children }) {
-  const [mobileOpen, setMobileOpen] = useState(false);
+const ROLE_LABEL = { admin: 'Quản trị viên', agency: 'Đại lý cấp 1', user: 'Đại lý cấp 2' };
 
-  // Gom nav theo nhóm, giữ thứ tự xuất hiện.
-  const groups = [];
-  for (const item of nav) {
-    let g = groups.find((x) => x.name === item.group);
-    if (!g) { g = { name: item.group, items: [] }; groups.push(g); }
-    g.items.push(item);
-  }
-
-  const activeLabel = nav.find((n) => n.key === activeKey)?.label || '';
-
-  // Banner dùng thử: số ngày còn lại (nếu tài khoản có trial_ends_at).
-  let trialDays = null;
-  if (user?.trialEndsAt) {
-    trialDays = Math.ceil((new Date(user.trialEndsAt).getTime() - Date.now()) / 86400000);
-  }
-  const ROLE_LABEL = { admin: 'Quản trị viên', agency: 'Đại lý cấp 1', user: 'Đại lý cấp 2' };
-  const roleLabel = ROLE_LABEL[user?.role] || 'Đã đăng nhập';
-
-  const NavList = () => (
-    <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-5">
+function NavList({ groups, activeKey, onSelect, collapsed }) {
+  return (
+    <nav className="flex-1 overflow-y-auto px-2 py-3 space-y-4">
       {groups.map((g) => (
         <div key={g.name}>
-          <p className="px-3 mb-1 text-[11px] font-semibold uppercase tracking-wider text-white/40">{g.name}</p>
-          <div className="space-y-1">
+          {!collapsed && (
+            <p className="px-3 mb-1 text-[10.5px] font-bold uppercase tracking-[0.12em] text-slate-500">{g.name}</p>
+          )}
+          <div className="space-y-0.5">
             {g.items.map((item) => {
               const Icon = item.icon;
               const active = item.key === activeKey;
               return (
                 <button
                   key={item.key}
-                  onClick={() => { onSelect(item.key); setMobileOpen(false); }}
-                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition ${
-                    active ? 'bg-white text-indigo-700 shadow' : 'text-white/80 hover:bg-white/10'
-                  }`}
+                  type="button"
+                  onClick={() => onSelect(item.key)}
+                  title={collapsed ? item.label : undefined}
+                  className={`relative w-full flex items-center gap-3 rounded-lg px-3 py-2 text-[13.5px] font-medium transition
+                    ${collapsed ? 'justify-center' : ''}
+                    ${active ? 'bg-white/10 text-white shadow-inner' : 'text-slate-300 hover:bg-white/5 hover:text-white'}`}
                 >
-                  <Icon size={18} />
-                  <span className="flex-1 text-left">{item.label}</span>
+                  {active && <span className="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r bg-brand-400" />}
+                  <Icon size={18} className={active ? 'text-brand-300' : ''} />
+                  {!collapsed && <span className="flex-1 text-left truncate">{item.label}</span>}
                   {item.badge ? (
-                    <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-red-500 text-white text-[11px] font-bold">
+                    <span className={`inline-flex items-center justify-center rounded-full bg-danger-500 text-white text-[10.5px] font-bold ${collapsed ? 'absolute -top-1 -right-1 h-4 min-w-[16px] px-1' : 'h-5 min-w-[20px] px-1.5'}`}>
                       {item.badge}
                     </span>
                   ) : null}
@@ -64,71 +43,122 @@ export default function Layout({ nav, activeKey, onSelect, user, onLogout, child
       ))}
     </nav>
   );
+}
 
-  const SidebarInner = () => (
-    <>
-      <div className="px-5 py-5 border-b border-white/10">
-        <h1 className="text-base font-bold text-white leading-tight">Hệ Thống Quản Lý Công Nợ</h1>
-        <p className="text-xs text-white/60">{user?.fullName || user?.username || 'Đại Lý Vé Máy Bay'}</p>
-      </div>
-      <NavList />
-      <div className="border-t border-white/10 px-4 py-4">
-        <div className="flex items-center gap-3 mb-3">
-          <div className="w-9 h-9 rounded-full bg-white/20 flex items-center justify-center text-white font-semibold uppercase">
-            {(user?.fullName || user?.username || '?').charAt(0)}
-          </div>
-          <div className="min-w-0">
-            <p className="text-sm font-medium text-white truncate">{user?.fullName || user?.username}</p>
-            <p className="text-xs text-white/50">{roleLabel}</p>
-          </div>
+function Brand({ collapsed }) {
+  return (
+    <div className={`flex items-center gap-2.5 px-4 py-4 ${collapsed ? 'justify-center' : ''}`}>
+      <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-brand-400 to-brand-600 text-white shadow">
+        <Sparkles size={18} />
+      </span>
+      {!collapsed && (
+        <div className="min-w-0 leading-tight">
+          <p className="text-[15px] font-extrabold text-white tracking-tight">Quản Lý Công Nợ</p>
+          <p className="text-[11px] text-slate-400">Đại lý vé & dịch vụ</p>
         </div>
+      )}
+    </div>
+  );
+}
+
+function UserBox({ user, onLogout, collapsed }) {
+  const initials = (user?.fullName || user?.username || '?').trim().charAt(0).toUpperCase();
+  return (
+    <div className="border-t border-white/10 p-3">
+      <div className={`flex items-center gap-3 ${collapsed ? 'justify-center' : ''}`}>
+        <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-500/30 text-brand-100 font-bold">
+          {initials}
+        </span>
+        {!collapsed && (
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-[13px] font-semibold text-white">{user?.fullName || user?.username}</p>
+            <p className="truncate text-[11px] text-slate-400">{ROLE_LABEL[user?.role] || 'Đã đăng nhập'}</p>
+          </div>
+        )}
         <button
+          type="button"
           onClick={onLogout}
-          className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-white text-sm font-medium transition"
+          title="Đăng xuất"
+          aria-label="Đăng xuất"
+          className="rounded-lg p-2 text-slate-400 hover:bg-white/10 hover:text-white transition"
         >
-          <LogOut size={16} /> Đăng xuất
+          <LogOut size={16} />
         </button>
       </div>
-    </>
+    </div>
   );
+}
+
+/**
+ * Vỏ ứng dụng: sidebar tối (thu gọn được) + topbar mobile + banner dùng thử.
+ * Props: nav [{key,label,icon,group,badge}], activeKey, onSelect, user, trialDaysLeft, onLogout, children.
+ */
+export default function Layout({ nav, activeKey, onSelect, user, trialDaysLeft, onLogout, children }) {
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(() => storage.get('sidebar:collapsed') === '1');
+
+  useEffect(() => { storage.set('sidebar:collapsed', collapsed ? '1' : '0'); }, [collapsed]);
+  // Chọn trang thì đóng drawer mobile.
+  const select = (key) => { setMobileOpen(false); onSelect(key); };
+
+  const groups = [];
+  for (const item of nav) {
+    let g = groups.find((x) => x.name === item.group);
+    if (!g) { g = { name: item.group, items: [] }; groups.push(g); }
+    g.items.push(item);
+  }
+  const activeLabel = nav.find((n) => n.key === activeKey)?.label || '';
+  const sideW = collapsed ? 'md:w-[72px]' : 'md:w-64';
+  const mainML = collapsed ? 'md:ml-[72px]' : 'md:ml-64';
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-surface-muted">
       {/* Sidebar desktop */}
-      <aside className="hidden md:flex fixed inset-y-0 left-0 w-64 flex-col bg-gradient-to-b from-indigo-700 to-purple-800 z-40">
-        <SidebarInner />
+      <aside className={`hidden md:flex fixed inset-y-0 left-0 ${sideW} flex-col bg-slate-900 z-40 transition-[width] duration-200`}>
+        <Brand collapsed={collapsed} />
+        <NavList groups={groups} activeKey={activeKey} onSelect={select} collapsed={collapsed} />
+        <UserBox user={user} onLogout={onLogout} collapsed={collapsed} />
+        <button
+          type="button"
+          onClick={() => setCollapsed((v) => !v)}
+          title={collapsed ? 'Mở rộng menu' : 'Thu gọn menu'}
+          aria-label={collapsed ? 'Mở rộng menu' : 'Thu gọn menu'}
+          className="absolute -right-3 top-6 inline-flex h-6 w-6 items-center justify-center rounded-full border border-surface-border bg-white text-ink-muted shadow hover:text-ink"
+        >
+          {collapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
+        </button>
       </aside>
 
       {/* Drawer mobile */}
       {mobileOpen && (
         <div className="md:hidden fixed inset-0 z-50 flex">
-          <div className="w-64 flex flex-col bg-gradient-to-b from-indigo-700 to-purple-800">
-            <SidebarInner />
+          <div className="w-72 max-w-[85vw] flex flex-col bg-slate-900 shadow-pop animate-fade-in">
+            <div className="flex items-center justify-between pr-2">
+              <Brand />
+              <button type="button" onClick={() => setMobileOpen(false)} aria-label="Đóng menu" className="p-2 text-slate-400 hover:text-white"><X size={20} /></button>
+            </div>
+            <NavList groups={groups} activeKey={activeKey} onSelect={select} />
+            <UserBox user={user} onLogout={onLogout} />
           </div>
-          <div className="flex-1 bg-black/50" onClick={() => setMobileOpen(false)} />
+          <div className="flex-1 bg-ink/50 backdrop-blur-[1px]" onClick={() => setMobileOpen(false)} />
         </div>
       )}
 
       {/* Vùng nội dung */}
-      <div className="md:ml-64">
-        {/* Topbar mobile */}
-        <header className="md:hidden sticky top-0 z-30 flex items-center gap-3 bg-indigo-700 text-white px-4 py-3 shadow">
-          <button onClick={() => setMobileOpen(true)}><Menu size={22} /></button>
-          <span className="font-semibold">{activeLabel}</span>
+      <div className={`${mainML} transition-[margin] duration-200 flex min-h-screen flex-col`}>
+        <header className="md:hidden sticky top-0 z-30 flex items-center gap-3 bg-slate-900 text-white px-3 py-2.5 shadow">
+          <button type="button" onClick={() => setMobileOpen(true)} aria-label="Mở menu" className="rounded-lg p-1.5 hover:bg-white/10"><Menu size={22} /></button>
+          <span className="font-semibold text-[15px]">{activeLabel}</span>
         </header>
-        {trialDays !== null && (
-          <div className={`px-4 py-2 text-sm font-medium text-center ${trialDays <= 0 ? 'bg-red-600 text-white' : trialDays <= 3 ? 'bg-amber-500 text-white' : 'bg-blue-50 text-blue-700 border-b border-blue-200'}`}>
-            {trialDays <= 0
-              ? '⛔ Tài khoản dùng thử đã hết hạn — '
-              : `🎁 Bản dùng thử — còn ${trialDays} ngày. `}
+        {trialDaysLeft !== null && trialDaysLeft !== undefined && (
+          <div className={`px-4 py-1.5 text-[13px] font-medium text-center ${trialDaysLeft <= 0 ? 'bg-danger-600 text-white' : trialDaysLeft <= 3 ? 'bg-warning-500 text-white' : 'bg-brand-50 text-brand-800 border-b border-brand-100'}`}>
+            {trialDaysLeft <= 0 ? '⛔ Tài khoản dùng thử đã hết hạn. ' : `🎁 Bản dùng thử — còn ${trialDaysLeft} ngày. `}
             {ZALO_ENABLED && (
-              <a href={ZALO_URL} target="_blank" rel="noopener noreferrer" className="underline font-bold">
-                Liên hệ nâng cấp qua Zalo
-              </a>
+              <a href={ZALO_URL} target="_blank" rel="noopener noreferrer" className="underline font-bold">Liên hệ nâng cấp qua Zalo</a>
             )}
           </div>
         )}
-        <main>{children}</main>
+        <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-[1600px] w-full mx-auto">{children}</main>
       </div>
     </div>
   );

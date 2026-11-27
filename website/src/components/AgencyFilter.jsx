@@ -1,33 +1,53 @@
-import React, { useEffect, useState } from 'react';
-import { apiGet } from '../services/client';
+import { useEffect, useState } from 'react';
+import { api } from '../services/client';
 import { useAuth } from '../auth/AuthContext';
+import { Select } from '../ui';
+
+// Cache danh sách /users ở mức module (60 s) — 5 trang cùng mount không gọi API 5 lần.
+const TTL_MS = 60 * 1000;
+let cache = { promise: null, at: 0 };
+
+function fetchAgencies() {
+  const now = Date.now();
+  if (cache.promise && now - cache.at < TTL_MS) return cache.promise;
+  const p = api.get('/users').then((rows) => (Array.isArray(rows) ? rows : [])).catch(() => {
+    cache = { promise: null, at: 0 }; // lỗi → lần sau gọi lại
+    return [];
+  });
+  cache = { promise: p, at: now };
+  return p;
+}
 
 /**
  * Dropdown lọc dữ liệu theo đại lý. Tự ẩn nếu người dùng không có đại lý cấp dưới.
- * Props: value (string id | ''), onChange(id)
+ * Props: value (string id | ''), onChange(id), className
  */
-export default function AgencyFilter({ value, onChange }) {
+export default function AgencyFilter({ value, onChange, className = '' }) {
   const { user } = useAuth();
   const [agencies, setAgencies] = useState([]);
 
   useEffect(() => {
-    apiGet('/users').then(setAgencies).catch(() => {});
+    let alive = true;
+    fetchAgencies().then((rows) => { if (alive) setAgencies(rows); });
+    return () => { alive = false; };
   }, []);
 
   if (agencies.length === 0) return null;
 
   return (
-    <select
+    <Select
+      size="sm"
       value={value}
       onChange={(e) => onChange(e.target.value)}
-      className="px-3 py-2 border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none text-sm"
+      className={`w-44 ${className}`}
       title="Lọc theo đại lý"
+      aria-label="Lọc theo đại lý"
     >
-      <option value="">🏢 Tất cả đại lý</option>
+      <option value="">Tất cả đại lý</option>
       {user?.id && <option value={user.id}>Của tôi ({user.fullName || user.username})</option>}
       {agencies.map((a) => (
         <option key={a.id} value={a.id}>{a.full_name || a.username}</option>
       ))}
-    </select>
+    </Select>
   );
 }
