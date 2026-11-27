@@ -1,17 +1,19 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Trash2, Plus, Landmark, User, Wallet, Receipt, PiggyBank, AlertCircle, Zap } from 'lucide-react';
+import { Trash2, Plus, Landmark, User, Wallet, Receipt, PiggyBank, AlertCircle, Zap, Banknote } from 'lucide-react';
 import { api } from '../services/client';
+import { accountsApi, walletsApi, PAYMENT_METHODS, methodLabel, accountLabel, invalidateMoneyCache } from '../services/money';
+import { activeAccounts, defaultAccountId, rememberAccount } from '../modules/payState';
 import { formatCurrency, formatDate, today, num } from '../utils/format';
 import { useFeedback } from '../ui/FeedbackContext';
 import { Button, IconButton, Field, Select, MoneyField, DateField, Modal, Badge, EmptyState, Skeleton, ErrorBanner } from '../ui';
 
 const PARAM = { debt: 'debtId', passport: 'passportId', train: 'trainTicketId', tour: 'tourId' };
-const METHOD_LABEL = { cash: 'Tiền mặt', bank_transfer: 'Chuyển khoản', momo: 'Momo' };
 
 /**
  * Modal lịch sử thanh toán cho 1 khoản nợ (vé máy bay / tàu / hộ chiếu / tour).
  * Props:
- *  - target: { type: 'debt'|'passport'|'train'|'tour', id, name, total, paid }
+ *  - target: { type: 'debt'|'passport'|'train'|'tour', id, name, total, paid, customerId }
+ *    customerId cần cho hình thức "Trừ ví trả trước".
  *  - onClose: () => void
  *  - onChanged: () => void   gọi sau khi thêm/xoá (để cha tải lại danh sách)
  */
@@ -25,6 +27,9 @@ export default function PaymentModal({ target, onClose, onChanged }) {
   const [method, setMethod] = useState('cash');
   const [paymentTarget, setPaymentTarget] = useState('self');
   const [saving, setSaving] = useState(false);
+  const [accounts, setAccounts] = useState([]);
+  const [accountId, setAccountId] = useState('');
+  const [wallet, setWallet] = useState({ loading: false, balance: null, error: '' });
 
   const paramKey = PARAM[target.type] || 'debtId';
   const query = `${paramKey}=${target.id}`;
@@ -33,6 +38,11 @@ export default function PaymentModal({ target, onClose, onChanged }) {
   const remaining = total - paidSum;
   const amt = num(amount);
   const exceeds = amt > 0 && remaining > 0 && amt > remaining;
+  const isWallet = method === 'wallet';
+  const customerId = target.customerId;
+  const walletBalance = wallet.balance === null ? null : num(wallet.balance);
+  const overBalance = isWallet && walletBalance !== null && amt > walletBalance;
+  const walletBlocked = isWallet && (!customerId || wallet.loading || !!wallet.error || walletBalance === null || overBalance);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -48,8 +58,34 @@ export default function PaymentModal({ target, onClose, onChanged }) {
 
   useEffect(() => { load(); }, [load]);
 
+  // Danh sách tài khoản (cache ngắn trong services/money) + mặc định = TK dùng gần nhất.
+  useEffect(() => {
+    let alive = true;
+    accountsApi.list().then((list) => {
+      if (!alive) return;
+      const arr = Array.isArray(list) ? list : [];
+      setAccounts(arr);
+      setAccountId((cur) => cur || defaultAccountId(arr));
+    }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
+
+  const loadWallet = useCallback(async () => {
+    if (!customerId) return;
+    setWallet({ loading: true, balance: null, error: '' });
+    try {
+      const w = await walletsApi.get(customerId);
+      setWallet({ loading: false, balance: w?.balance ?? 0, error: '' });
+    } catch (err) {
+      setWallet({ loading: false, balance: null, error: err.message });
+    }
+  }, [customerId]);
+
+  useEffect(() => { if (isWallet) loadWallet(); }, [isWallet, loadWallet]);
+
   const add = async () => {
     if (!Number.isFinite(amt) || amt <= 0) { toast.error('Nhập số tiền hợp lệ'); return; }
+    if (walletBlocked) return;
     setSaving(true);
     try {
       await api.post('/payments', {
@@ -58,7 +94,11 @@ export default function PaymentModal({ target, onClose, onChanged }) {
         paymentDate: date || undefined,
         method,
         paymentTarget,
+        accountId: !isWallet && accountId ? Number(accountId) : null,
       });
+      if (!isWallet && accountId) rememberAccount(accountId);
+      invalidateMoneyCache('accounts');
+      if (isWallet) loadWallet();
       setAmount('');
       toast.success(`Đã ghi nhận ${formatCurrency(amt)}`);
       await load();
@@ -78,7 +118,9 @@ export default function PaymentModal({ target, onClose, onChanged }) {
     if (!ok) return;
     try {
       await api.del(`/payments/${p.id}`);
-      toast.success('Đã xoá');
+      toast.success(p.method === 'wallet' ? 'Đã xoá, tiền đã trả lại ví khách' : 'Đã xoá');
+      invalidateMoneyCache('accounts');
+      if (p.method === 'wallet' && isWallet) loadWallet();
       await load();
       onChanged?.();
     } catch (err) {
@@ -118,30 +160,52 @@ export default function PaymentModal({ target, onClose, onChanged }) {
           onSubmit={(e) => { e.preventDefault(); add(); }}
           className="rounded-xl border border-surface-border bg-surface-muted p-3"
         >
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-            <Field label="Số tiền" required className="col-span-2 sm:col-span-1">
-              <MoneyField value={amount} onChange={setAmount} placeholder="0" />
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+            <Field label="Số tiền" required htmlFor="pm-amount" className="col-span-2 sm:col-span-1">
+              <MoneyField id="pm-amount" value={amount} onChange={setAmount} placeholder="0" />
               {exceeds && (
                 <p className="mt-1 flex items-center gap-1 text-xs text-warning-600"><AlertCircle size={12} /> Vượt số còn nợ {formatCurrency(remaining)}</p>
               )}
             </Field>
-            <Field label="Ngày">
-              <DateField value={date} onChange={setDate} />
+            <Field label="Ngày" htmlFor="pm-date">
+              <DateField id="pm-date" value={date} onChange={setDate} />
             </Field>
-            <Field label="Hình thức">
-              <Select value={method} onChange={(e) => setMethod(e.target.value)}>
-                <option value="cash">Tiền mặt</option>
-                <option value="bank_transfer">Chuyển khoản</option>
-                <option value="momo">Momo</option>
+            <Field label="Hình thức" htmlFor="pm-method">
+              <Select id="pm-method" value={method} onChange={(e) => setMethod(e.target.value)}>
+                {PAYMENT_METHODS.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
               </Select>
             </Field>
-            <Field label="Chuyển vào TK">
+            {!isWallet && (
+              <Field label="Vào tài khoản" htmlFor="pm-account" hint={activeAccounts(accounts).length ? undefined : 'Chưa có tài khoản nào (thêm ở Dòng tiền › Tài khoản)'}>
+                <Select id="pm-account" value={accountId} onChange={(e) => setAccountId(e.target.value)}>
+                  <option value="">— Chưa chọn tài khoản —</option>
+                  {activeAccounts(accounts).map((a) => <option key={a.id} value={String(a.id)}>{accountLabel(a)}</option>)}
+                </Select>
+              </Field>
+            )}
+            <Field label="Tiền này tính cho" hint="Của cấp trên = khách chuyển thẳng cho đại lý cấp trên">
               <Select value={paymentTarget} onChange={(e) => setPaymentTarget(e.target.value)}>
-                <option value="self">TK cá nhân</option>
-                <option value="agency">TK cấp trên (nộp quỹ)</option>
+                <option value="self">Của mình</option>
+                <option value="agency">Của cấp trên (tính vào nộp quỹ)</option>
               </Select>
             </Field>
           </div>
+          {isWallet && (
+            <div className="mt-2.5 rounded-lg bg-white border border-surface-border px-3 py-2 text-sm" data-testid="wallet-info">
+              {!customerId ? (
+                <p className="flex items-center gap-1.5 text-warning-700"><AlertCircle size={14} /> Dịch vụ chưa gắn khách hàng, không trừ ví được</p>
+              ) : wallet.loading ? (
+                <Skeleton className="h-4 w-40" />
+              ) : wallet.error ? (
+                <p className="text-danger-600">{wallet.error} <button type="button" className="underline font-semibold" onClick={loadWallet}>Thử lại</button></p>
+              ) : (
+                <>
+                  <p className="flex items-center gap-1.5 text-ink-soft"><Banknote size={14} /> Số dư ví: <b className="tabular text-ink">{formatCurrency(walletBalance ?? 0)}</b></p>
+                  {overBalance && <p className="mt-1 flex items-center gap-1 text-xs text-danger-600"><AlertCircle size={12} /> Vượt số dư ví, nạp thêm tiền vào ví hoặc chọn hình thức khác</p>}
+                </>
+              )}
+            </div>
+          )}
           <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2">
             <Button
               type="button"
@@ -154,7 +218,7 @@ export default function PaymentModal({ target, onClose, onChanged }) {
             >
               Trả hết {remaining > 0 ? formatCurrency(remaining) : ''}
             </Button>
-            <Button type="submit" size="sm" variant="success" icon={Plus} loading={saving}>Thêm thanh toán</Button>
+            <Button type="submit" size="sm" variant="success" icon={Plus} loading={saving} disabled={walletBlocked}>Thêm thanh toán</Button>
           </div>
         </form>
 
@@ -175,7 +239,10 @@ export default function PaymentModal({ target, onClose, onChanged }) {
                 <li key={p.id} className="flex items-center gap-3 px-3 py-2 text-sm hover:bg-surface-muted">
                   <span className="w-20 shrink-0 text-ink-muted tabular">{formatDate(p.payment_date)}</span>
                   <div className="flex flex-wrap items-center gap-1 min-w-0 flex-1">
-                    <Badge tone="gray">{METHOD_LABEL[p.method] || p.method || '—'}</Badge>
+                    {p.method === 'wallet'
+                      ? <Badge tone="purple" icon={Wallet}>Trừ ví</Badge>
+                      : <Badge tone="gray">{methodLabel(p.method) || '—'}</Badge>}
+                    {p.account_name && <Badge tone="outline" icon={Banknote}>{p.account_name}</Badge>}
                     {p.payment_target === 'agency'
                       ? <Badge tone="warning" icon={Landmark}>Cấp trên</Badge>
                       : <Badge tone="brand" icon={User}>Cá nhân</Badge>}

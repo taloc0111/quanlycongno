@@ -179,19 +179,33 @@ const updateCustomer = async (req, res) => {
   }
 };
 
+// Khách đã có giao dịch ví trả trước thì KHÔNG cho xoá (wallet_entries sẽ bị xoá theo
+// ON DELETE CASCADE → mất lịch sử tiền). Khoá dòng customers giống thao tác ví để không lọt race.
 const deleteCustomer = async (req, res) => {
   const id = v.idParam(req.params.id);
+  const client = await pool.connect();
   try {
-    const result = await pool.query(
-      'DELETE FROM customers WHERE id=$1 AND user_id=$2 RETURNING id, name',
-      [id, req.user.id]
-    );
-    if (result.rows.length === 0) return res.status(404).json({ error: 'Customer not found' });
-    logAudit(req, { action: 'delete', entity: 'customer', entityId: id, summary: `Xóa khách ${result.rows[0].name}` });
+    await client.query('BEGIN');
+    const found = await client.query('SELECT name FROM customers WHERE id=$1 AND user_id=$2 FOR UPDATE', [id, req.user.id]);
+    if (found.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Customer not found' });
+    }
+    const wallet = await client.query('SELECT 1 FROM wallet_entries WHERE customer_id = $1 LIMIT 1', [id]);
+    if (wallet.rows.length > 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Khách đã có giao dịch ví trả trước, không xoá được' });
+    }
+    await client.query('DELETE FROM customers WHERE id=$1 AND user_id=$2', [id, req.user.id]);
+    await client.query('COMMIT');
+    logAudit(req, { action: 'delete', entity: 'customer', entityId: id, summary: `Xóa khách ${found.rows[0].name}` });
     res.json({ message: 'Customer deleted' });
   } catch (error) {
+    await client.query('ROLLBACK');
     logger.error('Delete customer error:', error.message);
     res.status(500).json({ error: 'Failed to delete customer' });
+  } finally {
+    client.release();
   }
 };
 
@@ -202,14 +216,34 @@ const bulkDeleteCustomers = async (req, res) => {
     if (!Array.isArray(ids) || ids.length === 0) {
       return res.status(400).json({ error: 'Không có bản ghi nào để xóa' });
     }
-    const result = await pool.query(
-      'DELETE FROM customers WHERE id = ANY($1) AND user_id = $2 RETURNING id',
-      [ids.map(Number).filter(Number.isFinite), req.user.id]
-    );
+    // Bỏ qua khách đã có giao dịch ví (khoá dòng trước như thao tác ví, rồi mới xoá).
+    const client = await pool.connect();
+    let result;
+    let skipped = 0;
+    try {
+      await client.query('BEGIN');
+      const locked = await client.query(
+        `SELECT c.id, EXISTS (SELECT 1 FROM wallet_entries w WHERE w.customer_id = c.id) AS has_wallet
+           FROM customers c WHERE c.id = ANY($1) AND c.user_id = $2 ORDER BY c.id FOR UPDATE`,
+        [ids.map(Number).filter(Number.isFinite), req.user.id]
+      );
+      const deletable = locked.rows.filter((r) => !r.has_wallet).map((r) => r.id);
+      skipped = locked.rows.length - deletable.length;
+      result = await client.query(
+        'DELETE FROM customers WHERE id = ANY($1) AND user_id = $2 RETURNING id',
+        [deletable, req.user.id]
+      );
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
     if (result.rows.length > 0) {
       logAudit(req, { action: 'delete', entity: 'customer', summary: `Xóa ${result.rows.length} khách`, details: { ids: result.rows.map((r) => r.id) } });
     }
-    res.json({ deleted: result.rows.length });
+    res.json({ deleted: result.rows.length, skipped });
   } catch (error) {
     logger.error('Bulk delete customers error:', error.message);
     res.status(500).json({ error: 'Failed to delete customers' });

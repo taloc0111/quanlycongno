@@ -30,6 +30,10 @@ const airlineRoutes = require('./routes/airlines');
 const trainTicketRoutes = require('./routes/trainTickets');
 const tourRoutes = require('./routes/tours');
 const auditRoutes = require('./routes/audit');
+// Dòng tiền v3 (docs/MONEY-FLOWS.md)
+const accountRoutes = require('./routes/accounts');
+const supplierRoutes = require('./routes/suppliers');
+const walletRoutes = require('./routes/wallets');
 
 // Import middleware
 const { authenticateToken } = require('./middleware/auth');
@@ -88,6 +92,9 @@ app.use('/api/airlines', authenticateToken, airlineRoutes);
 app.use('/api/train-tickets', authenticateToken, attachScope, trainTicketRoutes);
 app.use('/api/tours', authenticateToken, attachScope, tourRoutes);
 app.use('/api/audit', authenticateToken, attachScope, auditRoutes);
+app.use('/api/accounts', authenticateToken, attachScope, accountRoutes);
+app.use('/api/suppliers', authenticateToken, attachScope, supplierRoutes);
+app.use('/api/wallets', authenticateToken, attachScope, walletRoutes);
 
 // Health check (cho Render/uptime monitor)
 app.get('/api/health', (req, res) => {

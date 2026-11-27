@@ -3,12 +3,13 @@ import { Plane, Train, BookOpen, Palmtree, Building2, Route, CheckCircle2, Circl
 import { api } from '../services/client';
 import { formatCurrency, formatDate, num } from '../utils/format';
 import { Badge, Button } from '../ui';
-import { DateCell, PayBadge } from './ServicePage';
+import { DateCell, PayBadge, CostBadges } from './ServicePage';
+import { isCostPending, rowProfit, costUnpaid, costItemsFromApi, costItemsToPayload } from './payState';
 import { RouteManagerModal, CompanyManagerModal } from './DebtExtras';
 
 const DEFAULT_ROUTES = ['HAN-SGN', 'SGN-HAN', 'HAN-DAD', 'DAD-HAN', 'SGN-DAD', 'DAD-SGN', 'HAN-PQC', 'SGN-PQC', 'HAN-CXR', 'SGN-CXR', 'HAN-DLI', 'SGN-DLI', 'HAN-HPH', 'SGN-HPH'];
 const AIRLINES = ['Vietnam Airlines', 'Vietjet Air', 'Bamboo Airways', 'Vietravel Airlines', 'Pacific Airlines', 'Sun PhuQuoc Airways'];
-const PAY_TARGET = [{ value: 'self', label: 'TK cá nhân' }, { value: 'agency', label: 'TK cấp trên (nộp quỹ)' }];
+const PAY_TARGET = [{ value: 'self', label: 'Của mình' }, { value: 'agency', label: 'Của cấp trên (tính vào nộp quỹ)' }];
 
 // ---- Các cột dùng chung ----
 const nameCol = (sub) => ({
@@ -27,11 +28,31 @@ const nameCol = (sub) => ({
     </div>
   ),
 });
-const statusCol = { key: '__status', label: 'Trạng thái', defaultVisible: true, render: (r, ctx) => <PayBadge row={r} cfg={ctx.cfg} /> };
+const statusCol = {
+  key: '__status', label: 'Trạng thái', defaultVisible: true,
+  render: (r, ctx) => (
+    <div className="flex flex-wrap items-center gap-1 max-w-[230px]">
+      <PayBadge row={r} cfg={ctx.cfg} />
+      <CostBadges row={r} />
+    </div>
+  ),
+};
 const moneyCols = (amountKey, { amountLabel = 'Giá bán' } = {}) => [
   { key: amountKey, label: amountLabel, align: 'right', sortable: true, sortValue: (r) => num(r[amountKey]), render: (r) => <span className="font-semibold">{formatCurrency(r[amountKey])}</span> },
   { key: 'cost_amount', label: 'Giá gốc', align: 'right', sortable: true, defaultVisible: false, sortValue: (r) => num(r.cost_amount), render: (r) => <span className="text-ink-muted">{formatCurrency(r.cost_amount)}</span> },
-  { key: 'profit', label: 'Lợi nhuận', align: 'right', sortable: true, sortValue: (r) => num(r[amountKey]) - num(r.cost_amount), render: (r) => { const p = num(r[amountKey]) - num(r.cost_amount); return <span className={`font-semibold ${p >= 0 ? 'text-success-600' : 'text-danger-600'}`}>{formatCurrency(p)}</span>; } },
+  {
+    key: 'profit', label: 'Lợi nhuận', align: 'right', sortable: true,
+    sortValue: (r) => rowProfit(r, { amountKey, costKey: 'cost_amount' }),
+    render: (r) => {
+      const p = rowProfit(r, { amountKey, costKey: 'cost_amount' });
+      if (p === null) return <span className="text-ink-faint text-xs" title="Chưa đủ giá vốn — chưa tính lãi">Chưa tính</span>;
+      return <span className={`font-semibold ${p >= 0 ? 'text-success-600' : 'text-danger-600'}`}>{formatCurrency(p)}</span>;
+    },
+  },
+  {
+    key: 'cost_unpaid', label: 'Nợ NCC', align: 'right', sortable: true, defaultVisible: false, sortValue: (r) => costUnpaid(r),
+    render: (r) => (costUnpaid(r) > 0 ? <span className="font-medium text-warning-700">{formatCurrency(costUnpaid(r))}</span> : <span className="text-ink-faint">—</span>),
+  },
 ];
 const paidCols = (amountKey, paidKey) => [
   { key: paidKey, label: 'Đã trả', align: 'right', sortable: true, sortValue: (r) => num(r[paidKey]), render: (r) => (
@@ -50,9 +71,11 @@ const notesCol = { key: 'notes', label: 'Ghi chú', defaultVisible: false, rende
 const customerField = { key: 'customerName', label: 'Tên khách hàng', type: 'customer', required: true, placeholder: 'Chọn khách cũ hoặc nhập tên mới' };
 const phoneField = { key: 'phoneNumber', label: 'Số điện thoại', placeholder: '09xx…' };
 const companyField = { key: 'companyId', label: 'Công ty', type: 'company' };
-const costField = { key: 'costAmount', label: 'Giá gốc / giá vốn', type: 'money', placeholder: 'Giá nhập' };
+// Khối "Giá vốn": 1 ô giá gốc hoặc nhiều dòng (CostItemsEditor) + công tắc "Chưa đủ giá vốn". ServicePage tự vẽ.
+const costField = { key: 'costAmount', label: 'Giá gốc / giá vốn', type: 'cost', placeholder: 'Giá nhập' };
 const paidField = { key: 'paid', label: 'Trả trước', type: 'money', placeholder: 'Khách trả trước (nếu có)', showWhen: (f) => !f.id };
-const payTargetField = { key: 'paymentTarget', label: 'Trả trước vào TK', type: 'select', options: PAY_TARGET, showWhen: (f) => !f.id && num(f.paid) > 0 };
+const accountField = { key: 'accountId', label: 'Vào tài khoản', type: 'account', showWhen: (f) => !f.id && num(f.paid) > 0 };
+const payTargetField = { key: 'paymentTarget', label: 'Tiền này tính cho', hint: 'Chọn "Của cấp trên" nếu khách chuyển thẳng cho đại lý cấp trên', type: 'select', options: PAY_TARGET, showWhen: (f) => !f.id && num(f.paid) > 0 };
 const dueField = { key: 'dueDate', label: 'Hạn thanh toán', type: 'date' };
 const notesField = { key: 'notes', label: 'Ghi chú', type: 'textarea', span: 3 };
 const paidEditHint = { key: '__paidHint', label: 'Đã trả', type: 'money', disabled: () => true, showWhen: (f) => !!f.id, hint: 'Dùng nút Thanh toán để ghi nhận thêm các lần trả.' };
@@ -63,6 +86,34 @@ const exportCommon = (ctx) => ({
     label: 'Thanh toán vào', value: (r) => { const paid = num(r.paid ?? r.paid_amount); const ag = num(r.agency_paid); if (paid <= 0) return ''; if (ag <= 0) return 'Cá nhân'; if (ag >= paid) return 'Nộp quỹ (cấp trên)'; return 'Hỗn hợp'; },
   },
 });
+
+// ---- Giá vốn nhiều khoản (docs/MONEY-FLOWS.md) ----
+const COST_EMPTY = { costItems: null, costPending: true, ticketKind: 'normal', accountId: '', __hadItems: false, __costPendingTouched: false };
+const costToForm = (d) => {
+  const items = costItemsFromApi(d.cost_items);
+  return {
+    costItems: items.length ? items : null, __hadItems: items.length > 0,
+    costPending: isCostPending(d), ticketKind: d.ticket_kind === 'down' ? 'down' : 'normal', __costPendingTouched: true, accountId: '',
+  };
+};
+/** Phần body giá vốn: costItems CHỈ gửi khi trình nhập nhiều dòng đang dùng (hoặc vừa xoá hết dòng của 1 dịch vụ đã có dòng). */
+const costToPayload = (f, { editing, ticketKind = false }) => {
+  const out = { costPending: !!f.costPending };
+  if (ticketKind) out.ticketKind = f.ticketKind === 'down' ? 'down' : 'normal';
+  const items = Array.isArray(f.costItems) ? f.costItems : [];
+  if (items.length || f.__hadItems) out.costItems = costItemsToPayload(items);
+  if (!editing && num(f.paid) > 0) out.accountId = f.accountId ? Number(f.accountId) : null;
+  return out;
+};
+const profitExport = (amountKey) => ({
+  label: 'Lợi nhuận', money: true,
+  value: (r) => { const p = rowProfit(r, { amountKey, costKey: 'cost_amount' }); return p === null ? '' : p; },
+});
+const costExportCols = ({ ticketKind = false } = {}) => [
+  ...(ticketKind ? [{ label: 'Loại vé', value: (r) => (r.ticket_kind === 'down' ? 'Vé down' : 'Vé thường') }] : []),
+  { label: 'Chưa đủ giá vốn', value: (r) => (isCostPending(r) ? 'Có' : 'Không') },
+  { label: 'Nợ NCC', value: (r) => costUnpaid(r), money: true },
+];
 
 const baseValidate = (amountField, amountLabel) => (f) => {
   if (!f.customerName?.trim()) return 'Vui lòng nhập tên khách hàng';
@@ -84,21 +135,22 @@ export const debtsConfig = {
   searchText: (r, ctx) => [r.customer_name, r.phone_number, r.ticket_code, r.route, r.airline, ctx.companyById(r.company_id)?.name].filter(Boolean).join(' '),
   mobileSubtitle: (r) => [r.ticket_code, r.route, r.flight_date ? `bay ${formatDate(r.flight_date)}` : ''].filter(Boolean).join(' · '),
   loadLists: async () => ({ routes: await api.get('/routes').catch(() => []) }),
-  emptyForm: { customerName: '', phoneNumber: '', ticketCode: '', airline: '', route: '', flightDate: '', issueDate: '', dueDate: '', ticketSource: '', ticketAmount: '', costAmount: '', paid: '', notes: '', companyId: '', paymentTarget: 'self' },
+  emptyForm: { customerName: '', phoneNumber: '', ticketCode: '', airline: '', route: '', flightDate: '', issueDate: '', dueDate: '', ticketSource: '', ticketAmount: '', costAmount: '', paid: '', notes: '', companyId: '', paymentTarget: 'self', ...COST_EMPTY },
   toForm: (d) => ({
     customerName: d.customer_name || '', phoneNumber: d.phone_number || '', ticketCode: d.ticket_code || '', airline: d.airline || '',
     route: d.route || '', flightDate: d.flight_date || '', issueDate: d.issue_date || '', dueDate: d.due_date || '', ticketSource: d.ticket_source || '',
-    ticketAmount: d.ticket_amount, costAmount: d.cost_amount, __paidHint: d.paid, notes: d.notes || '', companyId: d.company_id || '', paymentTarget: 'self',
+    ticketAmount: d.ticket_amount, costAmount: d.cost_amount, __paidHint: d.paid, notes: d.notes || '', companyId: d.company_id || '', paymentTarget: 'self', ...costToForm(d),
   }),
   toPayload: (f, { editing }) => ({
     customerName: f.customerName.trim(), phoneNumber: f.phoneNumber, ticketCode: f.ticketCode, airline: f.airline, route: f.route,
     flightDate: f.flightDate || null, issueDate: f.issueDate || null, dueDate: f.dueDate || null, ticketSource: f.ticketSource,
     ticketAmount: num(f.ticketAmount), costAmount: num(f.costAmount), notes: f.notes, companyId: f.companyId || null,
     ...(editing ? {} : { paid: num(f.paid), paymentTarget: f.paymentTarget }),
+    ...costToPayload(f, { editing, ticketKind: true }),
   }),
   validate: baseValidate('ticketAmount', 'tiền vé'),
   form: {
-    amountField: 'ticketAmount', dateField: 'issueDate',
+    amountField: 'ticketAmount', dateField: 'issueDate', ticketKind: true,
     fields: [
       customerField, phoneField,
       { key: 'ticketCode', label: 'Mã vé', placeholder: 'Mã đặt chỗ / số vé' },
@@ -110,7 +162,7 @@ export const debtsConfig = {
       { key: 'ticketSource', label: 'Nguồn xuất vé', type: 'datalist', options: (ctx) => ctx.sources, placeholder: 'VD: Ngọc Mai, website…' },
       companyField,
       { key: 'ticketAmount', label: 'Tiền vé / giá bán', type: 'money', required: true, placeholder: 'Giá bán cho khách' },
-      costField, paidField, payTargetField, paidEditHint, notesField,
+      paidField, accountField, payTargetField, paidEditHint, costField, notesField,
     ],
   },
   columns: [
@@ -139,7 +191,7 @@ export const debtsConfig = {
       { label: 'Mã vé', value: (r) => r.ticket_code || '' }, { label: 'Hãng', value: (r) => r.airline || '', width: 16 }, { label: 'Nguồn vé', value: (r) => r.ticket_source || '' },
       { label: 'Hành trình', value: (r) => r.route || '' }, { label: 'Ngày bay', value: (r) => formatDate(r.flight_date) }, { label: 'Ngày xuất vé', value: (r) => formatDate(r.issue_date) },
       { label: 'Tiền vé', value: (r) => num(r.ticket_amount), money: true }, { label: 'Giá gốc', value: (r) => num(r.cost_amount), money: true },
-      { label: 'Lợi nhuận', value: (r) => num(r.ticket_amount) - num(r.cost_amount), money: true }, { label: 'Đã thanh toán', value: (r) => num(r.paid), money: true },
+      profitExport('ticket_amount'), ...costExportCols({ ticketKind: true }), { label: 'Đã thanh toán', value: (r) => num(r.paid), money: true },
       c.payTarget, { label: 'Còn nợ', value: (r) => num(r.ticket_amount) - num(r.paid), money: true }, { label: 'Hạn trả', value: (r) => formatDate(r.due_date) }, { label: 'Ghi chú', value: (r) => r.notes || '', width: 24 },
     ];
   },
@@ -183,17 +235,18 @@ export const trainsConfig = {
   searchPlaceholder: 'Tìm khách, SĐT, số tàu, hành trình…',
   searchText: (r) => [r.customer_name, r.phone_number, r.train_no, r.route, r.seat_class].filter(Boolean).join(' '),
   mobileSubtitle: (r) => [r.train_no, r.route, r.depart_date ? `đi ${formatDate(r.depart_date)}` : ''].filter(Boolean).join(' · '),
-  emptyForm: { customerName: '', phoneNumber: '', trainNo: '', route: '', seatClass: '', departDate: '', issueDate: '', dueDate: '', ticketSource: '', ticketAmount: '', costAmount: '', paid: '', notes: '', companyId: '', paymentTarget: 'self' },
+  emptyForm: { customerName: '', phoneNumber: '', trainNo: '', route: '', seatClass: '', departDate: '', issueDate: '', dueDate: '', ticketSource: '', ticketAmount: '', costAmount: '', paid: '', notes: '', companyId: '', paymentTarget: 'self', ...COST_EMPTY },
   toForm: (d) => ({
     customerName: d.customer_name || '', phoneNumber: d.phone_number || '', trainNo: d.train_no || '', route: d.route || '', seatClass: d.seat_class || '',
     departDate: d.depart_date || '', issueDate: d.issue_date || '', dueDate: d.due_date || '', ticketSource: d.ticket_source || '',
-    ticketAmount: d.ticket_amount, costAmount: d.cost_amount, __paidHint: d.paid, notes: d.notes || '', companyId: d.company_id || '', paymentTarget: 'self',
+    ticketAmount: d.ticket_amount, costAmount: d.cost_amount, __paidHint: d.paid, notes: d.notes || '', companyId: d.company_id || '', paymentTarget: 'self', ...costToForm(d),
   }),
   toPayload: (f, { editing }) => ({
     customerName: f.customerName.trim(), phoneNumber: f.phoneNumber, trainNo: f.trainNo, route: f.route, seatClass: f.seatClass,
     departDate: f.departDate || null, issueDate: f.issueDate || null, dueDate: f.dueDate || null, ticketSource: f.ticketSource,
     ticketAmount: num(f.ticketAmount), costAmount: num(f.costAmount), notes: f.notes, companyId: f.companyId || null,
     ...(editing ? {} : { paid: num(f.paid), paymentTarget: f.paymentTarget }),
+    ...costToPayload(f, { editing }),
   }),
   validate: baseValidate('ticketAmount', 'giá bán'),
   form: {
@@ -209,7 +262,7 @@ export const trainsConfig = {
       { key: 'ticketSource', label: 'Nguồn vé', type: 'datalist', options: (ctx) => ctx.sources },
       companyField,
       { key: 'ticketAmount', label: 'Giá bán', type: 'money', required: true },
-      costField, paidField, payTargetField, paidEditHint, notesField,
+      paidField, accountField, payTargetField, paidEditHint, costField, notesField,
     ],
   },
   columns: [
@@ -230,7 +283,7 @@ export const trainsConfig = {
       { label: 'Số tàu', value: (r) => r.train_no || '' }, { label: 'Hành trình', value: (r) => r.route || '', width: 18 }, { label: 'Loại chỗ', value: (r) => r.seat_class || '' },
       { label: 'Ngày đi', value: (r) => formatDate(r.depart_date) }, { label: 'Ngày xuất', value: (r) => formatDate(r.issue_date) }, { label: 'Nguồn', value: (r) => r.ticket_source || '' },
       { label: 'Giá bán', value: (r) => num(r.ticket_amount), money: true }, { label: 'Giá gốc', value: (r) => num(r.cost_amount), money: true },
-      { label: 'Lợi nhuận', value: (r) => num(r.ticket_amount) - num(r.cost_amount), money: true }, { label: 'Đã trả', value: (r) => num(r.paid), money: true },
+      profitExport('ticket_amount'), ...costExportCols(), { label: 'Đã trả', value: (r) => num(r.paid), money: true },
       c.payTarget, { label: 'Còn nợ', value: (r) => num(r.ticket_amount) - num(r.paid), money: true }, { label: 'Ghi chú', value: (r) => r.notes || '', width: 24 },
     ];
   },
@@ -269,17 +322,18 @@ export const toursConfig = {
   searchText: (r) => [r.customer_name, r.phone_number, r.tour_name, r.source].filter(Boolean).join(' '),
   mobileSubtitle: (r) => [r.tour_name, r.depart_date ? `đi ${formatDate(r.depart_date)}` : '', r.pax ? `${r.pax} khách` : ''].filter(Boolean).join(' · '),
   extraFilters: [{ key: 'status', label: 'Mọi trạng thái', options: TOUR_STATUS, fn: (r, v) => r.status === v }],
-  emptyForm: { customerName: '', phoneNumber: '', tourName: '', departDate: '', returnDate: '', pax: '1', issueDate: '', dueDate: '', source: '', sellAmount: '', costAmount: '', paid: '', status: 'deposited', notes: '', companyId: '', paymentTarget: 'self' },
+  emptyForm: { customerName: '', phoneNumber: '', tourName: '', departDate: '', returnDate: '', pax: '1', issueDate: '', dueDate: '', source: '', sellAmount: '', costAmount: '', paid: '', status: 'deposited', notes: '', companyId: '', paymentTarget: 'self', ...COST_EMPTY },
   toForm: (d) => ({
     customerName: d.customer_name || '', phoneNumber: d.phone_number || '', tourName: d.tour_name || '', departDate: d.depart_date || '', returnDate: d.return_date || '',
     pax: String(d.pax ?? 1), issueDate: d.issue_date || '', dueDate: d.due_date || '', source: d.source || '', sellAmount: d.sell_amount, costAmount: d.cost_amount,
-    __paidHint: d.paid, status: d.status || 'deposited', notes: d.notes || '', companyId: d.company_id || '', paymentTarget: 'self',
+    __paidHint: d.paid, status: d.status || 'deposited', notes: d.notes || '', companyId: d.company_id || '', paymentTarget: 'self', ...costToForm(d),
   }),
   toPayload: (f, { editing }) => ({
     customerName: f.customerName.trim(), phoneNumber: f.phoneNumber, tourName: f.tourName, departDate: f.departDate || null, returnDate: f.returnDate || null,
     pax: parseInt(f.pax, 10) || 1, issueDate: f.issueDate || null, dueDate: f.dueDate || null, source: f.source,
     sellAmount: num(f.sellAmount), costAmount: num(f.costAmount), status: f.status, notes: f.notes, companyId: f.companyId || null,
     ...(editing ? {} : { paid: num(f.paid), paymentTarget: f.paymentTarget }),
+    ...costToPayload(f, { editing }),
   }),
   validate: (f) => baseValidate('sellAmount', 'giá bán')(f) || (f.returnDate && f.departDate && f.returnDate < f.departDate ? 'Ngày về phải sau ngày đi' : null),
   form: {
@@ -296,7 +350,7 @@ export const toursConfig = {
       { key: 'source', label: 'Nguồn / đối tác', type: 'datalist', options: (ctx) => ctx.sources },
       companyField,
       { key: 'sellAmount', label: 'Giá bán (tổng)', type: 'money', required: true },
-      costField, paidField, payTargetField, paidEditHint, notesField,
+      paidField, accountField, payTargetField, paidEditHint, costField, notesField,
     ],
   },
   columns: [
@@ -320,7 +374,7 @@ export const toursConfig = {
       { label: 'Số khách', value: (r) => r.pax ?? 1 }, { label: 'Trạng thái', value: (r) => TOUR_STATUS.find((x) => x.value === r.status)?.label || r.status },
       { label: 'Ngày bán', value: (r) => formatDate(r.issue_date) }, { label: 'Nguồn', value: (r) => r.source || '' },
       { label: 'Giá bán', value: (r) => num(r.sell_amount), money: true }, { label: 'Giá gốc', value: (r) => num(r.cost_amount), money: true },
-      { label: 'Lợi nhuận', value: (r) => num(r.sell_amount) - num(r.cost_amount), money: true }, { label: 'Đã trả', value: (r) => num(r.paid), money: true },
+      profitExport('sell_amount'), ...costExportCols(), { label: 'Đã trả', value: (r) => num(r.paid), money: true },
       c.payTarget, { label: 'Còn nợ', value: (r) => num(r.sell_amount) - num(r.paid), money: true }, { label: 'Ghi chú', value: (r) => r.notes || '', width: 24 },
     ];
   },
@@ -353,16 +407,17 @@ export const passportsConfig = {
   searchPlaceholder: 'Tìm khách, SĐT, số hộ chiếu, địa chỉ…',
   searchText: (r) => [r.customer_name, r.phone_number, r.passport_number, r.address].filter(Boolean).join(' '),
   mobileSubtitle: (r) => [r.passport_number, r.service_date ? `làm ${formatDate(r.service_date)}` : ''].filter(Boolean).join(' · '),
-  emptyForm: { customerName: '', phoneNumber: '', passportNumber: '', address: '', serviceDate: '', dueDate: '', totalAmount: '', costAmount: '', paid: '', notes: '', companyId: '', paymentTarget: 'self' },
+  emptyForm: { customerName: '', phoneNumber: '', passportNumber: '', address: '', serviceDate: '', dueDate: '', totalAmount: '', costAmount: '', paid: '', notes: '', companyId: '', paymentTarget: 'self', ...COST_EMPTY },
   toForm: (d) => ({
     customerName: d.customer_name || '', phoneNumber: d.phone_number || '', passportNumber: d.passport_number || '', address: d.address || '',
     serviceDate: d.service_date || '', dueDate: d.due_date || '', totalAmount: d.total_amount, costAmount: d.cost_amount, __paidHint: d.paid_amount,
-    notes: d.notes || '', companyId: d.company_id || '', paymentTarget: 'self',
+    notes: d.notes || '', companyId: d.company_id || '', paymentTarget: 'self', ...costToForm(d),
   }),
   toPayload: (f, { editing }) => ({
     customerName: f.customerName.trim(), phoneNumber: f.phoneNumber, passportNumber: f.passportNumber, address: f.address,
     serviceDate: f.serviceDate, dueDate: f.dueDate || null, totalAmount: num(f.totalAmount), costAmount: num(f.costAmount), notes: f.notes, companyId: f.companyId || null,
     ...(editing ? {} : { paidAmount: num(f.paid), paymentTarget: f.paymentTarget }),
+    ...costToPayload(f, { editing }),
   }),
   validate: (f) => baseValidate('totalAmount', 'tổng tiền')(f) || (!f.serviceDate ? 'Vui lòng chọn ngày làm' : null),
   form: {
@@ -374,7 +429,7 @@ export const passportsConfig = {
       { key: 'serviceDate', label: 'Ngày làm', type: 'date', required: true },
       dueField, companyField,
       { key: 'totalAmount', label: 'Tổng tiền', type: 'money', required: true },
-      costField, paidField, payTargetField, paidEditHint, notesField,
+      paidField, accountField, payTargetField, paidEditHint, costField, notesField,
     ],
   },
   columns: [
@@ -393,7 +448,7 @@ export const passportsConfig = {
       { label: 'Số hộ chiếu', value: (r) => r.passport_number || '' }, { label: 'Địa chỉ', value: (r) => r.address || '', width: 24 },
       { label: 'Ngày làm', value: (r) => formatDate(r.service_date) }, { label: 'Hạn trả', value: (r) => formatDate(r.due_date) },
       { label: 'Tổng tiền', value: (r) => num(r.total_amount), money: true }, { label: 'Giá gốc', value: (r) => num(r.cost_amount), money: true },
-      { label: 'Lợi nhuận', value: (r) => num(r.total_amount) - num(r.cost_amount), money: true }, { label: 'Đã trả', value: (r) => num(r.paid_amount), money: true },
+      profitExport('total_amount'), ...costExportCols(), { label: 'Đã trả', value: (r) => num(r.paid_amount), money: true },
       { label: 'Còn nợ', value: (r) => num(r.total_amount) - num(r.paid_amount), money: true }, { label: 'Ghi chú', value: (r) => r.notes || '', width: 24 },
     ];
   },

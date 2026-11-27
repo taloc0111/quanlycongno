@@ -3,7 +3,10 @@
 // id phải tồn tại VÀ user_id = người đang ghi, nếu không → controller trả 400.
 
 // Chỉ cho phép các bảng có cột user_id — tên bảng ghép thẳng vào SQL nên phải whitelist.
-const TABLES = new Set(['companies', 'customers', 'debts', 'passports', 'train_tickets', 'tours', 'invoices', 'ticket_watches']);
+const TABLES = new Set([
+  'companies', 'customers', 'debts', 'passports', 'train_tickets', 'tours', 'invoices', 'ticket_watches',
+  'money_accounts', 'suppliers', 'cost_items',
+]);
 
 /**
  * @param {import('pg').PoolClient|import('pg').Pool} client

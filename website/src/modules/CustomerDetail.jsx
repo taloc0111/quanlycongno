@@ -13,6 +13,8 @@ import {
   PageHeader, StatCard, DataTable, ErrorBanner, Segmented, Skeleton, EmptyState,
 } from '../ui';
 import CustomerStatement from './CustomerStatement';
+import WalletPanel from './money/WalletPanel';
+import { methodLabel } from '../services/money';
 
 // ---------- Chuẩn hoá giao dịch 4 loại dịch vụ về 1 dạng ----------
 const SERVICE = {
@@ -249,7 +251,7 @@ export default function CustomerDetail({ id }) {
     { key: 'type', label: 'Loại', width: 110, render: (r) => <Badge tone={SERVICE[r.type]?.tone || 'gray'}>{SERVICE[r.type]?.label || r.type}</Badge> },
     { key: 'target_label', label: 'Giao dịch', render: (r) => <span className="font-medium text-ink">{r.target_label || '—'}</span> },
     { key: 'amount', label: 'Số tiền', align: 'right', render: (r) => <span className="font-semibold text-success-600">{formatCurrency(r.amount)}</span> },
-    { key: 'method', label: 'Hình thức', hideBelow: 'md', render: (r) => r.method || <span className="text-ink-faint">—</span> },
+    { key: 'method', label: 'Hình thức', hideBelow: 'md', render: (r) => (r.method ? methodLabel(r.method) : <span className="text-ink-faint">—</span>) },
     { key: 'notes', label: 'Ghi chú', hideBelow: 'lg', render: (r) => <span className="text-ink-muted">{r.notes || ''}</span> },
   ];
 
@@ -334,6 +336,9 @@ export default function CustomerDetail({ id }) {
             )}
           </div>
 
+          {/* Ví trả trước (thu gọn, bấm để xem lịch sử) */}
+          {customer && <WalletPanel customerId={customer.id} readOnly={!owned} collapsible />}
+
           {/* Số liệu */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
             <StatCard icon={ShoppingBag} label="Tổng mua" value={loading ? '…' : formatCurrency(totals.sold)} sub={periodLabel} tone="brand" />
@@ -372,7 +377,7 @@ export default function CustomerDetail({ id }) {
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
                     <p className="font-semibold text-ink truncate">{r.target_label || '—'} <Badge tone={SERVICE[r.type]?.tone || 'gray'}>{SERVICE[r.type]?.label || r.type}</Badge></p>
-                    <p className="text-xs text-ink-muted">{formatDate(r.payment_date)}{r.method ? ` · ${r.method}` : ''}{r.notes ? ` · ${r.notes}` : ''}</p>
+                    <p className="text-xs text-ink-muted">{formatDate(r.payment_date)}{r.method ? ` · ${methodLabel(r.method)}` : ''}{r.notes ? ` · ${r.notes}` : ''}</p>
                   </div>
                   <span className="font-bold tabular text-success-600 shrink-0">{formatCurrency(r.amount)}</span>
                 </div>

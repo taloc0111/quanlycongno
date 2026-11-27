@@ -8,9 +8,13 @@ import ServicePage from './ServicePage';
 import { debtsConfig, trainsConfig, toursConfig, passportsConfig } from './serviceConfigs';
 import { mockApi } from '../test/mockApi';
 import { storage } from '../services/client';
+import { invalidateMoneyCache } from '../services/money';
 import { today, addDays } from '../utils/format';
 
 const ME = { id: 1, username: 'admin', role: 'admin', features: {} };
+const ACCOUNTS = [{ id: 7, name: 'TCB chính', account_number: '19031234', is_own: true, archived: false }];
+const SUPPLIERS = [{ id: 2, name: 'Khác A', kind: 'other' }, { id: 3, name: 'F1 Thùy Dương', kind: 'f1' }, { id: 4, name: 'Down Hùng', kind: 'down' }];
+const MONEY = { 'GET /accounts': ACCOUNTS, 'GET /suppliers': SUPPLIERS };
 const OTHER_ROW = { id: 9, user_id: 2, owner_name: 'Đại lý B', customer_name: 'Khách Của B', phone_number: '0999', ticket_amount: '500000.00', cost_amount: '400000.00', paid: '0', issue_date: '2026-11-01', flight_date: '2026-12-20', route: 'HAN-SGN', airline: 'VJ' };
 
 function debtRows() {
@@ -41,6 +45,8 @@ beforeEach(() => {
   storage.set('token', 'tok');
   storage.setJSON('authUser', ME);
   window.location.hash = '';
+  storage.remove('payment:lastAccount');
+  invalidateMoneyCache();
 });
 
 describe('ServicePage (debts)', () => {
@@ -50,7 +56,7 @@ describe('ServicePage (debts)', () => {
       'GET /companies': [{ id: 5, name: 'Công ty X' }],
       'GET /customers': [],
       'GET /routes': ['HAN-SGN'],
-      'GET /auth/profile': ME,
+      'GET /auth/profile': ME, ...MONEY,
     });
     renderPage(debtsConfig);
     const t = await waitRows('Nguyễn Văn A');
@@ -66,7 +72,7 @@ describe('ServicePage (debts)', () => {
   });
 
   it('filters by search and payment status', async () => {
-    mockApi({ 'GET /debts': debtRows(), 'GET /companies': [], 'GET /customers': [], 'GET /routes': [], 'GET /auth/profile': ME });
+    mockApi({ 'GET /debts': debtRows(), 'GET /companies': [], 'GET /customers': [], 'GET /routes': [], 'GET /auth/profile': ME, ...MONEY });
     renderPage(debtsConfig);
     await waitRows('Nguyễn Văn A');
     const search = screen.getByPlaceholderText(/Tìm khách/);
@@ -85,7 +91,7 @@ describe('ServicePage (debts)', () => {
   it('creates a debt through the modal form and shows a toast', async () => {
     const { calls } = mockApi({
       'GET /debts': () => debtRows(),
-      'GET /companies': [], 'GET /customers': [], 'GET /routes': [], 'GET /auth/profile': ME,
+      'GET /companies': [], 'GET /customers': [], 'GET /routes': [], 'GET /auth/profile': ME, ...MONEY,
       'POST /debts': ({ body }) => ({ id: 100, ...body }),
     });
     renderPage(debtsConfig);
@@ -106,7 +112,7 @@ describe('ServicePage (debts)', () => {
 
   it('shows the server validation error instead of success', async () => {
     mockApi({
-      'GET /debts': debtRows(), 'GET /companies': [], 'GET /customers': [], 'GET /routes': [], 'GET /auth/profile': ME,
+      'GET /debts': debtRows(), 'GET /companies': [], 'GET /customers': [], 'GET /routes': [], 'GET /auth/profile': ME, ...MONEY,
       'POST /debts': { status: 400, body: { error: 'Số điện thoại quá dài' } },
     });
     renderPage(debtsConfig);
@@ -122,7 +128,7 @@ describe('ServicePage (debts)', () => {
 
   it('deletes after confirm and bulk-deletes selected rows', async () => {
     const { calls } = mockApi({
-      'GET /debts': debtRows(), 'GET /companies': [], 'GET /customers': [], 'GET /routes': [], 'GET /auth/profile': ME,
+      'GET /debts': debtRows(), 'GET /companies': [], 'GET /customers': [], 'GET /routes': [], 'GET /auth/profile': ME, ...MONEY,
       'DELETE /debts/:id': { message: 'ok' },
       'POST /debts/bulk-delete': ({ body }) => ({ deleted: body.ids.length }),
     });
@@ -145,7 +151,7 @@ describe('ServicePage (debts)', () => {
 
   it('edit form does not send paid and keeps the other fields', async () => {
     const { calls } = mockApi({
-      'GET /debts': debtRows(), 'GET /companies': [], 'GET /customers': [], 'GET /routes': [], 'GET /auth/profile': ME,
+      'GET /debts': debtRows(), 'GET /companies': [], 'GET /customers': [], 'GET /routes': [], 'GET /auth/profile': ME, ...MONEY,
       'PUT /debts/:id': ({ body }) => ({ id: 1, ...body }),
     });
     renderPage(debtsConfig);
@@ -168,7 +174,7 @@ describe('ServicePage (other configs)', () => {
       'GET /train-tickets': [{ id: 1, user_id: 1, customer_name: 'Tàu A', train_no: 'SE7', route: 'HN-DN', depart_date: '2026-12-01', issue_date: '2026-11-01', ticket_amount: '900000', cost_amount: '800000', paid: '0' }],
       'GET /tours': [{ id: 1, user_id: 1, customer_name: 'Tour A', tour_name: 'Phú Quốc', status: 'deposited', pax: 2, depart_date: '2026-12-25', issue_date: '2026-11-01', sell_amount: '9800000', cost_amount: '8500000', paid: '3000000' }],
       'GET /passports': [{ id: 1, user_id: 1, customer_name: 'HC A', passport_number: 'C123', service_date: '2026-11-10', total_amount: '1200000', cost_amount: '900000', paid_amount: '1200000' }],
-      'GET /companies': [], 'GET /customers': [], 'GET /auth/profile': ME,
+      'GET /companies': [], 'GET /customers': [], 'GET /auth/profile': ME, ...MONEY,
     });
     const r1 = renderPage(trainsConfig);
     expect((await waitRows('Tàu A')).getByText('Tàu A')).toBeInTheDocument();
@@ -186,5 +192,192 @@ describe('ServicePage (other configs)', () => {
     expect(tbl().getByText('Đã trả đủ')).toBeInTheDocument();
     // Lợi nhuận 300.000 (không còn NaN như bản cũ)
     expect(screen.getAllByText(/300\.000/).length).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Dòng tiền v3: giá vốn nhiều khoản, vé down, chưa đủ giá vốn, nợ NCC.
+// ---------------------------------------------------------------------------
+const base = (extra = {}) => ({ 'GET /companies': [], 'GET /customers': [], 'GET /routes': [], 'GET /auth/profile': ME, ...MONEY, ...extra });
+
+function costRows() {
+  return [
+    { id: 1, user_id: 1, customer_name: 'Khách Đủ Vốn', customer_id: 11, ticket_code: 'AAA111', issue_date: '2026-11-05', ticket_amount: '1000000.00', cost_amount: '800000.00', paid: '0', cost_pending: false, cost_unpaid: '0', cost_items: [] },
+    { id: 2, user_id: 1, customer_name: 'Khách Chờ Vốn', customer_id: 12, ticket_code: 'BBB222', issue_date: '2026-11-06', ticket_amount: '2000000.00', cost_amount: '0.00', paid: '0', cost_pending: true, cost_unpaid: '0', cost_items: [] },
+    {
+      id: 3, user_id: 1, customer_name: 'Khách Vé Down', customer_id: 13, ticket_code: 'CCC333', issue_date: '2026-11-07', ticket_amount: '1500000.00', cost_amount: '1225000.00', paid: '0',
+      cost_pending: false, ticket_kind: 'down', cost_unpaid: '25000.00',
+      cost_items: [
+        { id: 50, supplier_id: 3, supplier_name: 'F1 Thùy Dương', label: 'Giá vé F1', amount: '1200000.00', paid_amount: '1200000.00', due_date: null },
+        { id: 51, supplier_id: 4, supplier_name: 'Down Hùng', label: 'Phí down', amount: '25000.00', paid_amount: '0.00', due_date: '2026-12-01' },
+      ],
+    },
+  ];
+}
+
+async function openAddForm() {
+  await userEvent.click(screen.getByRole('button', { name: /Thêm vé/ }));
+  return screen.findByRole('dialog');
+}
+
+describe('ServicePage (giá vốn / dòng tiền)', () => {
+  it('"Vé down" adds the 3 template rows with F1 / down suppliers', async () => {
+    mockApi(base({ 'GET /debts': costRows() }));
+    renderPage(debtsConfig);
+    await waitRows('Khách Đủ Vốn');
+    const dialog = await openAddForm();
+    expect(within(dialog).getByText(/Vé down = vé xuất giảm/)).toBeInTheDocument();
+    // Chưa nhập giá vốn → gợi ý "Chưa đủ giá vốn"
+    expect(within(dialog).getByRole('switch')).toHaveAttribute('aria-checked', 'true');
+
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Vé down' }));
+    expect(within(dialog).getAllByTestId('cost-item')).toHaveLength(3);
+    expect(within(dialog).getByLabelText('Tên khoản 1')).toHaveValue('Giá vé F1');
+    expect(within(dialog).getByLabelText('Tên khoản 2')).toHaveValue('Phí F1');
+    expect(within(dialog).getByLabelText('Tên khoản 3')).toHaveValue('Phí down');
+    expect(within(dialog).getByLabelText('Nhà cung cấp 1')).toHaveValue('3');
+    expect(within(dialog).getByLabelText('Nhà cung cấp 2')).toHaveValue('3');
+    expect(within(dialog).getByLabelText('Nhà cung cấp 3')).toHaveValue('4');
+    expect(within(dialog).getByLabelText('Số tiền 2')).toHaveValue('5.000');
+    expect(within(dialog).getByLabelText('Số tiền 3')).toHaveValue('');
+    // Ô giá gốc đơn bị thay bằng trình nhập nhiều dòng
+    expect(within(dialog).queryByLabelText(/Giá gốc/)).not.toBeInTheDocument();
+    // Phí down còn trống → vẫn "Chưa đủ giá vốn"
+    expect(within(dialog).getByRole('switch')).toHaveAttribute('aria-checked', 'true');
+  });
+
+  it('saves costItems (with payNow), ticketKind, costPending and the initial-payment account', async () => {
+    const { calls } = mockApi(base({ 'GET /debts': () => costRows(), 'POST /debts': ({ body }) => ({ id: 100, ...body }) }));
+    renderPage(debtsConfig);
+    await waitRows('Khách Đủ Vốn');
+    const dialog = await openAddForm();
+    await userEvent.type(within(dialog).getByLabelText(/Tên khách hàng/), 'Khách Down');
+    await userEvent.type(within(dialog).getByLabelText(/Tiền vé/), '1600000');
+    await userEvent.type(within(dialog).getByLabelText(/Trả trước/), '500000');
+    fireEvent.change(within(dialog).getByLabelText('Vào tài khoản'), { target: { value: '7' } });
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Vé down' }));
+    await userEvent.type(within(dialog).getByLabelText('Số tiền 1'), '1500000');
+    await userEvent.type(within(dialog).getByLabelText('Số tiền 3'), '20000');
+    // Đủ giá vốn → tự tắt công tắc, có lợi nhuận dự kiến 75.000
+    expect(within(dialog).getByRole('switch')).toHaveAttribute('aria-checked', 'false');
+    expect(within(dialog).getByText(/75\.000/)).toBeInTheDocument();
+    await userEvent.click(within(dialog).getByLabelText('Trả ngay 1'));
+    fireEvent.change(within(dialog).getByLabelText('Trả từ tài khoản 1'), { target: { value: '7' } });
+
+    await userEvent.click(within(dialog).getByRole('button', { name: /Thêm mới/ }));
+    await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.path === '/debts')).toBe(true));
+    const { body } = calls.find((c) => c.method === 'POST' && c.path === '/debts');
+    expect(body).toMatchObject({ ticketKind: 'down', costPending: false, costAmount: 1525000, paid: 500000, accountId: 7 });
+    expect(body.costItems).toEqual([
+      { supplierId: 3, label: 'Giá vé F1', amount: 1500000, dueDate: null, payNow: { accountId: 7, payDate: today() } },
+      { supplierId: 3, label: 'Phí F1', amount: 5000, dueDate: null },
+      { supplierId: 4, label: 'Phí down', amount: 20000, dueDate: null },
+    ]);
+    expect(storage.get('payment:lastAccount')).toBe('7');
+  });
+
+  it('creating without any cost sends costPending true and no costItems key', async () => {
+    const { calls } = mockApi(base({ 'GET /debts': () => costRows(), 'POST /debts': ({ body }) => ({ id: 101, ...body }) }));
+    renderPage(debtsConfig);
+    await waitRows('Khách Đủ Vốn');
+    const dialog = await openAddForm();
+    await userEvent.type(within(dialog).getByLabelText(/Tên khách hàng/), 'Khách Trả Trước');
+    await userEvent.type(within(dialog).getByLabelText(/Tiền vé/), '900000');
+    expect(within(dialog).getByText(/Chưa tính \(chưa đủ giá vốn\)/)).toBeInTheDocument();
+    await userEvent.click(within(dialog).getByRole('button', { name: /Thêm mới/ }));
+    await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.path === '/debts')).toBe(true));
+    const { body } = calls.find((c) => c.method === 'POST' && c.path === '/debts');
+    expect(body).toMatchObject({ costPending: true, ticketKind: 'normal', costAmount: 0 });
+    expect(body).not.toHaveProperty('costItems');
+    expect(body).not.toHaveProperty('accountId');
+  });
+
+  it('editing a row without cost items omits costItems', async () => {
+    const { calls } = mockApi(base({ 'GET /debts': costRows(), 'PUT /debts/:id': ({ body }) => ({ id: 1, ...body }) }));
+    renderPage(debtsConfig);
+    await waitRows('Khách Đủ Vốn');
+    const row = tbl().getByText('Khách Đủ Vốn').closest('tr');
+    await userEvent.click(within(row).getByRole('button', { name: 'Sửa' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByLabelText(/Giá gốc/)).toHaveValue('800.000');
+    await userEvent.click(within(dialog).getByRole('button', { name: /Lưu thay đổi/ }));
+    await waitFor(() => expect(calls.some((c) => c.method === 'PUT')).toBe(true));
+    const { body } = calls.find((c) => c.method === 'PUT');
+    expect(body).not.toHaveProperty('costItems');
+    expect(body).toMatchObject({ costAmount: 800000, costPending: false, ticketKind: 'normal' });
+  });
+
+  it('editing a row with items keeps ids (no paidAmount); removing all rows sends costItems: []', async () => {
+    const { calls } = mockApi(base({ 'GET /debts': costRows(), 'PUT /debts/:id': ({ body }) => ({ id: 3, ...body }) }));
+    renderPage(debtsConfig);
+    await waitRows('Khách Vé Down');
+    const row = tbl().getByText('Khách Vé Down').closest('tr');
+    await userEvent.click(within(row).getByRole('button', { name: 'Sửa' }));
+    let dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getAllByTestId('cost-item')).toHaveLength(2);
+    expect(within(within(dialog).getAllByTestId('cost-item')[0]).getByText('Đã trả')).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Vé down' })).toBeInTheDocument();
+    await userEvent.click(within(dialog).getByRole('button', { name: /Lưu thay đổi/ }));
+    await waitFor(() => expect(calls.filter((c) => c.method === 'PUT')).toHaveLength(1));
+    const first = calls.find((c) => c.method === 'PUT').body;
+    expect(first.ticketKind).toBe('down');
+    expect(first.costItems).toEqual([
+      { id: 50, supplierId: 3, label: 'Giá vé F1', amount: 1200000, dueDate: null },
+      { id: 51, supplierId: 4, label: 'Phí down', amount: 25000, dueDate: '2026-12-01' },
+    ]);
+
+    // Mở lại, xoá hết dòng → gửi costItems: []
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    await userEvent.click(within(tbl().getByText('Khách Vé Down').closest('tr')).getByRole('button', { name: 'Sửa' }));
+    dialog = await screen.findByRole('dialog');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Xoá dòng 2' }));
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Xoá dòng 1' }));
+    expect(within(dialog).getByLabelText(/Giá gốc/)).toBeInTheDocument();
+    await userEvent.click(within(dialog).getByRole('button', { name: /Lưu thay đổi/ }));
+    await waitFor(() => expect(calls.filter((c) => c.method === 'PUT')).toHaveLength(2));
+    const second = calls.filter((c) => c.method === 'PUT')[1].body;
+    expect(second.costItems).toEqual([]);
+  });
+
+  it('profit card excludes cost-pending rows and the table shows cost badges', async () => {
+    mockApi(base({ 'GET /debts': costRows() }));
+    renderPage(debtsConfig);
+    const t = await waitRows('Khách Đủ Vốn');
+    // Lợi nhuận = 200.000 (dòng 1) + 275.000 (dòng 3); dòng 2 (2tr, chưa đủ vốn) không tính
+    const sub = screen.getByText('Không tính 1 dòng chưa đủ giá vốn');
+    const card = sub.closest('.card');
+    expect(within(card).getByText(/475\.000/)).toBeInTheDocument();
+    // Doanh số vẫn tính đủ 4.500.000
+    expect(screen.getAllByText(/4\.500\.000/).length).toBeGreaterThan(0);
+    expect(t.getByText('Vé down')).toBeInTheDocument();
+    expect(t.getByText('Chưa đủ giá vốn')).toBeInTheDocument();
+    expect(t.getByText(/Nợ NCC 25\.000/)).toBeInTheDocument();
+    // Cột lợi nhuận của dòng chưa đủ vốn: "Chưa tính"
+    expect(within(t.getByText('Khách Chờ Vốn').closest('tr')).getByText('Chưa tính')).toBeInTheDocument();
+  });
+
+  it('"Giá vốn" filter: Chưa đủ giá vốn / Còn nợ NCC', async () => {
+    mockApi(base({ 'GET /debts': costRows() }));
+    renderPage(debtsConfig);
+    await waitRows('Khách Đủ Vốn');
+    const filter = screen.getByLabelText('Lọc giá vốn');
+    fireEvent.change(filter, { target: { value: 'pending' } });
+    await waitFor(() => expect(tbl().queryByText('Khách Đủ Vốn')).not.toBeInTheDocument());
+    expect(tbl().getByText('Khách Chờ Vốn')).toBeInTheDocument();
+    expect(tbl().queryByText('Khách Vé Down')).not.toBeInTheDocument();
+
+    fireEvent.change(filter, { target: { value: 'owed' } });
+    await waitFor(() => expect(tbl().queryByText('Khách Chờ Vốn')).not.toBeInTheDocument());
+    expect(tbl().getByText('Khách Vé Down')).toBeInTheDocument();
+  });
+
+  it('passes customerId to the payment modal (wallet payments)', async () => {
+    const { calls } = mockApi(base({ 'GET /debts': costRows(), 'GET /payments': [], 'GET /wallets/:id': { balance: '0', entries: [] } }));
+    renderPage(debtsConfig);
+    await waitRows('Khách Đủ Vốn');
+    await userEvent.click(within(tbl().getByText('Khách Chờ Vốn').closest('tr')).getByRole('button', { name: 'Thanh toán' }));
+    const modal = await screen.findByRole('dialog');
+    fireEvent.change(within(modal).getByLabelText('Hình thức'), { target: { value: 'wallet' } });
+    await waitFor(() => expect(calls.some((c) => c.path === '/wallets/12')).toBe(true));
   });
 });

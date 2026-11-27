@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   LayoutDashboard, FileText, BookOpen, Users, Receipt, Network, UserCircle, Landmark, StickyNote,
-  PlaneTakeoff, PlaneLanding, Train, Palmtree, Search, History,
+  PlaneTakeoff, PlaneLanding, Train, Palmtree, Search, History, Wallet, Truck, PiggyBank,
 } from 'lucide-react';
 import { useAuth } from './auth/AuthContext.jsx';
 import { useNavigation } from './hooks/useNavigation.jsx';
@@ -27,6 +27,9 @@ import AirlinesApp from './AirlinesApp.jsx';
 import TrainApp from './TrainApp.jsx';
 import TourApp from './TourApp.jsx';
 import AuditApp from './AuditApp.jsx';
+import AccountsApp from './AccountsApp.jsx';
+import SuppliersApp from './SuppliersApp.jsx';
+import WalletsApp from './WalletsApp.jsx';
 
 // roles: chỉ hiện với các role này. feature: chỉ hiện khi tài khoản được bật tính năng
 // (admin luôn có). Không có → hiện cho tất cả.
@@ -40,6 +43,9 @@ const NAV = [
   { key: 'upcoming', label: 'Sắp bay', icon: PlaneLanding, group: 'Nghiệp vụ', Component: UpcomingFlightsApp },
   { key: 'ticketWatch', label: 'Canh vé', icon: PlaneTakeoff, group: 'Canh vé', Component: TicketWatchApp, feature: 'fareWatch' },
   { key: 'fareCheck', label: 'Check vé', icon: Search, group: 'Canh vé', Component: FareCheckApp, feature: 'fareWatch' },
+  { key: 'accounts', label: 'Tài khoản', icon: Wallet, group: 'Dòng tiền', Component: AccountsApp },
+  { key: 'suppliers', label: 'Nhà cung cấp', icon: Truck, group: 'Dòng tiền', Component: SuppliersApp },
+  { key: 'wallets', label: 'Ví trả trước', icon: PiggyBank, group: 'Dòng tiền', Component: WalletsApp },
   { key: 'customer', label: 'Khách hàng', icon: Users, group: 'Danh mục', Component: CustomerApp },
   { key: 'airlines', label: 'Hãng bay', icon: PlaneTakeoff, group: 'Danh mục', Component: AirlinesApp },
   { key: 'invoice', label: 'Hóa đơn', icon: Receipt, group: 'Tài chính', Component: InvoiceApp },

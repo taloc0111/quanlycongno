@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   LayoutDashboard, RefreshCw, Receipt, TrendingUp, PiggyBank, Landmark, AlertTriangle,
   PlaneTakeoff, CalendarClock, BellRing, ListTodo, Users, ArrowRight, Phone, BarChart3, PieChart as PieIcon,
+  Truck, HandCoins, Wallet, ReceiptText,
 } from 'lucide-react';
 import {
   ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, CartesianGrid, Legend, PieChart, Pie, Cell,
@@ -26,6 +27,12 @@ const TYPES = [
 
 // Nhãn loại khoản nợ trong danh sách việc cần làm (type từ API).
 const DUE_TYPE = { debt: 'Vé máy bay', passport: 'Hộ chiếu', train: 'Vé tàu', tour: 'Tour' };
+// type từ API → key module để mở đúng trang.
+const TYPE_MODULE = { debt: 'debt', passport: 'passport', train: 'train', tour: 'tour' };
+
+// Số cột lưới "Việc cần làm" theo số mục (6 mục = 3×2, 4 mục = 1 hàng). Class viết tĩnh để Tailwind quét được.
+const TODO_COLS = { 1: 'xl:grid-cols-1', 2: 'xl:grid-cols-2', 3: 'xl:grid-cols-3', 4: 'xl:grid-cols-4', 5: 'xl:grid-cols-3', 6: 'xl:grid-cols-3' };
+const MONEY_COLS = { 1: 'sm:grid-cols-1', 2: 'sm:grid-cols-2', 3: 'sm:grid-cols-3' };
 
 const greeting = (hour) => {
   if (hour < 11) return 'Chào buổi sáng';
@@ -77,7 +84,19 @@ export default function DashboardApp() {
   const dueSoon = todo.dueSoon || [];
   const overdueList = useMemo(() => [...(todo.overdue || [])].sort((a, b) => num(b.outstanding) - num(a.outstanding)), [todo.overdue]);
   const fareHits = hasFeature('fareWatch') ? (todo.fareHits || []) : [];
-  const todoCount = flightsTomorrow.length + dueSoon.length + overdueList.length + fareHits.length;
+  // Dòng tiền v3 — backend cũ không có các trường này thì ẩn mục tương ứng.
+  const hasCostPending = Array.isArray(todo.costPending);
+  const hasSupplierDue = Array.isArray(todo.supplierDue);
+  const costPending = hasCostPending ? todo.costPending : [];
+  const supplierDue = hasSupplierDue ? todo.supplierDue : [];
+  const todoCount = flightsTomorrow.length + dueSoon.length + overdueList.length + fareHits.length + costPending.length + supplierDue.length;
+  const todoSections = 3 + (hasFeature('fareWatch') ? 1 : 0) + (hasCostPending ? 1 : 0) + (hasSupplierDue ? 1 : 0);
+  const costPendingCount = num(stats?.costPendingCount);
+  const moneyCards = stats ? [
+    stats.supplierOwed != null && { key: 'supplierOwed', icon: Truck, label: 'Nợ nhà cung cấp', value: num(stats.supplierOwed), sub: 'Giá vốn còn phải trả F1/down', tone: num(stats.supplierOwed) > 0 ? 'danger' : 'gray', to: 'suppliers' },
+    stats.othersHolding != null && { key: 'othersHolding', icon: HandCoins, label: 'Tiền ở TK người khác', value: num(stats.othersHolding), sub: 'TK giữ hộ — cần thu về', tone: num(stats.othersHolding) > 0 ? 'warning' : 'gray', to: 'accounts' },
+    stats.walletTotal != null && { key: 'walletTotal', icon: Wallet, label: 'Ví khách đang giữ', value: num(stats.walletTotal), sub: 'Tiền khách gửi trước, chưa dùng', tone: 'success', to: 'wallets' },
+  ].filter(Boolean) : [];
 
   const monthlyData = useMemo(() => {
     const byMonth = new Map((stats?.monthly || []).map((m) => [m.month, m]));
@@ -122,19 +141,35 @@ export default function DashboardApp() {
           {/* Thẻ số liệu */}
           <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3 mb-5">
             <StatCard icon={Receipt} label="Tổng phải thu" value={formatCurrency(stats.totalAmount)} sub={`${totalCount} dịch vụ · ${num(stats.counts?.customers)} khách`} tone="brand" />
-            <StatCard icon={TrendingUp} label="Lợi nhuận" value={formatCurrency(stats.totalProfit)} sub={num(stats.totalAmount) ? `${Math.round((num(stats.totalProfit) / num(stats.totalAmount)) * 100)}% doanh số` : ''} tone={num(stats.totalProfit) >= 0 ? 'success' : 'danger'} />
+            <StatCard
+              icon={TrendingUp} label="Lợi nhuận" value={formatCurrency(stats.totalProfit)}
+              sub={costPendingCount > 0
+                ? `Không tính ${costPendingCount} dòng chưa đủ giá vốn`
+                : num(stats.totalAmount) ? `${Math.round((num(stats.totalProfit) / num(stats.totalAmount)) * 100)}% doanh số` : ''}
+              tone={num(stats.totalProfit) >= 0 ? 'success' : 'danger'}
+            />
             <StatCard icon={PiggyBank} label="Đã thu" value={formatCurrency(stats.totalPaid)} sub={`${paidPct}% tổng phải thu`} tone="purple" />
             <StatCard icon={Landmark} label="Còn nợ" value={formatCurrency(stats.outstanding)} sub={`${(stats.topDebtors || []).length} khách nợ nhiều nhất`} tone="warning" />
             <StatCard icon={AlertTriangle} label="Nợ quá hạn" value={formatCurrency(stats.overdue)} sub={`${overdueList.length} khoản quá hạn`} tone="danger" />
           </div>
 
+          {/* Dòng tiền: nợ NCC, TK giữ hộ, ví khách */}
+          {moneyCards.length > 0 && (
+            <div className={`grid grid-cols-1 ${MONEY_COLS[moneyCards.length]} gap-3 mb-5`}>
+              {moneyCards.map((c) => (
+                <StatCard key={c.key} icon={c.icon} label={c.label} value={formatCurrency(c.value)} sub={c.sub} tone={c.tone} onClick={() => navigate(c.to)} />
+              ))}
+            </div>
+          )}
+
           {/* Việc cần làm hôm nay */}
           <Card padded={false} className="mb-5 overflow-hidden">
             <CardHeading icon={ListTodo} title="Việc cần làm hôm nay" sub={todoCount ? `${todoCount} việc` : 'Mọi thứ đang ổn'} />
             {todoCount === 0 ? (
-              <EmptyState icon={ListTodo} title="Không có việc gì gấp 🎉" description="Không có khách bay ngày mai chưa check-in, không có khoản nào sắp đến hạn hay quá hạn." compact />
+              <EmptyState icon={ListTodo} title="Không có việc gì gấp 🎉" description="Không có khách bay ngày mai chưa check-in, không có khoản nào sắp đến hạn hay quá hạn, giá vốn đã nhập đủ." compact />
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 divide-y md:divide-y-0 md:divide-x divide-surface-border">
+              /* Viền giữa các ô: mỗi ô kẻ trên + trái, lưới lùi 1px để giấu viền ngoài cùng (Card overflow-hidden). */
+              <div className={`grid grid-cols-1 md:grid-cols-2 ${TODO_COLS[todoSections] || 'xl:grid-cols-3'} -mt-px -ml-px [&>section]:border-t [&>section]:border-l [&>section]:border-surface-border`}>
                 <TodoSection
                   icon={PlaneTakeoff} tone="brand" title="Bay ngày mai, chưa check-in" count={flightsTomorrow.length}
                   action={<Button size="xs" variant="soft" iconRight={ArrowRight} onClick={() => navigate('upcoming')}>Sắp bay</Button>}
@@ -175,6 +210,30 @@ export default function DashboardApp() {
                             <span className="block text-[11px] text-ink-faint tabular">mong {formatCurrency(h.target_price)}</span>
                           </span>
                         )} />
+                    ))}
+                  </TodoSection>
+                )}
+                {hasCostPending && (
+                  <TodoSection icon={ReceiptText} tone="warning" title="Chưa đủ giá vốn" count={costPending.length} emptyText="Giá vốn đã nhập đủ">
+                    {costPending.map((c) => (
+                      <TodoRow key={`c${c.type}${c.id}`} name={c.customer_name}
+                        meta={[DUE_TYPE[c.type] || c.type, c.issue_date ? formatDate(c.issue_date) : ''].filter(Boolean).join(' · ')}
+                        onClick={TYPE_MODULE[c.type] ? () => navigate(TYPE_MODULE[c.type]) : undefined}
+                        right={<span className="font-semibold tabular text-ink">{formatCurrency(c.amount)}</span>} />
+                    ))}
+                  </TodoSection>
+                )}
+                {hasSupplierDue && (
+                  <TodoSection
+                    icon={Truck} tone="danger" title="Sắp đến hạn trả NCC" count={supplierDue.length}
+                    action={<Button size="xs" variant="soft" iconRight={ArrowRight} onClick={() => navigate('suppliers')}>NCC</Button>}
+                    emptyText="Không có khoản nào"
+                  >
+                    {supplierDue.map((d, i) => (
+                      <TodoRow key={`s${d.supplier_id}-${i}`} name={d.supplier_name}
+                        meta={[d.label, d.target_label, dueLabel(d.due_date)].filter(Boolean).join(' · ')}
+                        onClick={d.supplier_id ? () => navigate('suppliers', d.supplier_id) : undefined}
+                        right={<span className={`font-semibold tabular ${(daysUntil(d.due_date) ?? 1) < 0 ? 'text-danger-600' : 'text-warning-600'}`}>{formatCurrency(d.amount_due)}</span>} />
                     ))}
                   </TodoSection>
                 )}
@@ -323,9 +382,15 @@ function TodoSection({ icon: Icon, tone, title, count, action, emptyText, childr
   );
 }
 
-function TodoRow({ name, phone, meta, right }) {
+function TodoRow({ name, phone, meta, right, onClick }) {
+  const clickable = onClick ? {
+    role: 'button',
+    tabIndex: 0,
+    onClick,
+    onKeyDown: (e) => { if (e.key === 'Enter') onClick(); },
+  } : {};
   return (
-    <li className="flex items-center justify-between gap-2 px-1 py-2 text-sm">
+    <li className={`flex items-center justify-between gap-2 px-1 py-2 text-sm ${onClick ? 'cursor-pointer rounded-md hover:bg-surface-muted' : ''}`} {...clickable}>
       <div className="min-w-0">
         <p className="font-medium text-ink truncate">{name || '—'}</p>
         <p className="text-xs text-ink-muted truncate">
@@ -374,8 +439,8 @@ function DashboardSkeleton() {
       </div>
       <Card className="mb-5">
         <Skeleton className="h-4 w-48 mb-4" />
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-          {Array.from({ length: 4 }).map((_, i) => (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          {Array.from({ length: 3 }).map((_, i) => (
             <div key={i} className="space-y-2">
               <Skeleton className="h-3 w-40" />
               <Skeleton className="h-10 w-full" />
